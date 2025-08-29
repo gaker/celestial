@@ -1,0 +1,3 @@
+[submodule "vendor/erfa"]
+	path = vendor/erfa
+	url = https://github.com/liberfa/erfa.git

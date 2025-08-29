@@ -1,0 +1,85 @@
+name: Rust CI
+
+on:
+  push:
+    branches: ['**']  # Run on all branches
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive  # For vendor/erfa submodule
+          
+      - name: Initialize ERFA submodule
+        run: |
+          git submodule update --init --recursive
+
+      - name: Install Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          override: true
+          components: clippy
+
+      - name: Run tests
+        run: cargo test --workspace
+
+      - name: Run clippy
+        run: cargo clippy --workspace -- -D warnings
+
+  coverage:
+    name: Code Coverage
+    runs-on: ubuntu-latest
+    needs: test
+    if: success()
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive  # For vendor/erfa submodule
+          
+      - name: Initialize ERFA submodule
+        run: |
+          git submodule update --init --recursive
+
+      - name: Install Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          override: true
+
+      - name: Cache cargo + tarpaulin
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cargo/bin
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}-tarpaulin
+
+      - name: Install Tarpaulin (if missing)
+        run: |
+          if ! command -v cargo-tarpaulin &> /dev/null; then
+            cargo install cargo-tarpaulin
+          fi
+
+      - name: Run code coverage
+        run: |
+          cargo tarpaulin --workspace --ignore-tests --out Xml --verbose
+
+      - name: Upload coverage to Codecov
+        if: github.ref == 'refs/heads/main'  # Only upload coverage from main branch
+        uses: codecov/codecov-action@v4
+        with:
+          files: ./cobertura.xml
+          flags: rust
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
