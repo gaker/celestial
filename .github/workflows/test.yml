@@ -73,7 +73,7 @@ jobs:
 
       - name: Run code coverage
         run: |
-          cargo tarpaulin --workspace --ignore-tests --out Xml --verbose
+          cargo tarpaulin --workspace --ignore-tests --out Xml --verbose --exclude-files vendor/*
 
       - name: Upload coverage to Codecov
         if: github.ref == 'refs/heads/main'  # Only upload coverage from main branch
