@@ -22,7 +22,7 @@ use crate::errors::{AstroError, AstroResult, MathErrorKind};
 /// - **Longitude**: Angular distance east or west of the prime meridian (-180° to +180°)  
 /// - **Height**: Distance above the WGS84 reference ellipsoid (not sea level)
 ///
-/// All angular coordinates are stored internally in radians for computational efficiency.
+/// All angular coordinates are stored internally in radians.
 ///
 /// # Examples
 ///
@@ -58,36 +58,65 @@ impl Location {
     /// Create a new Location with validation
     /// 
     /// Creates a location using angular coordinates in radians. Input values are
-    /// validated to ensure they represent a physically meaningful location on Earth.
+    /// validated to ensure they represent a physically meaningful location on Earth's
+    /// WGS84 reference ellipsoid.
     /// 
     /// # Arguments
-    /// * `latitude` - Latitude in radians (positive north, -π/2 ≤ lat ≤ π/2)
-    /// * `longitude` - Longitude in radians (positive east, -π ≤ lon ≤ π) 
-    /// * `height` - Height above WGS84 ellipsoid in meters (-12000 ≤ h ≤ 100000)
     /// 
-    /// # Range Limits
+    /// * `latitude` - Latitude in radians, positive north of equator
+    ///   - Range: [-π/2, π/2] (exactly ±1.5707963267948966 rad)
+    ///   - π/2 = 90.0° (North Pole), -π/2 = -90.0° (South Pole)
+    /// * `longitude` - Longitude in radians, positive east of Prime Meridian
+    ///   - Range: [-π, π] (exactly ±3.141592653589793 rad)  
+    ///   - No wrapping performed - values outside range are rejected
+    /// * `height` - Height above WGS84 reference ellipsoid in meters
+    ///   - Range: [-12000, 100000] m (Dead Sea to edge of space)
+    ///   - Note: This is height above ellipsoid, not mean sea level (MSL)
     /// 
-    /// - Latitude: ±π/2 rad (±90°) - from south pole to north pole
-    /// - Longitude: ±π rad (±180°) - full range around Earth
-    /// - Height: -12000 to +100000 m - from deepest trenches to edge of space
+    /// # Returns
     /// 
-    /// # Panics
+    /// - `Ok(Location)` - Valid location ready for astronomical calculations
+    /// - `Err(AstroError)` - Invalid input with specific validation error
     /// 
-    /// Panics if any coordinate is outside its valid range. Use this constructor
-    /// when you need guaranteed valid coordinates for precision calculations.
+    /// # Errors
     /// 
-    /// # Example
+    /// Returns `AstroError::MathError` with `MathErrorKind::InvalidInput` for:
+    /// 
+    /// - **Non-finite values**: NaN, positive infinity, or negative infinity
+    /// - **Latitude out of range**: |latitude| > π/2 radians  
+    /// - **Longitude out of range**: |longitude| > π radians
+    /// - **Height out of range**: height < -12000 or height > 100000 meters
+    /// 
+    /// # WGS84 Reference System
+    /// 
+    /// This constructor validates coordinates for the World Geodetic System 1984:
+    /// - Semi-major axis (a): 6,378,137.0 m (equatorial radius)
+    /// - Flattening (f): 1/298.257223563 (Earth's oblateness)
+    /// - Eccentricity squared (e²): 0.00669437999014 (derived parameter)
+    /// 
+    /// # Coordinate Conventions
+    /// 
+    /// - **Latitude**: Geodetic latitude (angle between normal to ellipsoid and equatorial plane)
+    /// - **Longitude**: No automatic wrapping - use exactly [-π, π] range
+    /// - **Height**: Perpendicular distance from ellipsoid surface (not orthometric height)
+    ///  
+    /// # Examples
     /// 
     /// ```rust
     /// use astro_core::Location;
-    /// use std::f64::consts::PI;
+    /// use std::f64::consts::{PI, FRAC_PI_2};
     /// 
-    /// let greenwich = Location::new(0.0, 0.0, 0.0);  // Prime meridian, sea level
-    /// let north_pole = Location::new(PI/2.0, 0.0, 0.0);  // 90° N
+    /// // Valid locations
+    /// let greenwich = Location::new(0.0, 0.0, 0.0)?;  // Prime meridian, sea level
+    /// let north_pole = Location::new(FRAC_PI_2, 0.0, 0.0)?;  // Exactly 90° N
+    /// let mauna_kea = Location::new(0.3462, -2.7124, 4207.0)?;  // Observatory
+    /// 
+    /// // This fails - longitude out of range
+    /// let invalid = Location::new(0.0, 4.0, 0.0);  // 4.0 > π
+    /// assert!(invalid.is_err());
+    /// # Ok::<(), astro_core::AstroError>(())
     /// ```
-    pub fn new(latitude: f64, longitude: f64, height: f64) -> AstroResult<Self> {
-        // Input validation for precision astronomical calculations
-        
+    pub fn new(latitude: f64, longitude: f64, height: f64) -> AstroResult<Self> {        
         // Check for NaN or infinite values
         if !latitude.is_finite() {
             return Err(AstroError::math_error(
@@ -116,21 +145,21 @@ impl Location {
             return Err(AstroError::math_error(
                 "location_validation",
                 MathErrorKind::InvalidInput,
-                &format!("Latitude {:.6} rad outside valid range [-π/2, π/2]", latitude)
+                "Latitude outside valid range [-π/2, π/2]"
             ));
         }
         if longitude.abs() > std::f64::consts::PI {
             return Err(AstroError::math_error(
                 "location_validation",
                 MathErrorKind::InvalidInput,
-                &format!("Longitude {:.6} rad outside valid range [-π, π]", longitude)
+                "Longitude outside valid range [-π, π]"
             ));
         }
         if !(-12000.0..=100000.0).contains(&height) {
             return Err(AstroError::math_error(
                 "location_validation",
                 MathErrorKind::InvalidInput,
-                &format!("Height {:.1} m outside reasonable range [-12000, 100000]", height)
+                "Height outside reasonable range [-12000, 100000] meters"
             ));
         }
         
@@ -186,14 +215,14 @@ impl Location {
             return Err(AstroError::math_error(
                 "location_validation",
                 MathErrorKind::InvalidInput,
-                &format!("Latitude {:.6}° outside valid range [-90, 90]", lat_deg)
+                "Latitude outside valid range [-90, 90] degrees"
             ));
         }
         if lon_deg.abs() > 180.0 {
             return Err(AstroError::math_error(
                 "location_validation",
                 MathErrorKind::InvalidInput,
-                &format!("Longitude {:.6}° outside valid range [-180, 180]", lon_deg)
+                "Longitude outside valid range [-180, 180] degrees"
             ));
         }
         
@@ -258,7 +287,7 @@ impl Location {
             return Err(AstroError::math_error(
                 "geocentric_conversion",
                 MathErrorKind::DivisionByZero,
-                &format!("Latitude {:.6} rad causes division by zero in WGS84 conversion", lat)
+                "Latitude too close to critical value causing division by zero"
             ));
         }
         

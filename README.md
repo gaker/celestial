@@ -1,7 +1,8 @@
 # Celestial
 
 [![CI](https://github.com/gaker/celestial/workflows/Rust%20CI/badge.svg)](https://github.com/gaker/celestial/actions)
-[![License: MIT OR Apache-2.0](https://img.shields.io/crates/l/astro-core)](https://github.com/gaker/celestial)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 
 Astronomical computation library for Rust.
 
