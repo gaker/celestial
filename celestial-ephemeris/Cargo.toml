@@ -8,6 +8,7 @@ repository.workspace = true
 description = "Astronomical ephemeris calculations"
 keywords = ["astronomy", "ephemeris", "planets", "vsop", "celestial"]
 categories = ["science"]
+exclude = ["tests/data/de432s.bsp"]
 
 [features]
 serde = ["dep:serde", "celestial-time/serde", "celestial-core/serde", "celestial-coords/serde"]
@@ -39,3 +40,5 @@ serde_json.workspace = true
 tempfile.workspace = true
 tokio.workspace = true
 wiremock.workspace = true
+
+
