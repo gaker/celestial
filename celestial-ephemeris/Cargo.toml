@@ -6,6 +6,8 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "Astronomical ephemeris calculations"
+keywords = ["astronomy", "ephemeris", "planets", "vsop", "celestial"]
+categories = ["science"]
 
 [features]
 serde = ["dep:serde", "celestial-time/serde", "celestial-core/serde", "celestial-coords/serde"]

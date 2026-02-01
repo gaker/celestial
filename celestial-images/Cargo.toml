@@ -6,7 +6,7 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "Pure Rust astronomical image format library (FITS and XISF support)"
-keywords = ["astronomy", "fits", "image", "data", "scientific"]
+keywords = ["astronomy", "fits", "xisf", "image", "scientific"]
 categories = ["science", "parser-implementations"]
 
 [dependencies]

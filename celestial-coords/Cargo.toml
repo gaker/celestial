@@ -6,7 +6,7 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "Astronomical coordinate transformations"
-keywords = ["astronomy", "coordinates", "celestial", "astrometry"]
+keywords = ["astronomy", "coordinates", "celestial", "astrometry", "icrs"]
 categories = ["science"]
 
 [dependencies]

@@ -6,7 +6,7 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "Pure Rust astronomical time scales"
-keywords = ["astronomy", "time", "ephemeris", "julian-date", "coordinates"]
+keywords = ["astronomy", "time", "julian-date", "utc", "tai"]
 categories = ["science", "date-and-time"]
 
 [dependencies]

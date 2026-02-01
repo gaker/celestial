@@ -5,6 +5,9 @@ authors.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
+description = "Core types and utilities for the Celestial astronomy library"
+keywords = ["astronomy", "celestial", "astrometry", "science"]
+categories = ["science"]
 
 [dependencies]
 libm.workspace = true
