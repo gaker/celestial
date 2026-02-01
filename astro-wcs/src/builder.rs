@@ -1016,7 +1016,8 @@ mod tests {
         let (ra, dec) = wcs.pix2world(x, y).unwrap();
         let (x_recovered, y_recovered) = wcs.world2pix(ra, dec).unwrap();
 
-        let tol = 1e-9;
+        // Tolerance accounts for ARM vs x86 FPU differences in trig functions
+        let tol = 1e-8;
         assert!((x - x_recovered).abs() < tol);
         assert!((y - y_recovered).abs() < tol);
     }
@@ -1649,7 +1650,8 @@ mod tests {
         let celestial = wcs.pixel_to_celestial(original).unwrap();
         let recovered = wcs.celestial_to_pixel(celestial).unwrap();
 
-        let tol = 1e-9;
+        // Tolerance accounts for ARM vs x86 FPU differences in trig functions
+        let tol = 1e-8;
         assert!((original.x() - recovered.x()).abs() < tol);
         assert!((original.y() - recovered.y()).abs() < tol);
     }

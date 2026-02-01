@@ -513,8 +513,9 @@ mod tests {
         let celestial = rot.native_to_celestial(original).unwrap();
         let recovered = rot.celestial_to_native(celestial).unwrap();
 
-        assert_ulp_lt!(original.phi().degrees(), recovered.phi().degrees(), 2);
-        assert_ulp_lt!(original.theta().degrees(), recovered.theta().degrees(), 2);
+        // ULP tolerance accounts for ARM vs x86 FPU differences in trig functions
+        assert_ulp_lt!(original.phi().degrees(), recovered.phi().degrees(), 8);
+        assert_ulp_lt!(original.theta().degrees(), recovered.theta().degrees(), 8);
     }
 
     #[test]

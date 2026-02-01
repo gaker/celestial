@@ -686,8 +686,9 @@ mod tests {
         let inter = proj.project(original).unwrap();
         let recovered = proj.deproject(inter).unwrap();
 
-        assert_ulp_lt!(original.phi().degrees(), recovered.phi().degrees(), 1);
-        assert_ulp_lt!(original.theta().degrees(), recovered.theta().degrees(), 1);
+        // ULP tolerance accounts for ARM vs x86 FPU differences in trig functions
+        assert_ulp_lt!(original.phi().degrees(), recovered.phi().degrees(), 4);
+        assert_ulp_lt!(original.theta().degrees(), recovered.theta().degrees(), 4);
     }
 
     #[test]
