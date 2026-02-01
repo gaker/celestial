@@ -7,7 +7,18 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+libm.workspace = true
+once_cell.workspace = true
+regex.workspace = true
+serde = { workspace = true, optional = true }
 thiserror.workspace = true
 
+[features]
+default = []
+serde = ["dep:serde"]
+# Internal feature for testing against ERFA reference implementation
+erfa-tests = []
+
 [dev-dependencies]
-erfa-sys = { path = "../erfa-sys" }
+serde.workspace = true
+serde_json.workspace = true

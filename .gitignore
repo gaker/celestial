@@ -3,9 +3,11 @@ target/
 Cargo.lock
 .ipynb_checkpoints/
 build_rs_cov.profraw
+*.fits
+_tmp/*
+vendor/*
+vsop2013/*
 
-# Test data dumping ground
-dumping-ground/
 
 # Python
 __pycache__/

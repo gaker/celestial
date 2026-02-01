@@ -1,137 +1,54 @@
 # astro-core
 
-Basic types for astronomical calculations in Rust.
+Low-level astronomical calculations for coordinate transformations.
 
 [![Crates.io](https://img.shields.io/crates/v/astro-core)](https://crates.io/crates/astro-core)
 [![Documentation](https://docs.rs/astro-core/badge.svg)](https://docs.rs/astro-core)
 [![License: MIT OR Apache-2.0](https://img.shields.io/crates/l/astro-core)](https://github.com/gaker/celestial)
 
-## Overview
+Pure Rust implementation of IAU 2000/2006 standards for celestial mechanics: rotation matrices, nutation/precession models, angle handling, and geodetic conversions. No runtime FFI.
 
-Common types used in astronomical calculations. Includes Earth location handling, error types, and physical constants.
-
-## What's included
-
-- Earth locations using WGS84 ellipsoid
-- Error types for astronomical calculations 
-- Physical constants (speed of light, Earth radius, etc.)
-- Geocentric coordinate conversions
-
-## Quick Start
-
-Add to your `Cargo.toml`:
+## Installation
 
 ```toml
 [dependencies]
 astro-core = "0.1"
 ```
 
-## Examples
+## Modules
 
-### Working with Observatory Locations
+| Module        | Purpose                                                   |
+|---------------|-----------------------------------------------------------|
+| `angle`       | Angle types, parsing (HMS/DMS), normalization, validation |
+| `matrix`      | 3×3 rotation matrices and 3D vectors                      |
+| `nutation`    | IAU 2000A/2000B/2006A nutation models                     |
+| `precession`  | IAU 2000/2006 precession (Fukushima-Williams angles)      |
+| `cio`         | CIO-based GCRS↔CIRS transformations                       |
+| `obliquity`   | Mean obliquity of the ecliptic (IAU 1980, 2006)           |
+| `location`    | Observer geodetic coordinates, geocentric conversion      |
+| `constants`   | Astronomical constants (J2000, WGS84, unit conversions)   |
 
-```rust
-use astro_core::Location;
-
-// Create a location for Mauna Kea Observatory
-let mauna_kea = Location::from_degrees(19.8283, -155.4783, 4207.0);
-
-// Get geocentric coordinates for Earth rotation calculations
-let (u, v) = mauna_kea.to_geocentric_km();
-println!("Distance from Earth's axis: {:.3} km", u);
-println!("Distance north of equator: {:.3} km", v);
-
-// Validate coordinates
-if mauna_kea.is_valid() {
-    println!("Valid observatory location");
-}
-```
-
-### Error Handling
+## Example
 
 ```rust
-use astro_core::{AstroError, AstroResult, MathErrorKind};
+use astro_core::nutation::NutationIAU2006A;
+use astro_core::constants::J2000_JD;
 
-fn calculate_something() -> AstroResult<f64> {
-    // Example calculation that might fail
-    if some_condition {
-        return Err(AstroError::math_error(
-            "calculation_name",
-            MathErrorKind::InvalidInput,
-            "input out of range"
-        ));
-    }
-    Ok(42.0)
-}
-
-match calculate_something() {
-    Ok(result) => println!("Result: {}", result),
-    Err(e) => eprintln!("Error: {}", e),
-}
+// Compute nutation at J2000.0
+let nutation = NutationIAU2006A::new().compute(J2000_JD, 0.0).unwrap();
+println!("Δψ = {:.6}″", nutation.delta_psi * 206264.806); // radians to arcsec
+println!("Δε = {:.6}″", nutation.delta_eps * 206264.806);
 ```
 
-### Using Physical Constants
+## Features
 
-```rust
-use astro_core::constants::*;
+- **`serde`** — Enables serialization for `Angle` and other types
 
-// Earth's equatorial radius in meters
-println!("Earth radius: {} m", EARTH_RADIUS_EQUATORIAL_M);
+## Design Notes
 
-// Speed of light
-println!("Speed of light: {} m/s", SPEED_OF_LIGHT_M_PER_S);
-```
-
-## Types
-
-### Location
-
-Earth surface positions with WGS84 ellipsoid support:
-
-```rust
-pub struct Location {
-    latitude_rad: f64,   // Geodetic latitude in radians
-    longitude_rad: f64,  // Longitude in radians  
-    altitude_m: f64,     // Height above WGS84 ellipsoid in meters
-}
-```
-
-Key methods:
-- `from_degrees(lat, lon, alt)` - Create from degrees and meters
-- `to_geocentric_km()` - Get geocentric coordinates for Earth rotation
-- `is_valid()` - Validate coordinate ranges
-
-### Error Types
-
-Standardized error handling with specific contexts:
-
-- `AstroError::InvalidDate` - Calendar date validation failures
-- `AstroError::MathError` - Numerical computation problems
-- `AstroError::ExternalLibraryError` - C library function failures
-- `AstroError::DataError` - External data file issues
-- `AstroError::CalculationError` - General calculation failures
-
-## Precision
-
-- Geographic coordinates use f64 precision
-- Geocentric conversions validated against ERFA/SOFA
-- Physical constants match IAU recommendations
-
-## Standards
-
-- WGS84 ellipsoid (NIMA TR8350.2)
-- IAU/CODATA physical constants
-- Standard coordinate system definitions
-
-## Related crates
-
-- `astro-time` - Time calculations
-- `astro-coords` - Coordinate transformations (planned)
-- `astro-earth` - Earth rotation models (planned)
-
-## Minimum Supported Rust Version
-
-Rust 1.70 or later.
+- **Two-part Julian Dates**: Functions accept `(jd1, jd2)` to preserve precision. Typically `jd1 = 2451545.0` (J2000.0) and `jd2` is days from epoch.
+- **Radians internally**: All angular computations use radians. The `Angle` type provides conversion methods for degrees/HMS/DMS display.
+- **Stateless models**: Nutation and precession calculators have no internal state. Call `compute(jd1, jd2)` with any epoch.
 
 ## License
 
@@ -139,8 +56,6 @@ Licensed under either of:
 
 - Apache License, Version 2.0
 - MIT License
-
-at your option.
 
 ## Contributing
 

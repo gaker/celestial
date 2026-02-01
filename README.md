@@ -4,53 +4,67 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 
-Astronomical computation library for Rust.
+Pure Rust astronomical computation library. No runtime FFI.
 
-## Status
+## Crates
 
-Early development. Only `astro-core` for now
+### astro-core
 
-## What's Available
-
-### astro-core [![Crates.io](https://img.shields.io/crates/v/astro-core)](https://crates.io/crates/astro-core)
-
-Basic types for astronomical calculations:
-
-- Earth locations using WGS84 ellipsoid
-- Error types for astronomical calculations
-- Physical constants (speed of light, Earth radius, etc.)
+Low-level astronomical calculations: IAU 2000/2006 nutation/precession models, rotation matrices, angle handling, geodetic conversions.
 
 ```toml
 [dependencies]
 astro-core = "0.1"
 ```
 
-```rust
-use astro_core::Location;
+### astro-time
 
-// Create a location for Mauna Kea Observatory
-let mauna_kea = Location::from_degrees(19.8283, -155.4783, 4207.0)?;
+8 astronomical time scales (UTC, TAI, TT, UT1, GPS, TDB, TCB, TCG) with nanosecond-precision Julian Dates, leap second support, and IAU-standard sidereal time.
 
-// Get geocentric coordinates for Earth rotation calculations
-let (u, v) = mauna_kea.to_geocentric_km()?;
-println!("Distance from Earth's axis: {:.3} km", u);
+```toml
+[dependencies]
+astro-time = "0.1"
 ```
 
-### erfa-sys
+### astro-coords
 
-Low-level FFI bindings to the ERFA astronomical library. Used internally for validation and reference implementations.
+Type-safe coordinate frame transformations (ICRS, CIRS, GCRS, TIRS, ITRS, Galactic, Ecliptic, Topocentric) with aberration, light deflection, and Earth orientation support.
 
-## Planned
+```toml
+[dependencies]
+astro-coords = "0.1"
+```
 
-- `astro-time`: High-precision time handling (nanosecond accuracy)
-- `astro-coords`: Coordinate transformations
-- `astro-earth`: Earth rotation models
+### astro-ephemeris
+
+Planetary and lunar ephemerides using VSOP2013 and ELP/MPP02 theories. JPL SPK kernel support.
+
+```toml
+[dependencies]
+astro-ephemeris = "0.1"
+```
+
+### astro-images
+
+FITS, XISF, and SER image format support with compression (Gzip, Rice), binary/ASCII tables, and Bayer demosaicing.
+
+```toml
+[dependencies]
+astro-images = "0.1"
+```
+
+### astro-wcs
+
+World Coordinate System (WCS) transformations for FITS images. Pixel to celestial coordinate mapping with distortion support.
+
+```toml
+[dependencies]
+astro-wcs = "0.1"
+```
 
 ## Development
 
-This is early stage development. The API will change. Don't use this. If you want to help. Reach out.
-
-Each crate has its own README with detailed documentation.
+Early stage. API will change. Each crate has its own README with detailed documentation.
 
 ## Requirements
 
@@ -58,4 +72,4 @@ Rust 1.70 or later.
 
 ## License
 
-Licensed under either Apache 2.0 or MIT at your option.
+Licensed under either Apache 2.0 or MIT.
