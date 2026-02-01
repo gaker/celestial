@@ -10,7 +10,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.1.1-alpha.1"
+version = "0.1.1-alpha.2"
 authors = ["@gaker"]
 edition = "2021"
 license = "MIT OR Apache-2.0"
@@ -18,12 +18,12 @@ repository = "https://github.com/gaker/celestial"
 
 [workspace.dependencies]
 # Internal crates
-celestial-core = { version = "0.1.1-alpha.1", path = "celestial-core" }
-celestial-time = { version = "0.1.1-alpha.1", path = "celestial-time" }
-celestial-coords = { version = "0.1.1-alpha.1", path = "celestial-coords" }
-celestial-ephemeris = { version = "0.1.1-alpha.1", path = "celestial-ephemeris" }
-celestial-images = { version = "0.1.1-alpha.1", path = "celestial-images" }
-celestial-wcs = { version = "0.1.1-alpha.1", path = "celestial-wcs" }
+celestial-core = { version = "0.1.1-alpha.2", path = "celestial-core" }
+celestial-time = { version = "0.1.1-alpha.2", path = "celestial-time" }
+celestial-coords = { version = "0.1.1-alpha.2", path = "celestial-coords" }
+celestial-ephemeris = { version = "0.1.1-alpha.2", path = "celestial-ephemeris" }
+celestial-images = { version = "0.1.1-alpha.2", path = "celestial-images" }
+celestial-wcs = { version = "0.1.1-alpha.2", path = "celestial-wcs" }
 
 # External dependencies (alphabetical)
 approx = "0.5"
