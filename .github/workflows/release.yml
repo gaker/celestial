@@ -26,12 +26,12 @@ jobs:
         run: |
           # Publish order based on dependency graph
           crates=(
-            "astro-core"
-            "astro-time"
-            "astro-coords"
-            "astro-wcs"
-            "astro-ephemeris"
-            "astro-images"
+            "celestial-core"
+            "celestial-time"
+            "celestial-coords"
+            "celestial-wcs"
+            "celestial-ephemeris"
+            "celestial-images"
           )
 
           for crate in "${crates[@]}"; do

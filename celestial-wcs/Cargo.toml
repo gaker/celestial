@@ -1,0 +1,19 @@
+[package]
+name = "celestial-wcs"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Pure Rust implementation of World Coordinate System (WCS) transformations"
+keywords = ["astronomy", "wcs", "coordinates", "fits", "celestial"]
+categories = ["science", "algorithms"]
+
+[dependencies]
+celestial-core.workspace = true
+celestial-coords.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+approx.workspace = true
+proptest.workspace = true

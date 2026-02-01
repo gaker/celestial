@@ -8,58 +8,58 @@ Pure Rust astronomical computation library. No runtime FFI.
 
 ## Crates
 
-### astro-core
+### celestial-core
 
 Low-level astronomical calculations: IAU 2000/2006 nutation/precession models, rotation matrices, angle handling, geodetic conversions.
 
 ```toml
 [dependencies]
-astro-core = "0.1"
+celestial-core = "0.1"
 ```
 
-### astro-time
+### celestial-time
 
 8 astronomical time scales (UTC, TAI, TT, UT1, GPS, TDB, TCB, TCG) with nanosecond-precision Julian Dates, leap second support, and IAU-standard sidereal time.
 
 ```toml
 [dependencies]
-astro-time = "0.1"
+celestial-time = "0.1"
 ```
 
-### astro-coords
+### celestial-coords
 
 Type-safe coordinate frame transformations (ICRS, CIRS, GCRS, TIRS, ITRS, Galactic, Ecliptic, Topocentric) with aberration, light deflection, and Earth orientation support.
 
 ```toml
 [dependencies]
-astro-coords = "0.1"
+celestial-coords = "0.1"
 ```
 
-### astro-ephemeris
+### celestial-ephemeris
 
 Planetary and lunar ephemerides using VSOP2013 and ELP/MPP02 theories. JPL SPK kernel support.
 
 ```toml
 [dependencies]
-astro-ephemeris = "0.1"
+celestial-ephemeris = "0.1"
 ```
 
-### astro-images
+### celestial-images
 
 FITS, XISF, and SER image format support with compression (Gzip, Rice), binary/ASCII tables, and Bayer demosaicing.
 
 ```toml
 [dependencies]
-astro-images = "0.1"
+celestial-images = "0.1"
 ```
 
-### astro-wcs
+### celestial-wcs
 
 World Coordinate System (WCS) transformations for FITS images. Pixel to celestial coordinate mapping with distortion support.
 
 ```toml
 [dependencies]
-astro-wcs = "0.1"
+celestial-wcs = "0.1"
 ```
 
 ## Development

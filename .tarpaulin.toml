@@ -5,5 +5,5 @@ skip-clean = true
 out = ["Lcov", "Json"]
 output-dir = "target/tarpaulin"
 exclude-files = [
-    "astro-core/src/test_helpers.rs"
+    "celestial-core/src/test_helpers.rs"
 ]

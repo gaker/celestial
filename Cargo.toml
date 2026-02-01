@@ -1,12 +1,12 @@
 [workspace]
 resolver = "2"
 members = [
-    "astro-coords",
-    "astro-core",
-    "astro-ephemeris",
-    "astro-time",
-    "astro-images",
-    "astro-wcs",
+    "celestial-coords",
+    "celestial-core",
+    "celestial-ephemeris",
+    "celestial-time",
+    "celestial-images",
+    "celestial-wcs",
 ]
 
 [workspace.package]
@@ -18,12 +18,12 @@ repository = "https://github.com/gaker/celestial"
 
 [workspace.dependencies]
 # Internal crates
-astro-core = { version = "0.1.0", path = "astro-core" }
-astro-time = { version = "0.1.0", path = "astro-time" }
-astro-coords = { version = "0.1.0", path = "astro-coords" }
-astro-ephemeris = { version = "0.1.0", path = "astro-ephemeris" }
-astro-images = { version = "0.1.0", path = "astro-images" }
-astro-wcs = { version = "0.1.0", path = "astro-wcs" }
+celestial-core = { version = "0.1.0", path = "celestial-core" }
+celestial-time = { version = "0.1.0", path = "celestial-time" }
+celestial-coords = { version = "0.1.0", path = "celestial-coords" }
+celestial-ephemeris = { version = "0.1.0", path = "celestial-ephemeris" }
+celestial-images = { version = "0.1.0", path = "celestial-images" }
+celestial-wcs = { version = "0.1.0", path = "celestial-wcs" }
 
 # External dependencies (alphabetical)
 approx = "0.5"

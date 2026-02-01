@@ -1,0 +1,39 @@
+[package]
+name = "celestial-ephemeris"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Astronomical ephemeris calculations"
+
+[features]
+serde = ["dep:serde", "celestial-time/serde", "celestial-core/serde", "celestial-coords/serde"]
+cli = ["dep:clap", "dep:reqwest", "dep:chrono"]
+
+[dependencies]
+celestial-coords.workspace = true
+celestial-core.workspace = true
+celestial-time.workspace = true
+chrono = { workspace = true, optional = true }
+clap = { workspace = true, optional = true }
+memmap2.workspace = true
+reqwest = { workspace = true, optional = true, features = ["blocking"] }
+serde = { workspace = true, optional = true }
+
+[[bin]]
+name = "vsop2013-gen"
+path = "src/bin/vsop2013_gen/main.rs"
+required-features = ["cli"]
+
+[[bin]]
+name = "elpmpp02-gen"
+path = "src/bin/elpmpp02_gen/main.rs"
+required-features = ["cli"]
+
+[dev-dependencies]
+serde.workspace = true
+serde_json.workspace = true
+tempfile.workspace = true
+tokio.workspace = true
+wiremock.workspace = true
