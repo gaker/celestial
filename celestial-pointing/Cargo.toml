@@ -1,0 +1,31 @@
+[package]
+name = "celestial-pointing"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Telescope pointing model fitting and correction"
+keywords = ["astronomy", "telescope", "pointing", "tpoint", "astrometry"]
+categories = ["science"]
+
+[dependencies]
+celestial-core.workspace = true
+celestial-coords.workspace = true
+celestial-time.workspace = true
+thiserror.workspace = true
+regex.workspace = true
+rayon.workspace = true
+nalgebra = "0.34"
+bitflags = "2.10"
+rustyline = "14"
+dirs = "5"
+plotters = { version = "0.3", default-features = false, features = ["svg_backend"] }
+textplots = "0.8"
+
+[[bin]]
+name = "pointing"
+path = "src/bin/pointing.rs"
+
+[dev-dependencies]
+approx.workspace = true

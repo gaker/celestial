@@ -6,6 +6,7 @@ members = [
     "celestial-ephemeris",
     "celestial-time",
     "celestial-images",
+    "celestial-pointing",
     "celestial-wcs",
 ]
 
@@ -23,6 +24,7 @@ celestial-time = { version = "0.1.1-alpha.1", path = "celestial-time" }
 celestial-coords = { version = "0.1.1-alpha.1", path = "celestial-coords" }
 celestial-ephemeris = { version = "0.1.1-alpha.1", path = "celestial-ephemeris" }
 celestial-images = { version = "0.1.1-alpha.1", path = "celestial-images" }
+celestial-pointing = { version = "0.1.1-alpha.1", path = "celestial-pointing" }
 celestial-wcs = { version = "0.1.1-alpha.1", path = "celestial-wcs" }
 
 # External dependencies (alphabetical)
