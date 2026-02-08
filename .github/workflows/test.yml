@@ -14,12 +14,6 @@ jobs:
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
-        with:
-          submodules: recursive  # For vendor/erfa submodule
-          
-      - name: Initialize ERFA submodule
-        run: |
-          git submodule update --init --recursive
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -41,12 +35,6 @@ jobs:
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
-        with:
-          submodules: recursive  # For vendor/erfa submodule
-          
-      - name: Initialize ERFA submodule
-        run: |
-          git submodule update --init --recursive
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -78,3 +66,4 @@ jobs:
           flags: rust
         env:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+          
