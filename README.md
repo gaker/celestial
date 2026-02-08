@@ -53,6 +53,15 @@ FITS, XISF, and SER image format support with compression (Gzip, Rice), binary/A
 celestial-images = "0.1"
 ```
 
+### celestial-pointing
+
+```toml
+[dependencies]
+celestial-pointing = "0.1"
+```
+
+Build, fit, and apply telescope pointing models using standard equatorial and harmonic terms. Interactive REPL with TPOINT-compatible workflow: load observations, fit models via least-squares, analyze residuals with plots, and export corrections.
+
 ### celestial-wcs
 
 World Coordinate System (WCS) transformations for FITS images. Pixel to celestial coordinate mapping with distortion support.
