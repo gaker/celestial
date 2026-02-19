@@ -151,7 +151,7 @@ impl NutationIAU2000A {
                 TWOPI,
             );
 
-            let (sarg, carg) = arg.sin_cos();
+            let (sarg, carg) = libm::sincos(arg);
 
             dpsi += (term.5 + term.6 * t) * sarg + term.7 * carg;
             deps += (term.8 + term.9 * t) * carg + term.10 * sarg;
@@ -216,7 +216,7 @@ impl NutationIAU2000A {
                 TWOPI,
             );
 
-            let (sarg, carg) = arg.sin_cos();
+            let (sarg, carg) = libm::sincos(arg);
 
             dpsi += (sp as f64) * sarg + (cp as f64) * carg;
             deps += (se as f64) * sarg + (ce as f64) * carg;

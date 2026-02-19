@@ -77,7 +77,7 @@ impl Location {
         let lat = self.latitude;
         let height_km = self.height / 1000.0;
 
-        let (sin_lat, cos_lat) = lat.sin_cos();
+        let (sin_lat, cos_lat) = libm::sincos(lat);
 
         let denominator = 1.0 - WGS84_ECCENTRICITY_SQUARED * sin_lat * sin_lat;
         if denominator <= f64::EPSILON {
@@ -88,7 +88,7 @@ impl Location {
             ));
         }
 
-        let n = WGS84_SEMI_MAJOR_AXIS_KM / denominator.sqrt();
+        let n = WGS84_SEMI_MAJOR_AXIS_KM / libm::sqrt(denominator);
 
         let u = (n + height_km) * cos_lat;
 
@@ -128,7 +128,7 @@ impl Location {
     pub fn to_geocentric_meters(&self) -> AstroResult<(f64, f64)> {
         let height_m = self.height;
 
-        let (phi_sin, phi_cos) = self.latitude.sin_cos();
+        let (phi_sin, phi_cos) = libm::sincos(self.latitude);
 
         let wgs_flattened = 1.0 / 298.257223563;
         let axis_ratio = 1.0 - wgs_flattened;
@@ -143,7 +143,7 @@ impl Location {
             ));
         }
 
-        let prime_vertical_radius = WGS84_SEMI_MAJOR_AXIS / norm_sq.sqrt();
+        let prime_vertical_radius = WGS84_SEMI_MAJOR_AXIS / libm::sqrt(norm_sq);
         let as_val = axis_ratio_sq * prime_vertical_radius;
 
         let equatorial_radius = (prime_vertical_radius + height_m) * phi_cos;

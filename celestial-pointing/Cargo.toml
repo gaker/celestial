@@ -13,6 +13,7 @@ categories = ["science"]
 celestial-core.workspace = true
 celestial-coords.workspace = true
 celestial-time.workspace = true
+libm.workspace = true
 thiserror.workspace = true
 regex.workspace = true
 rayon.workspace = true

@@ -16,7 +16,7 @@ impl LightTimeCorrection {
     }
 
     pub fn from_position_vector(pos: Vector3) -> Self {
-        let distance_au = (pos.x.powi(2) + pos.y.powi(2) + pos.z.powi(2)).sqrt();
+        let distance_au = libm::sqrt(pos.x.powi(2) + pos.y.powi(2) + pos.z.powi(2));
         let light_time_days = distance_au / C_AU_PER_DAY;
 
         Self { light_time_days }
@@ -81,10 +81,11 @@ impl LightTimeCorrection {
             let new_corrected =
                 Vector3::new(pos.x - vel.x * t, pos.y - vel.y * t, pos.z - vel.z * t);
 
-            let delta = ((new_corrected.x - corrected.x).powi(2)
-                + (new_corrected.y - corrected.y).powi(2)
-                + (new_corrected.z - corrected.z).powi(2))
-            .sqrt();
+            let delta = libm::sqrt(
+                (new_corrected.x - corrected.x).powi(2)
+                    + (new_corrected.y - corrected.y).powi(2)
+                    + (new_corrected.z - corrected.z).powi(2),
+            );
 
             corrected = new_corrected;
 

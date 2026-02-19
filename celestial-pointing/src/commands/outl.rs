@@ -1,23 +1,29 @@
+use super::{Command, CommandOutput};
 use crate::error::{Error, Result};
 use crate::session::Session;
-use super::{Command, CommandOutput};
 
 pub struct Outl;
 
 impl Command for Outl {
-    fn name(&self) -> &str { "OUTL" }
-    fn description(&self) -> &str { "Identify outlier observations" }
+    fn name(&self) -> &str {
+        "OUTL"
+    }
+    fn description(&self) -> &str {
+        "Identify outlier observations"
+    }
 
     fn execute(&self, session: &mut Session, args: &[&str]) -> Result<CommandOutput> {
         if args.is_empty() {
             return Err(Error::Parse("OUTL requires a sigma threshold".into()));
         }
-        let threshold: f64 = args[0].parse()
+        let threshold: f64 = args[0]
+            .parse()
             .map_err(|e| Error::Parse(format!("invalid threshold: {}", e)))?;
-        let do_mask = args.get(1)
-            .is_some_and(|a| a.eq_ignore_ascii_case("M"));
+        let do_mask = args.get(1).is_some_and(|a| a.eq_ignore_ascii_case("M"));
 
-        let fit = session.last_fit.as_ref()
+        let fit = session
+            .last_fit
+            .as_ref()
             .ok_or_else(|| Error::Fit("no fit results available (run FIT first)".into()))?;
         let rms = fit.sky_rms;
         let cutoff = threshold * rms;
@@ -37,8 +43,8 @@ impl Command for Outl {
             let raw_dd = (obs.observed_dec - obs.catalog_dec).arcseconds();
             let dh = raw_dh - model_dh;
             let dd = raw_dd - model_dd;
-            let dx = dh * dec.cos();
-            let dr = (dx * dx + dd * dd).sqrt();
+            let dx = dh * libm::cos(dec);
+            let dr = libm::sqrt(dx * dx + dd * dd);
             if dr > cutoff {
                 outliers.push((i, dr));
             }

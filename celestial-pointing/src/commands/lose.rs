@@ -1,12 +1,16 @@
+use super::{Command, CommandOutput};
 use crate::error::Result;
 use crate::session::Session;
-use super::{Command, CommandOutput};
 
 pub struct Lose;
 
 impl Command for Lose {
-    fn name(&self) -> &str { "LOSE" }
-    fn description(&self) -> &str { "Remove term(s) from model" }
+    fn name(&self) -> &str {
+        "LOSE"
+    }
+    fn description(&self) -> &str {
+        "Remove term(s) from model"
+    }
 
     fn execute(&self, session: &mut Session, args: &[&str]) -> Result<CommandOutput> {
         if args.is_empty() {

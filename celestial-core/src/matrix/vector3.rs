@@ -200,7 +200,7 @@ impl Vector3 {
     /// For a unit vector, this returns 1.0. For the zero vector, returns 0.0.
     #[inline]
     pub fn magnitude(&self) -> f64 {
-        (self.x * self.x + self.y * self.y + self.z * self.z).sqrt()
+        libm::sqrt(self.x * self.x + self.y * self.y + self.z * self.z)
     }
 
     /// Returns the squared magnitude.
@@ -312,8 +312,8 @@ impl Vector3 {
     /// assert!((v.z - 1.0).abs() < 1e-15);
     /// ```
     pub fn from_spherical(ra: f64, dec: f64) -> Self {
-        let (sin_ra, cos_ra) = ra.sin_cos();
-        let (sin_dec, cos_dec) = dec.sin_cos();
+        let (sin_ra, cos_ra) = libm::sincos(ra);
+        let (sin_dec, cos_dec) = libm::sincos(dec);
         Self::new(cos_dec * cos_ra, cos_dec * sin_ra, sin_dec)
     }
 
@@ -338,11 +338,15 @@ impl Vector3 {
     pub fn to_spherical(&self) -> (f64, f64) {
         let d2 = self.x * self.x + self.y * self.y;
 
-        let theta = if d2 == 0.0 { 0.0 } else { self.y.atan2(self.x) };
+        let theta = if d2 == 0.0 {
+            0.0
+        } else {
+            libm::atan2(self.y, self.x)
+        };
         let phi = if self.z == 0.0 {
             0.0
         } else {
-            self.z.atan2(d2.sqrt())
+            libm::atan2(self.z, libm::sqrt(d2))
         };
 
         (theta, phi)

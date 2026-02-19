@@ -162,17 +162,21 @@ impl Location {
             ));
         }
 
-        Self::new(lat_deg.to_radians(), lon_deg.to_radians(), height_m)
+        Self::new(
+            lat_deg * crate::constants::DEG_TO_RAD,
+            lon_deg * crate::constants::DEG_TO_RAD,
+            height_m,
+        )
     }
 
     /// Returns the latitude in degrees.
     pub fn latitude_degrees(&self) -> f64 {
-        self.latitude.to_degrees()
+        self.latitude * crate::constants::RAD_TO_DEG
     }
 
     /// Returns the longitude in degrees.
     pub fn longitude_degrees(&self) -> f64 {
-        self.longitude.to_degrees()
+        self.longitude * crate::constants::RAD_TO_DEG
     }
 
     /// Returns the latitude as an [`Angle`](crate::Angle).

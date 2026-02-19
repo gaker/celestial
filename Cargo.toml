@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
+    "celestial-catalog",
     "celestial-coords",
     "celestial-core",
     "celestial-ephemeris",
@@ -19,6 +20,7 @@ repository = "https://github.com/gaker/celestial"
 
 [workspace.dependencies]
 # Internal crates
+celestial-catalog = { version = "0.1.0-alpha.1", path = "celestial-catalog" }
 celestial-core = { version = "0.1.1-alpha.1", path = "celestial-core" }
 celestial-time = { version = "0.1.1-alpha.1", path = "celestial-time" }
 celestial-coords = { version = "0.1.1-alpha.1", path = "celestial-coords" }
@@ -27,7 +29,10 @@ celestial-images = { version = "0.1.1-alpha.1", path = "celestial-images" }
 celestial-pointing = { version = "0.1.1-alpha.1", path = "celestial-pointing" }
 celestial-wcs = { version = "0.1.1-alpha.1", path = "celestial-wcs" }
 
-# External dependencies (alphabetical)
+celestial-eop-data = { version = "0.1.0", path = "../celestial-eop-data" }
+
+# External dependencies
+anyhow = "1.0"
 approx = "0.5"
 byteorder = "1.5"
 cc = "1.0"
@@ -35,9 +40,11 @@ chrono = "0.4"
 clap = { version = "4.5", features = ["derive"] }
 crc32fast = "1.4"
 criterion = "0.5"
+csv = "1.4"
 flate2 = "1.0"
 glob = "0.3"
-libm = "0.2.11"
+indicatif = "0.18"
+libm = "0.2"
 lz4_flex = "0.11"
 memmap2 = "0.9"
 mockito = "1.0"

@@ -151,22 +151,33 @@ mod tests {
         assert_eq!(GPS::new(0, 0).to_julian_date().to_f64(), UNIX_EPOCH_JD);
         assert_eq!(GPS::j2000().to_julian_date().to_f64(), J2000_JD);
         assert_eq!(
-            gps_from_calendar(2000, 1, 1, 12, 0, 0.0).to_julian_date().to_f64(),
+            gps_from_calendar(2000, 1, 1, 12, 0, 0.0)
+                .to_julian_date()
+                .to_f64(),
             J2000_JD
         );
 
         let jd = JulianDate::new(J2000_JD, 0.123456789);
         let gps_direct = GPS::from_julian_date(jd);
         let gps_from_trait: GPS = jd.into();
-        assert_eq!(gps_direct.to_julian_date().jd1(), gps_from_trait.to_julian_date().jd1());
-        assert_eq!(gps_direct.to_julian_date().jd2(), gps_from_trait.to_julian_date().jd2());
+        assert_eq!(
+            gps_direct.to_julian_date().jd1(),
+            gps_from_trait.to_julian_date().jd1()
+        );
+        assert_eq!(
+            gps_direct.to_julian_date().jd2(),
+            gps_from_trait.to_julian_date().jd2()
+        );
     }
 
     #[test]
     fn test_gps_arithmetic() {
         let gps = GPS::j2000();
         assert_eq!(gps.add_days(1.0).to_julian_date().to_f64(), J2000_JD + 1.0);
-        assert_eq!(gps.add_seconds(3600.0).to_julian_date().to_f64(), J2000_JD + 1.0 / 24.0);
+        assert_eq!(
+            gps.add_seconds(3600.0).to_julian_date().to_f64(),
+            J2000_JD + 1.0 / 24.0
+        );
     }
 
     #[test]
@@ -179,7 +190,10 @@ mod tests {
     #[test]
     fn test_gps_string_parsing() {
         assert_eq!(
-            GPS::from_str("2000-01-01T12:00:00").unwrap().to_julian_date().to_f64(),
+            GPS::from_str("2000-01-01T12:00:00")
+                .unwrap()
+                .to_julian_date()
+                .to_f64(),
             GPS::j2000().to_julian_date().to_f64()
         );
 
@@ -207,7 +221,11 @@ mod tests {
 
             let total_diff =
                 (original.to_julian_date().to_f64() - deserialized.to_julian_date().to_f64()).abs();
-            assert!(total_diff < 1e-14, "serde precision loss: {:.2e}", total_diff);
+            assert!(
+                total_diff < 1e-14,
+                "serde precision loss: {:.2e}",
+                total_diff
+            );
         }
     }
 }

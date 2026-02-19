@@ -15,11 +15,7 @@ pub fn scatter_terminal(
     format!("{title}\n  {y_label} vs {x_label}\n{chart_body}")
 }
 
-pub fn histogram_terminal(
-    values: &[f64],
-    title: &str,
-    label: &str,
-) -> String {
+pub fn histogram_terminal(values: &[f64], title: &str, label: &str) -> String {
     if values.is_empty() {
         return format!("{title}\n  (no data)\n");
     }
@@ -88,7 +84,7 @@ fn bin_values(values: &[f64], n_bins: usize) -> (Vec<usize>, f64, f64) {
     let bin_width = range / n_bins as f64;
     let mut bins = vec![0usize; n_bins];
     for &v in values {
-        let idx = ((v - min_val) / bin_width).floor() as usize;
+        let idx = libm::floor((v - min_val) / bin_width) as usize;
         bins[idx.min(n_bins - 1)] += 1;
     }
     (bins, bin_width, min_val)
@@ -104,5 +100,5 @@ fn mean_sigma(values: &[f64]) -> (f64, f64) {
     let n = values.len() as f64;
     let mean = values.iter().sum::<f64>() / n;
     let variance = values.iter().map(|&v| (v - mean).powi(2)).sum::<f64>() / n;
-    (mean, variance.sqrt())
+    (mean, libm::sqrt(variance))
 }

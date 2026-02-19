@@ -14,7 +14,7 @@ pub(crate) fn project_cop(native: NativeCoord, theta_a_deg: f64) -> WcsResult<In
 
     check_nonzero_param(theta_a, "COP projection: theta_a")?;
 
-    let (sigma_s, sigma_c) = theta_a.sin_cos();
+    let (sigma_s, sigma_c) = libm::sincos(theta_a);
     let c = sigma_s;
 
     if theta.abs() < 1e-10 {
@@ -23,7 +23,7 @@ pub(crate) fn project_cop(native: NativeCoord, theta_a_deg: f64) -> WcsResult<In
         ));
     }
 
-    let (theta_s, theta_c) = theta.sin_cos();
+    let (theta_s, theta_c) = libm::sincos(theta);
     let r_theta = sigma_s * theta_c / theta_s;
     let y0 = sigma_c; // sigma / tan(theta_a) = sin(theta_a) * cos(theta_a) / sin(theta_a) = cos(theta_a)
 
@@ -37,7 +37,7 @@ pub(crate) fn deproject_cop(inter: IntermediateCoord, theta_a_deg: f64) -> WcsRe
 
     check_nonzero_param(theta_a, "COP projection: theta_a")?;
 
-    let (sigma_s, sigma_c) = theta_a.sin_cos();
+    let (sigma_s, sigma_c) = libm::sincos(theta_a);
     let y0 = sigma_c; // sigma / tan(theta_a) = cos(theta_a)
 
     let (phi, r_unsigned) = deproject_conic_polar(x, y, y0, theta_a);
@@ -49,7 +49,7 @@ pub(crate) fn deproject_cop(inter: IntermediateCoord, theta_a_deg: f64) -> WcsRe
         ));
     }
 
-    let theta = (sigma_s.abs() / r_unsigned).atan() * theta_a.signum();
+    let theta = libm::atan(sigma_s.abs() / r_unsigned) * theta_a.signum();
 
     Ok(native_coord_from_radians(phi, theta))
 }
@@ -61,10 +61,10 @@ pub(crate) fn project_coe(native: NativeCoord, theta_a_deg: f64) -> WcsResult<In
 
     check_nonzero_param(theta_a, "COE projection: theta_a")?;
 
-    let sin_theta_a = theta_a.sin();
-    let sin_theta = theta.sin();
+    let sin_theta_a = libm::sin(theta_a);
+    let sin_theta = libm::sin(theta);
 
-    let gamma = sin_theta_a * (2.0 / (1.0 + sin_theta_a * sin_theta_a)).sqrt();
+    let gamma = sin_theta_a * libm::sqrt(2.0 / (1.0 + sin_theta_a * sin_theta_a));
     let c = gamma;
 
     let s = 1.0 + sin_theta_a;
@@ -77,8 +77,8 @@ pub(crate) fn project_coe(native: NativeCoord, theta_a_deg: f64) -> WcsResult<In
         ));
     }
 
-    let r_theta = r_theta_sq.sqrt();
-    let y0 = r_theta_a_sq.sqrt();
+    let r_theta = libm::sqrt(r_theta_sq);
+    let y0 = libm::sqrt(r_theta_a_sq);
 
     Ok(project_conic_xy(r_theta, y0, c, phi))
 }
@@ -90,18 +90,18 @@ pub(crate) fn deproject_coe(inter: IntermediateCoord, theta_a_deg: f64) -> WcsRe
 
     check_nonzero_param(theta_a, "COE projection: theta_a")?;
 
-    let sin_theta_a = theta_a.sin();
-    let gamma = sin_theta_a * (2.0 / (1.0 + sin_theta_a * sin_theta_a)).sqrt();
+    let sin_theta_a = libm::sin(theta_a);
+    let gamma = sin_theta_a * libm::sqrt(2.0 / (1.0 + sin_theta_a * sin_theta_a));
     let c = gamma;
 
     let s = 1.0 + sin_theta_a;
     let r_theta_a_sq = 2.0 * s * (1.0 - sin_theta_a) / (gamma * gamma);
-    let y0 = r_theta_a_sq.sqrt();
+    let y0 = libm::sqrt(r_theta_a_sq);
 
     let y_offset = y0 - y;
     let r_sq = x * x + y_offset * y_offset;
 
-    let phi = x.atan2(y_offset) / c;
+    let phi = libm::atan2(x, y_offset) / c;
 
     let sin_theta = sin_theta_a - 0.5 * gamma * gamma * (r_sq - r_theta_a_sq);
 
@@ -111,7 +111,7 @@ pub(crate) fn deproject_coe(inter: IntermediateCoord, theta_a_deg: f64) -> WcsRe
         ));
     }
 
-    let theta = sin_theta.asin();
+    let theta = libm::asin(sin_theta);
 
     Ok(native_coord_from_radians(phi, theta))
 }
@@ -123,7 +123,7 @@ pub(crate) fn project_cod(native: NativeCoord, theta_a_deg: f64) -> WcsResult<In
 
     check_nonzero_param(theta_a, "COD projection: theta_a")?;
 
-    let sigma = theta_a.sin();
+    let sigma = libm::sin(theta_a);
     let c = sigma;
 
     let r_theta_a = theta_a / sigma;
@@ -140,7 +140,7 @@ pub(crate) fn deproject_cod(inter: IntermediateCoord, theta_a_deg: f64) -> WcsRe
 
     check_nonzero_param(theta_a, "COD projection: theta_a")?;
 
-    let sigma = theta_a.sin();
+    let sigma = libm::sin(theta_a);
     let r_theta_a = theta_a / sigma;
     let y0 = r_theta_a;
 
@@ -165,10 +165,10 @@ pub(crate) fn project_coo(native: NativeCoord, theta_a_deg: f64) -> WcsResult<In
         ));
     }
 
-    let sigma = theta_a.sin();
+    let sigma = libm::sin(theta_a);
     let c = sigma;
 
-    let tan_half_theta_a = ((HALF_PI - theta_a) / 2.0).tan();
+    let tan_half_theta_a = libm::tan((HALF_PI - theta_a) / 2.0);
     if tan_half_theta_a.abs() < 1e-15 {
         return Err(WcsError::singularity(
             "COO projection: singularity at theta_a = 90",
@@ -177,7 +177,7 @@ pub(crate) fn project_coo(native: NativeCoord, theta_a_deg: f64) -> WcsResult<In
 
     let psi = 1.0 / (sigma * tan_half_theta_a.powf(sigma));
 
-    let tan_half_theta = ((HALF_PI - theta) / 2.0).tan();
+    let tan_half_theta = libm::tan((HALF_PI - theta) / 2.0);
     let r_theta = psi * tan_half_theta.powf(sigma);
     let y0 = psi * tan_half_theta_a.powf(sigma);
 
@@ -191,9 +191,9 @@ pub(crate) fn deproject_coo(inter: IntermediateCoord, theta_a_deg: f64) -> WcsRe
 
     check_nonzero_param(theta_a, "COO projection: theta_a")?;
 
-    let sigma = theta_a.sin();
+    let sigma = libm::sin(theta_a);
 
-    let tan_half_theta_a = ((HALF_PI - theta_a) / 2.0).tan();
+    let tan_half_theta_a = libm::tan((HALF_PI - theta_a) / 2.0);
     if tan_half_theta_a.abs() < 1e-15 {
         return Err(WcsError::singularity(
             "COO projection: singularity at theta_a = 90",
@@ -213,7 +213,7 @@ pub(crate) fn deproject_coo(inter: IntermediateCoord, theta_a_deg: f64) -> WcsRe
     }
 
     let tan_half_theta = (r_unsigned / psi.abs()).powf(1.0 / sigma.abs());
-    let theta = theta_a.signum() * (HALF_PI - 2.0 * tan_half_theta.atan());
+    let theta = theta_a.signum() * (HALF_PI - 2.0 * libm::atan(tan_half_theta));
 
     Ok(native_coord_from_radians(phi, theta))
 }

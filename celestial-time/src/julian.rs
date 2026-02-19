@@ -1,6 +1,7 @@
 use crate::constants::{SECONDS_TO_DAYS, UNIX_EPOCH_JD};
 use celestial_core::constants::{J2000_JD, MJD_ZERO_POINT, SECONDS_PER_DAY_F64};
 use std::fmt;
+use std::ops::{Add, Sub};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -67,6 +68,17 @@ impl JulianDate {
 
         Self::new(jd1, jd2)
     }
+
+    pub fn to_julian_year(&self) -> f64 {
+        const DAYS_PER_JULIAN_YEAR: f64 = 365.25;
+        2000.0 + (self.to_f64() - J2000_JD) / DAYS_PER_JULIAN_YEAR
+    }
+
+    pub fn from_julian_year(year: f64) -> Self {
+        const DAYS_PER_JULIAN_YEAR: f64 = 365.25;
+        let jd = J2000_JD + (year - 2000.0) * DAYS_PER_JULIAN_YEAR;
+        Self::from_f64(jd)
+    }
 }
 
 impl fmt::Display for JulianDate {
@@ -78,6 +90,22 @@ impl fmt::Display for JulianDate {
 impl From<f64> for JulianDate {
     fn from(jd: f64) -> Self {
         Self::from_f64(jd)
+    }
+}
+
+impl Add<JulianDate> for JulianDate {
+    type Output = Self;
+
+    fn add(self, other: JulianDate) -> Self::Output {
+        Self::new(self.jd1 + other.jd1, self.jd2 + other.jd2)
+    }
+}
+
+impl Sub<JulianDate> for JulianDate {
+    type Output = Self;
+
+    fn sub(self, other: JulianDate) -> Self::Output {
+        Self::new(self.jd1 - other.jd1, self.jd2 - other.jd2)
     }
 }
 

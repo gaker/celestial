@@ -11,7 +11,7 @@ pub mod transforms;
 
 pub use celestial_core::Angle;
 pub use distance::Distance;
-pub use eop::{EopManager, EopParameters, EopRecord};
+pub use eop::{EopParameters, EopProvider, EopRecord};
 pub use errors::{CoordError, CoordResult};
 pub use lighttime::LightTimeCorrection;
 

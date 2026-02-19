@@ -1,15 +1,19 @@
-use celestial_core::Angle;
+use super::{Command, CommandOutput};
 use crate::error::Result;
 use crate::observation::PierSide;
 use crate::parser::parse_coordinates;
 use crate::session::Session;
-use super::{Command, CommandOutput};
+use celestial_core::Angle;
 
 pub struct Predict;
 
 impl Command for Predict {
-    fn name(&self) -> &str { "PREDICT" }
-    fn description(&self) -> &str { "Show correction breakdown by term" }
+    fn name(&self) -> &str {
+        "PREDICT"
+    }
+    fn description(&self) -> &str {
+        "Show correction breakdown by term"
+    }
 
     fn execute(&self, session: &mut Session, args: &[&str]) -> Result<CommandOutput> {
         let (ra, dec) = parse_coordinates(args)?;
@@ -17,20 +21,26 @@ impl Command for Predict {
         let lat = session.latitude();
         let ha = lst - ra;
         let pier = pier_from_ha(ha);
-        let breakdown = session.model.predict_breakdown(
-            ha.radians(), dec.radians(), lat, pier.sign(),
-        );
-        let (cmd_ra, cmd_dec) = session.model.target_to_command(
-            ra, dec, lst, Angle::from_radians(lat), pier,
-        );
-        Ok(CommandOutput::Text(
-            format_predict(ra, dec, ha, &breakdown, cmd_ra, cmd_dec),
-        ))
+        let breakdown =
+            session
+                .model
+                .predict_breakdown(ha.radians(), dec.radians(), lat, pier.sign());
+        let (cmd_ra, cmd_dec) =
+            session
+                .model
+                .target_to_command(ra, dec, lst, Angle::from_radians(lat), pier);
+        Ok(CommandOutput::Text(format_predict(
+            ra, dec, ha, &breakdown, cmd_ra, cmd_dec,
+        )))
     }
 }
 
 fn pier_from_ha(ha: Angle) -> PierSide {
-    if ha.radians() >= 0.0 { PierSide::East } else { PierSide::West }
+    if ha.radians() >= 0.0 {
+        PierSide::East
+    } else {
+        PierSide::West
+    }
 }
 
 fn format_predict(
@@ -52,9 +62,16 @@ fn format_predict(
     lines.push("\u{2500}".repeat(34));
     let (total_dh, total_dd) = append_breakdown(&mut lines, breakdown);
     lines.push("\u{2500}".repeat(34));
-    lines.push(format!("{:<12} {:>10.2} {:>10.2}", "Total", total_dh, total_dd));
+    lines.push(format!(
+        "{:<12} {:>10.2} {:>10.2}",
+        "Total", total_dh, total_dd
+    ));
     lines.push(String::new());
-    lines.push(format!("Command: {}  {}", format_ra(cmd_ra), format_dec(cmd_dec)));
+    lines.push(format!(
+        "Command: {}  {}",
+        format_ra(cmd_ra),
+        format_dec(cmd_dec)
+    ));
     lines.join("\n")
 }
 
@@ -71,9 +88,9 @@ fn append_breakdown(lines: &mut Vec<String>, breakdown: &[(String, f64, f64)]) -
 
 fn format_ra(angle: Angle) -> String {
     let h = angle.hours().abs();
-    let hh = h.floor() as u32;
+    let hh = libm::floor(h) as u32;
     let remainder = (h - hh as f64) * 60.0;
-    let mm = remainder.floor() as u32;
+    let mm = libm::floor(remainder) as u32;
     let ss = (remainder - mm as f64) * 60.0;
     format!("{:02}h {:02}m {:05.2}s", hh, mm, ss)
 }
@@ -82,9 +99,9 @@ fn format_dec(angle: Angle) -> String {
     let deg = angle.degrees();
     let sign = if deg < 0.0 { "-" } else { "+" };
     let total = deg.abs();
-    let dd = total.floor() as u32;
+    let dd = libm::floor(total) as u32;
     let remainder = (total - dd as f64) * 60.0;
-    let mm = remainder.floor() as u32;
+    let mm = libm::floor(remainder) as u32;
     let ss = (remainder - mm as f64) * 60.0;
     format!("{}{:02}\u{00b0} {:02}' {:04.1}\"", sign, dd, mm, ss)
 }
@@ -93,9 +110,9 @@ fn format_ha(angle: Angle) -> String {
     let h = angle.hours();
     let sign = if h < 0.0 { "-" } else { "+" };
     let total = h.abs();
-    let hh = total.floor() as u32;
+    let hh = libm::floor(total) as u32;
     let remainder = (total - hh as f64) * 60.0;
-    let mm = remainder.floor() as u32;
+    let mm = libm::floor(remainder) as u32;
     let ss = (remainder - mm as f64) * 60.0;
     format!("{}{:02}h {:02}m {:05.2}s", sign, hh, mm, ss)
 }

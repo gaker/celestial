@@ -196,7 +196,12 @@ mod tests {
     fn test_utc_constructors() {
         assert_eq!(UTC::new(0, 0).to_julian_date().to_f64(), UNIX_EPOCH_JD);
         assert_eq!(UTC::j2000().to_julian_date().to_f64(), J2000_JD);
-        assert_eq!(utc_from_calendar(2000, 1, 1, 12, 0, 0.0).to_julian_date().to_f64(), J2000_JD);
+        assert_eq!(
+            utc_from_calendar(2000, 1, 1, 12, 0, 0.0)
+                .to_julian_date()
+                .to_f64(),
+            J2000_JD
+        );
 
         let jd = JulianDate::new(J2000_JD, 0.123456789);
         let utc_direct = UTC::from_julian_date(jd);
@@ -208,7 +213,10 @@ mod tests {
     fn test_utc_arithmetic() {
         let utc = UTC::j2000();
         assert_eq!(utc.add_days(1.0).to_julian_date().to_f64(), J2000_JD + 1.0);
-        assert_eq!(utc.add_seconds(3600.0).to_julian_date().to_f64(), J2000_JD + 1.0 / 24.0);
+        assert_eq!(
+            utc.add_seconds(3600.0).to_julian_date().to_f64(),
+            J2000_JD + 1.0 / 24.0
+        );
     }
 
     #[test]
@@ -220,7 +228,13 @@ mod tests {
 
     #[test]
     fn test_utc_string_parsing() {
-        assert_eq!(UTC::from_str("2000-01-01T12:00:00").unwrap().to_julian_date().to_f64(), J2000_JD);
+        assert_eq!(
+            UTC::from_str("2000-01-01T12:00:00")
+                .unwrap()
+                .to_julian_date()
+                .to_f64(),
+            J2000_JD
+        );
 
         let result = UTC::from_str("2000-01-01T12:00:00.123").unwrap();
         let expected_jd = J2000_JD + 0.123 / SECONDS_PER_DAY_F64;

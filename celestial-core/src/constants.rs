@@ -25,6 +25,9 @@ pub const HOURS_PER_DAY: f64 = 24.0;
 pub const MINUTES_PER_DAY: f64 = 1440.0;
 
 #[allow(clippy::excessive_precision)]
+pub const ARCMIN_TO_RAD: f64 = 2.908882086657215961539535e-4;
+
+#[allow(clippy::excessive_precision)]
 pub const ARCSEC_TO_RAD: f64 = 4.848136811095359935899141e-6;
 
 #[allow(clippy::excessive_precision)]

@@ -37,8 +37,8 @@ use crate::matrix::RotationMatrix3;
 /// R₃(E) · R₂(d) · R₃(-(E+s)) where E = atan2(Y, X) and d = atan(sqrt(X²+Y²/(1-X²-Y²))).
 pub fn gcrs_to_cirs_matrix(x: f64, y: f64, s: f64) -> RotationMatrix3 {
     let r2 = x * x + y * y;
-    let e = if r2 > 0.0 { y.atan2(x) } else { 0.0 };
-    let d = (r2 / (1.0 - r2)).sqrt().atan();
+    let e = if r2 > 0.0 { libm::atan2(y, x) } else { 0.0 };
+    let d = libm::atan(libm::sqrt(r2 / (1.0 - r2)));
 
     let mut matrix = RotationMatrix3::identity();
     matrix.rotate_z(e);

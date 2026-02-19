@@ -1,15 +1,13 @@
+use super::{Command, CommandOutput};
 use crate::error::{Error, Result};
 use crate::observation::Observation;
 use crate::session::Session;
 use crate::solver::{fit_model, FitResult};
 use crate::terms::create_term;
 use rayon::prelude::*;
-use super::{Command, CommandOutput};
 
 const BASE_TERMS: &[&str] = &["IH", "ID", "CH", "NP", "MA", "ME"];
-const PHYSICAL_CANDIDATES: &[&str] = &[
-    "TF", "TX", "DAF", "FO", "HCES", "HCEC", "DCES", "DCEC",
-];
+const PHYSICAL_CANDIDATES: &[&str] = &["TF", "TX", "DAF", "FO", "HCES", "HCEC", "DCES", "DCEC"];
 const DEFAULT_MAX_TERMS: usize = 30;
 const DEFAULT_BIC_THRESHOLD: f64 = -6.0;
 const MIN_SIGNIFICANCE: f64 = 2.0;
@@ -23,8 +21,12 @@ struct StageEntry {
 pub struct Optimal;
 
 impl Command for Optimal {
-    fn name(&self) -> &str { "OPTIMAL" }
-    fn description(&self) -> &str { "Auto-build optimal model using BIC" }
+    fn name(&self) -> &str {
+        "OPTIMAL"
+    }
+    fn description(&self) -> &str {
+        "Auto-build optimal model using BIC"
+    }
 
     fn execute(&self, session: &mut Session, args: &[&str]) -> Result<CommandOutput> {
         let (max_terms, bic_threshold) = parse_args(args)?;
@@ -44,23 +46,36 @@ impl Command for Optimal {
 
         let mut stage_log = Vec::new();
         current_bic = run_physical_stage(
-            &observations, &mut active, current_bic,
-            bic_threshold, latitude, &mut stage_log,
+            &observations,
+            &mut active,
+            current_bic,
+            bic_threshold,
+            latitude,
+            &mut stage_log,
         )?;
         let _final_stage_bic = run_harmonic_stage(
-            &observations, &mut active, current_bic,
-            bic_threshold, max_terms, latitude, &mut stage_log,
+            &observations,
+            &mut active,
+            current_bic,
+            bic_threshold,
+            max_terms,
+            latitude,
+            &mut stage_log,
         )?;
 
         for entry in &stage_log {
             report.push_str(&format!(
-                "+ {} (dBIC={:.1}, RMS={:.2}\")\n", entry.name, entry.delta_bic, entry.rms,
+                "+ {} (dBIC={:.1}, RMS={:.2}\")\n",
+                entry.name, entry.delta_bic, entry.rms,
             ));
         }
 
         let pruned = prune_terms(&observations, &mut active, latitude)?;
         for name in &pruned {
-            report.push_str(&format!("- {} (pruned, significance < {:.1})\n", name, MIN_SIGNIFICANCE));
+            report.push_str(&format!(
+                "- {} (pruned, significance < {:.1})\n",
+                name, MIN_SIGNIFICANCE
+            ));
         }
 
         let final_fit = try_fit(&observations, &active, latitude)?;
@@ -74,12 +89,14 @@ impl Command for Optimal {
 
 fn parse_args(args: &[&str]) -> Result<(usize, f64)> {
     let max_terms = match args.first() {
-        Some(s) => s.parse::<usize>()
+        Some(s) => s
+            .parse::<usize>()
             .map_err(|e| Error::Parse(format!("invalid max_terms: {}", e)))?,
         None => DEFAULT_MAX_TERMS,
     };
     let bic_threshold = match args.get(1) {
-        Some(s) => s.parse::<f64>()
+        Some(s) => s
+            .parse::<f64>()
             .map_err(|e| Error::Parse(format!("invalid bic_threshold: {}", e)))?,
         None => DEFAULT_BIC_THRESHOLD,
     };
@@ -94,7 +111,7 @@ fn compute_bic(n_obs: usize, n_terms: usize, sky_rms: f64) -> f64 {
     let n = n_obs as f64;
     let k = n_terms as f64;
     let weighted_rss = sky_rms * sky_rms * n;
-    n * (weighted_rss / n).ln() + k * n.ln()
+    n * libm::log(weighted_rss / n) + k * libm::log(n)
 }
 
 fn try_fit(
@@ -102,7 +119,8 @@ fn try_fit(
     term_names: &[String],
     latitude: f64,
 ) -> Result<FitResult> {
-    let terms: Vec<_> = term_names.iter()
+    let terms: Vec<_> = term_names
+        .iter()
         .map(|n| create_term(n))
         .collect::<Result<Vec<_>>>()?;
     let fixed = vec![false; terms.len()];
@@ -178,7 +196,8 @@ fn run_harmonic_stage(
         if active.len() >= max_terms {
             break;
         }
-        let candidates: Vec<&String> = all_candidates.iter()
+        let candidates: Vec<&String> = all_candidates
+            .iter()
             .filter(|c| !active.contains(c))
             .collect();
         if candidates.is_empty() {
@@ -214,7 +233,8 @@ fn find_best_harmonic(
     n_obs: usize,
     latitude: f64,
 ) -> Option<(String, f64, f64)> {
-    candidates.par_iter()
+    candidates
+        .par_iter()
         .filter_map(|candidate| {
             let mut trial = active.to_vec();
             trial.push((*candidate).clone());
@@ -234,7 +254,9 @@ fn prune_terms(
     let mut pruned = Vec::new();
     let base_set: Vec<String> = BASE_TERMS.iter().map(|s| s.to_string()).collect();
 
-    let to_remove: Vec<String> = active.iter().enumerate()
+    let to_remove: Vec<String> = active
+        .iter()
+        .enumerate()
         .filter(|(i, name)| {
             if base_set.contains(name) {
                 return false;
@@ -255,11 +277,7 @@ fn prune_terms(
     Ok(pruned)
 }
 
-fn load_into_session(
-    session: &mut Session,
-    active: &[String],
-    result: &FitResult,
-) -> Result<()> {
+fn load_into_session(session: &mut Session, active: &[String], result: &FitResult) -> Result<()> {
     session.model.remove_all();
     for name in active {
         session.model.add_term(name)?;
@@ -272,13 +290,17 @@ fn load_into_session(
 fn append_base_report(report: &mut String, terms: &[String], bic: f64, rms: f64) {
     report.push_str(&format!(
         "Base: {} (BIC={:.1}, RMS={:.2}\")\n",
-        terms.join(" "), bic, rms,
+        terms.join(" "),
+        bic,
+        rms,
     ));
 }
 
 fn append_final_report(report: &mut String, terms: &[String], fit: &FitResult) {
     report.push_str(&format!(
-        "\nFinal model: {} terms, RMS={:.2}\"\n", terms.len(), fit.sky_rms,
+        "\nFinal model: {} terms, RMS={:.2}\"\n",
+        terms.len(),
+        fit.sky_rms,
     ));
     report.push_str("Terms: ");
     report.push_str(&terms.join(" "));

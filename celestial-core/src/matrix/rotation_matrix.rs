@@ -231,7 +231,7 @@ impl RotationMatrix3 {
     /// assert!((v[2] + 1.0).abs() < 1e-15);
     /// ```
     pub fn rotate_x(&mut self, phi: f64) {
-        let (s, c) = phi.sin_cos();
+        let (s, c) = libm::sincos(phi);
 
         let a10 = c * self.elements[1][0] + s * self.elements[2][0];
         let a11 = c * self.elements[1][1] + s * self.elements[2][1];
@@ -279,7 +279,7 @@ impl RotationMatrix3 {
     /// assert!(v[2].abs() < 1e-15);
     /// ```
     pub fn rotate_z(&mut self, psi: f64) {
-        let (s, c) = psi.sin_cos();
+        let (s, c) = libm::sincos(psi);
 
         let a00 = c * self.elements[0][0] + s * self.elements[1][0];
         let a01 = c * self.elements[0][1] + s * self.elements[1][1];
@@ -326,7 +326,7 @@ impl RotationMatrix3 {
     /// assert!(v[2].abs() < 1e-15);
     /// ```
     pub fn rotate_y(&mut self, theta: f64) {
-        let (s, c) = theta.sin_cos();
+        let (s, c) = libm::sincos(theta);
 
         let a00 = c * self.elements[0][0] - s * self.elements[2][0];
         let a01 = c * self.elements[0][1] - s * self.elements[2][1];
@@ -576,23 +576,24 @@ impl RotationMatrix3 {
     /// assert!(new_dec.abs() < 1e-14);
     /// ```
     pub fn transform_spherical(&self, ra: f64, dec: f64) -> (f64, f64) {
-        let (sin_ra, cos_ra) = ra.sin_cos();
-        let (sin_dec, cos_dec) = dec.sin_cos();
+        let (sin_ra, cos_ra) = libm::sincos(ra);
+        let (sin_dec, cos_dec) = libm::sincos(dec);
         let vector = [cos_dec * cos_ra, cos_dec * sin_ra, sin_dec];
 
         let transformed = self.apply_to_vector(vector);
 
-        let new_ra = transformed[1].atan2(transformed[0]);
-        let norm = (transformed[0] * transformed[0]
-            + transformed[1] * transformed[1]
-            + transformed[2] * transformed[2])
-            .sqrt();
+        let new_ra = libm::atan2(transformed[1], transformed[0]);
+        let norm = libm::sqrt(
+            transformed[0] * transformed[0]
+                + transformed[1] * transformed[1]
+                + transformed[2] * transformed[2],
+        );
         let z = if norm == 0.0 {
             0.0
         } else {
             (transformed[2] / norm).clamp(-1.0, 1.0)
         };
-        let new_dec = z.asin();
+        let new_dec = libm::asin(z);
 
         (new_ra, new_dec)
     }

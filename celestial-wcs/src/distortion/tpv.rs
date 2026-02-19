@@ -44,7 +44,7 @@ impl TpvDistortion {
     }
 
     pub fn apply(&self, x: f64, y: f64) -> (f64, f64) {
-        let r = (x * x + y * y).sqrt();
+        let r = libm::sqrt(x * x + y * y);
         let xi = Self::eval_polynomial(&self.pv1, x, y, r);
         let eta = Self::eval_polynomial(&self.pv2, x, y, r);
         (xi, eta)
@@ -157,7 +157,7 @@ mod tests {
         tpv.set_pv2(3, 0.01);
 
         let (x, y): (f64, f64) = (3.0, 4.0);
-        let r = (x * x + y * y).sqrt();
+        let r = libm::sqrt(x * x + y * y);
 
         let (xi, eta) = tpv.apply(x, y);
         assert_eq!(xi, x + 0.01 * r);
@@ -338,7 +338,7 @@ mod tests {
     fn test_all_term_indices() {
         let x: f64 = 0.1;
         let y: f64 = 0.2;
-        let r = (x * x + y * y).sqrt();
+        let r = libm::sqrt(x * x + y * y);
 
         let expected_terms: [(usize, f64); 40] = [
             (0, 1.0),

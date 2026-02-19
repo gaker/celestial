@@ -1,6 +1,6 @@
 use crate::ser::{ColorId, Result, SerError};
-use celestial_core::Location;
 use byteorder::{ByteOrder, LittleEndian};
+use celestial_core::Location;
 use std::ffi::CStr;
 
 #[derive(Debug, Clone)]

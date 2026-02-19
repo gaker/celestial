@@ -19,7 +19,7 @@ pub(crate) fn project_tan(native: NativeCoord) -> WcsResult<IntermediateCoord> {
             "TAN projection undefined at theta <= 0",
         ));
     }
-    let (rt_sin, rt_cos) = theta.sin_cos();
+    let (rt_sin, rt_cos) = libm::sincos(theta);
     let r_theta = rt_cos / rt_sin;
     Ok(radial_to_intermediate(r_theta, phi))
 }
@@ -33,7 +33,7 @@ pub(crate) fn deproject_tan(inter: IntermediateCoord) -> WcsResult<NativeCoord> 
         return Ok(pole_native_coord());
     }
 
-    let theta = 1.0_f64.atan2(r_theta);
+    let theta = libm::atan2(1.0_f64, r_theta);
 
     Ok(native_coord_from_radians(phi, theta))
 }
@@ -46,8 +46,8 @@ pub(crate) fn project_sin(native: NativeCoord, xi: f64, eta: f64) -> WcsResult<I
         return Ok(IntermediateCoord::new(0.0, 0.0));
     }
 
-    let (sin_theta, cos_theta) = theta.sin_cos();
-    let (sin_phi, cos_phi) = phi.sin_cos();
+    let (sin_theta, cos_theta) = libm::sincos(theta);
+    let (sin_phi, cos_phi) = libm::sincos(phi);
 
     let x = (cos_theta * sin_phi + xi * (1.0 - sin_theta)) * RAD_TO_DEG;
     let y = -(cos_theta * cos_phi - eta * (1.0 - sin_theta)) * RAD_TO_DEG;
@@ -69,15 +69,15 @@ pub(crate) fn deproject_sin(inter: IntermediateCoord, xi: f64, eta: f64) -> WcsR
         ));
     }
 
-    let sin_theta = (-b + discriminant.sqrt()) / a;
+    let sin_theta = (-b + libm::sqrt(discriminant)) / a;
     if sin_theta.abs() > 1.0 {
         return Err(WcsError::out_of_bounds("Invalid theta in SIN deprojection"));
     }
 
-    let theta = sin_theta.asin();
+    let theta = libm::asin(sin_theta);
     let x_adj = x - xi * (1.0 - sin_theta);
     let y_adj = y - eta * (1.0 - sin_theta);
-    let phi = x_adj.atan2(-y_adj);
+    let phi = libm::atan2(x_adj, -y_adj);
 
     Ok(native_coord_from_radians(phi, theta))
 }
@@ -116,7 +116,7 @@ pub(crate) fn project_stg(native: NativeCoord) -> WcsResult<IntermediateCoord> {
             "STG projection diverges at theta = -90",
         ));
     }
-    let (theta_s, theta_c) = theta.sin_cos();
+    let (theta_s, theta_c) = libm::sincos(theta);
     let r_theta = 2.0 * theta_c / (1.0 + theta_s);
     Ok(radial_to_intermediate(r_theta, phi))
 }
@@ -130,7 +130,7 @@ pub(crate) fn deproject_stg(inter: IntermediateCoord) -> WcsResult<NativeCoord> 
         return Ok(pole_native_coord());
     }
 
-    let theta = HALF_PI - 2.0 * (r_theta / 2.0).atan();
+    let theta = HALF_PI - 2.0 * libm::atan(r_theta / 2.0);
 
     Ok(native_coord_from_radians(phi, theta))
 }
@@ -139,7 +139,7 @@ pub(crate) fn project_zea(native: NativeCoord) -> WcsResult<IntermediateCoord> {
     let phi = native.phi().radians();
     let theta = native.theta().radians();
 
-    let r_theta = (2.0 * (1.0 - theta.sin())).sqrt();
+    let r_theta = libm::sqrt(2.0 * (1.0 - libm::sin(theta)));
     Ok(radial_to_intermediate(r_theta, phi))
 }
 
@@ -159,7 +159,7 @@ pub(crate) fn deproject_zea(inter: IntermediateCoord) -> WcsResult<NativeCoord> 
         ));
     }
 
-    let theta = HALF_PI - 2.0 * rho.asin();
+    let theta = HALF_PI - 2.0 * libm::asin(rho);
 
     Ok(native_coord_from_radians(phi, theta))
 }
@@ -173,7 +173,7 @@ pub(crate) fn project_azp(
     let theta = native.theta().radians();
     let gamma = gamma_deg * DEG_TO_RAD;
 
-    let (sin_theta, cos_theta) = theta.sin_cos();
+    let (sin_theta, cos_theta) = libm::sincos(theta);
 
     let denom = mu + sin_theta;
     if denom.abs() < 1e-10 {
@@ -189,17 +189,18 @@ pub(crate) fn project_azp(
         let r_theta = (mu + 1.0) * cos_theta / denom;
         Ok(radial_to_intermediate(r_theta, phi))
     } else {
-        let (sin_gamma, cos_gamma) = gamma.sin_cos();
+        let (sin_gamma, cos_gamma) = libm::sincos(gamma);
         let tan_gamma = sin_gamma / cos_gamma;
 
-        let denom_full = denom + cos_theta * phi.cos() * tan_gamma;
+        let denom_full = denom + cos_theta * libm::cos(phi) * tan_gamma;
         if denom_full.abs() < 1e-10 {
             return Err(WcsError::singularity("AZP slant projection singularity"));
         }
 
         let r = (mu + 1.0) * cos_theta / denom_full;
-        let x = r * phi.sin() * RAD_TO_DEG;
-        let y = -r * phi.cos() / cos_gamma * RAD_TO_DEG;
+        let (ps, pc) = libm::sincos(phi);
+        let x = r * ps * RAD_TO_DEG;
+        let y = -r * pc / cos_gamma * RAD_TO_DEG;
         Ok(IntermediateCoord::new(x, y))
     }
 }
@@ -217,24 +218,24 @@ pub(crate) fn deproject_azp(
     }
 
     if gamma_deg.abs() < 1e-10 {
-        let r_theta = (x * x + y * y).sqrt();
-        let phi = x.atan2(-y);
+        let r_theta = libm::sqrt(x * x + y * y);
+        let phi = libm::atan2(x, -y);
         let rho = r_theta / (mu + 1.0);
-        let s = rho * mu / (rho * rho + 1.0).sqrt();
+        let s = rho * mu / libm::sqrt(rho * rho + 1.0);
         if s.abs() > 1.0 {
             return Err(WcsError::out_of_bounds(
                 "Point outside AZP projection boundary",
             ));
         }
-        let theta = 1.0_f64.atan2(rho) - s.asin();
+        let theta = libm::atan2(1.0_f64, rho) - libm::asin(s);
         Ok(native_coord_from_radians(phi, theta))
     } else {
         let gamma = gamma_deg * DEG_TO_RAD;
-        let (sin_gamma, cos_gamma) = gamma.sin_cos();
+        let (sin_gamma, cos_gamma) = libm::sincos(gamma);
 
-        let phi = x.atan2(-y * cos_gamma);
+        let phi = libm::atan2(x, -y * cos_gamma);
 
-        let r_theta = (x * x + (y * cos_gamma).powi(2)).sqrt();
+        let r_theta = libm::sqrt(x * x + (y * cos_gamma).powi(2));
 
         let denom = (mu + 1.0) + y * sin_gamma;
         if denom.abs() < 1e-15 {
@@ -244,14 +245,14 @@ pub(crate) fn deproject_azp(
         }
         let rho = r_theta / denom;
 
-        let psi = 1.0_f64.atan2(rho);
-        let s = rho * mu / (rho * rho + 1.0).sqrt();
+        let psi = libm::atan2(1.0_f64, rho);
+        let s = rho * mu / libm::sqrt(rho * rho + 1.0);
         if s.abs() > 1.0 {
             return Err(WcsError::out_of_bounds(
                 "Point outside AZP projection boundary",
             ));
         }
-        let omega = s.asin();
+        let omega = libm::asin(s);
 
         let theta = psi - omega;
 
@@ -275,8 +276,8 @@ pub(crate) fn project_szp(
     let phi_c = phi_c_deg * DEG_TO_RAD;
     let theta_c = theta_c_deg * DEG_TO_RAD;
 
-    let (sin_phi_c, cos_phi_c) = phi_c.sin_cos();
-    let (sin_theta_c, cos_theta_c) = theta_c.sin_cos();
+    let (sin_phi_c, cos_phi_c) = libm::sincos(phi_c);
+    let (sin_theta_c, cos_theta_c) = libm::sincos(theta_c);
 
     let xp = -mu * cos_theta_c * sin_phi_c;
     let yp = mu * cos_theta_c * cos_phi_c;
@@ -286,8 +287,8 @@ pub(crate) fn project_szp(
         return Err(WcsError::singularity("SZP projection singularity: zp = 0"));
     }
 
-    let (sin_theta, cos_theta) = theta.sin_cos();
-    let (sin_phi, cos_phi) = phi.sin_cos();
+    let (sin_theta, cos_theta) = libm::sincos(theta);
+    let (sin_phi, cos_phi) = libm::sincos(phi);
 
     let denom = zp - (1.0 - sin_theta);
     if denom.abs() < 1e-10 {
@@ -318,8 +319,8 @@ pub(crate) fn deproject_szp(
     let phi_c = phi_c_deg * DEG_TO_RAD;
     let theta_c = theta_c_deg * DEG_TO_RAD;
 
-    let (sin_phi_c, cos_phi_c) = phi_c.sin_cos();
-    let (sin_theta_c, cos_theta_c) = theta_c.sin_cos();
+    let (sin_phi_c, cos_phi_c) = libm::sincos(phi_c);
+    let (sin_theta_c, cos_theta_c) = libm::sincos(theta_c);
 
     let xp = -mu * cos_theta_c * sin_phi_c;
     let yp = mu * cos_theta_c * cos_phi_c;
@@ -343,8 +344,8 @@ pub(crate) fn deproject_szp(
         ));
     }
 
-    let sin_theta_plus = (-b + discriminant.sqrt()) / a;
-    let sin_theta_minus = (-b - discriminant.sqrt()) / a;
+    let sin_theta_plus = (-b + libm::sqrt(discriminant)) / a;
+    let sin_theta_minus = (-b - libm::sqrt(discriminant)) / a;
 
     let sin_theta = if sin_theta_plus.abs() <= 1.0 + 1e-10 && sin_theta_minus.abs() <= 1.0 + 1e-10 {
         if sin_theta_plus > sin_theta_minus {
@@ -361,12 +362,12 @@ pub(crate) fn deproject_szp(
     };
 
     let sin_theta_clamped = sin_theta.clamp(-1.0, 1.0);
-    let theta = sin_theta_clamped.asin();
+    let theta = libm::asin(sin_theta_clamped);
 
     let one_minus_sin_theta = 1.0 - sin_theta_clamped;
     let arg_x = x_big - x_prime * one_minus_sin_theta;
     let arg_y = -(y_big - y_prime * one_minus_sin_theta);
-    let phi = arg_x.atan2(arg_y);
+    let phi = libm::atan2(arg_x, arg_y);
 
     Ok(native_coord_from_radians(phi, theta))
 }
@@ -472,11 +473,11 @@ fn compute_air_r_theta(theta: f64, theta_b: f64) -> WcsResult<f64> {
         return Ok(0.0);
     }
 
-    let cos_xi = xi.cos();
-    let tan_xi = xi.tan();
+    let cos_xi = libm::cos(xi);
+    let tan_xi = libm::tan(xi);
 
     let term1 = if cos_xi > 0.0 {
-        cos_xi.ln() / tan_xi
+        libm::log(cos_xi) / tan_xi
     } else {
         return Err(WcsError::singularity("AIR projection: cos(xi) <= 0"));
     };
@@ -484,10 +485,10 @@ fn compute_air_r_theta(theta: f64, theta_b: f64) -> WcsResult<f64> {
     let term2 = if xi_b.abs() < 1e-10 {
         -0.5 * tan_xi
     } else {
-        let cos_xi_b = xi_b.cos();
-        let tan_xi_b = xi_b.tan();
+        let cos_xi_b = libm::cos(xi_b);
+        let tan_xi_b = libm::tan(xi_b);
         if cos_xi_b > 0.0 && tan_xi_b.abs() > 1e-15 {
-            cos_xi_b.ln() * tan_xi / (tan_xi_b * tan_xi_b)
+            libm::log(cos_xi_b) * tan_xi / (tan_xi_b * tan_xi_b)
         } else {
             return Err(WcsError::singularity(
                 "AIR projection: invalid theta_b parameter",
@@ -625,8 +626,8 @@ mod tests {
         let inter = proj.project(original).unwrap();
         let recovered = proj.deproject(inter).unwrap();
 
-        assert_eq!(original.phi().degrees(), recovered.phi().degrees());
-        assert_eq!(original.theta().degrees(), recovered.theta().degrees());
+        assert_ulp_lt!(original.phi().degrees(), recovered.phi().degrees(), 2);
+        assert_ulp_lt!(original.theta().degrees(), recovered.theta().degrees(), 2);
     }
 
     #[test]

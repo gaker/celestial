@@ -93,8 +93,8 @@ impl LMST {
 
 impl std::fmt::Display for LMST {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let lat_deg = self.location.latitude.to_degrees();
-        let lon_deg = self.location.longitude.to_degrees();
+        let lat_deg = self.location.latitude * celestial_core::constants::RAD_TO_DEG;
+        let lon_deg = self.location.longitude * celestial_core::constants::RAD_TO_DEG;
         write!(
             f,
             "LMST {} at ({:.4}°, {:.4}°)",

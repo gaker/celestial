@@ -23,10 +23,8 @@ impl Command for Gha {
         if residuals.is_empty() {
             return Ok(CommandOutput::Text("No active observations".to_string()));
         }
-        let dx_vs_ha: Vec<(f64, f64)> =
-            residuals.iter().map(|r| (r.ha_deg, r.dx)).collect();
-        let dd_vs_ha: Vec<(f64, f64)> =
-            residuals.iter().map(|r| (r.ha_deg, r.dd)).collect();
+        let dx_vs_ha: Vec<(f64, f64)> = residuals.iter().map(|r| (r.ha_deg, r.dx)).collect();
+        let dd_vs_ha: Vec<(f64, f64)> = residuals.iter().map(|r| (r.ha_deg, r.dd)).collect();
 
         if let Some(path) = args.first() {
             write_svg(&dx_vs_ha, &dd_vs_ha, Path::new(path))
@@ -36,10 +34,7 @@ impl Command for Gha {
     }
 }
 
-fn terminal_output(
-    dx_vs_ha: &[(f64, f64)],
-    dd_vs_ha: &[(f64, f64)],
-) -> Result<CommandOutput> {
+fn terminal_output(dx_vs_ha: &[(f64, f64)], dd_vs_ha: &[(f64, f64)]) -> Result<CommandOutput> {
     let dx_plot = crate::plot::terminal::xy_plot_terminal(
         dx_vs_ha,
         "dX vs Hour Angle",

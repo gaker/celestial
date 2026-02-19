@@ -8,7 +8,9 @@ use crate::{
     CoordError, CoordResult, Distance,
 };
 use celestial_core::{matrix::RotationMatrix3, Angle, Vector3};
-use celestial_time::{transforms::NutationCalculator, TT};
+use celestial_time::{
+    scales::conversions::ToUT1WithDeltaT, sidereal::GAST, transforms::NutationCalculator, TT,
+};
 
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
@@ -86,7 +88,7 @@ impl CIRSPosition {
     }
 
     pub fn from_unit_vector(unit: Vector3, epoch: TT) -> CoordResult<Self> {
-        let r = (unit.x.powi(2) + unit.y.powi(2) + unit.z.powi(2)).sqrt();
+        let r = libm::sqrt(unit.x.powi(2) + unit.y.powi(2) + unit.z.powi(2));
 
         if r == 0.0 {
             return Err(CoordError::invalid_coordinate("Zero vector"));
@@ -97,8 +99,13 @@ impl CIRSPosition {
         let z = unit.z / r;
 
         let d2 = x * x + y * y;
-        let ra = if d2 == 0.0 { 0.0 } else { y.atan2(x) };
-        let dec = if z == 0.0 { 0.0 } else { z.atan2(d2.sqrt()) };
+
+        let ra = if d2 == 0.0 { 0.0 } else { libm::atan2(y, x) };
+        let dec = if z == 0.0 {
+            0.0
+        } else {
+            libm::atan2(z, libm::sqrt(d2))
+        };
 
         Self::new(Angle::from_radians(ra), Angle::from_radians(dec), epoch)
     }
@@ -164,9 +171,6 @@ impl CIRSPosition {
         observer: &celestial_core::Location,
         delta_t: f64,
     ) -> CoordResult<crate::frames::HourAnglePosition> {
-        use celestial_time::scales::conversions::ToUT1WithDeltaT;
-        use celestial_time::sidereal::GAST;
-
         let ut1 = self.epoch.to_ut1_with_delta_t(delta_t)?;
         let gast = GAST::from_ut1_and_tt(&ut1, &self.epoch)?;
 
@@ -414,7 +418,7 @@ mod tests {
         let diff_with_aberr = (cirs_vec.x - npb_only.x).powi(2)
             + (cirs_vec.y - npb_only.y).powi(2)
             + (cirs_vec.z - npb_only.z).powi(2);
-        let aberr_arcsec = diff_with_aberr.sqrt() * 206264.806247;
+        let aberr_arcsec = libm::sqrt(diff_with_aberr) * 206264.806247;
 
         assert!(
             aberr_arcsec > 15.0 && aberr_arcsec < 25.0,

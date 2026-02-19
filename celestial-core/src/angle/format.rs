@@ -169,9 +169,9 @@ impl DmsFmt {
     pub fn fmt(&self, a: Angle) -> String {
         let sign = if a.degrees() < 0.0 { '-' } else { '+' };
         let mut d = a.degrees().abs();
-        let deg = d.trunc();
+        let deg = libm::trunc(d);
         d = (d - deg) * 60.0;
-        let min = d.trunc();
+        let min = libm::trunc(d);
         let sec = (d - min) * 60.0;
         format!(
             "{sign}{deg:.0}° {min:.0}' {sec:.*}\"",
@@ -198,9 +198,9 @@ impl HmsFmt {
     pub fn fmt(&self, a: Angle) -> String {
         let mut h = a.hours();
         h = h.rem_euclid(24.0);
-        let hh = h.trunc();
+        let hh = libm::trunc(h);
         h = (h - hh) * 60.0;
-        let mm = h.trunc();
+        let mm = libm::trunc(h);
         let ss = (h - mm) * 60.0;
         format!("{hh:.0}ʰ {mm:.0}ᵐ {ss:.*}ˢ", self.frac_digits as usize)
     }
@@ -348,7 +348,7 @@ fn parse_hms(s: &str) -> Result<ParsedAngle, crate::AstroError> {
         0.0
     };
 
-    if parts.len() > 1 && h.fract() != 0.0 {
+    if parts.len() > 1 && h - libm::trunc(h) != 0.0 {
         return Err(crate::AstroError::math_error(
             "parse_hms",
             crate::errors::MathErrorKind::InvalidInput,
@@ -439,7 +439,7 @@ fn parse_dms(s: &str) -> Result<ParsedAngle, crate::AstroError> {
         0.0
     };
 
-    if parts.len() > 1 && deg.fract() != 0.0 {
+    if parts.len() > 1 && deg - libm::trunc(deg) != 0.0 {
         return Err(crate::AstroError::math_error(
             "parse_dms",
             crate::errors::MathErrorKind::InvalidInput,

@@ -107,8 +107,9 @@ impl GalacticPosition {
         let (sin_b2, cos_b2) = other.b.sin_cos();
         let delta_l = (self.l - other.l).radians();
 
-        let angle_rad =
-            celestial_core::math::vincenty_angular_separation(sin_b1, cos_b1, sin_b2, cos_b2, delta_l);
+        let angle_rad = celestial_core::math::vincenty_angular_separation(
+            sin_b1, cos_b1, sin_b2, cos_b2, delta_l,
+        );
 
         Angle::from_radians(angle_rad)
     }
@@ -136,12 +137,12 @@ impl CoordinateFrame for GalacticPosition {
 
         let d2 = icrs_cartesian[0] * icrs_cartesian[0] + icrs_cartesian[1] * icrs_cartesian[1];
         let ra = if d2 != 0.0 {
-            icrs_cartesian[1].atan2(icrs_cartesian[0])
+            libm::atan2(icrs_cartesian[1], icrs_cartesian[0])
         } else {
             0.0
         };
         let dec = if d2 != 0.0 || icrs_cartesian[2] != 0.0 {
-            icrs_cartesian[2].atan2(d2.sqrt())
+            libm::atan2(icrs_cartesian[2], libm::sqrt(d2))
         } else {
             0.0
         };
@@ -176,12 +177,12 @@ impl CoordinateFrame for GalacticPosition {
 
         let d2 = gal_cartesian[0] * gal_cartesian[0] + gal_cartesian[1] * gal_cartesian[1];
         let l = if d2 != 0.0 {
-            gal_cartesian[1].atan2(gal_cartesian[0])
+            libm::atan2(gal_cartesian[1], gal_cartesian[0])
         } else {
             0.0
         };
         let b = if d2 != 0.0 || gal_cartesian[2] != 0.0 {
-            gal_cartesian[2].atan2(d2.sqrt())
+            libm::atan2(gal_cartesian[2], libm::sqrt(d2))
         } else {
             0.0
         };

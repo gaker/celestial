@@ -208,8 +208,8 @@ impl<'a> ObservatoryContext<'a> {
     /// println!("{}", observatory.info());
     /// ```
     pub fn info(&self) -> String {
-        let lat_deg = self.location.latitude.to_degrees();
-        let lon_deg = self.location.longitude.to_degrees();
+        let lat_deg = self.location.latitude * celestial_core::constants::RAD_TO_DEG;
+        let lon_deg = self.location.longitude * celestial_core::constants::RAD_TO_DEG;
         let height_m = self.location.height;
 
         format!(

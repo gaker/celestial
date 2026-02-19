@@ -27,8 +27,8 @@ impl CartesianFrame for EclipticCartesian {
     fn to_icrs(&self) -> Vector3 {
         let eps = J2000_OBLIQUITY_RAD;
         let phi = FRAME_BIAS_PHI_RAD;
-        let (sin_eps, cos_eps) = eps.sin_cos();
-        let (sin_phi, cos_phi) = phi.sin_cos();
+        let (sin_eps, cos_eps) = libm::sincos(eps);
+        let (sin_phi, cos_phi) = libm::sincos(phi);
 
         let y1 = self.y * cos_eps - self.z * sin_eps;
         let z1 = self.y * sin_eps + self.z * cos_eps;
@@ -43,8 +43,8 @@ impl CartesianFrame for EclipticCartesian {
     fn from_icrs(icrs: &Vector3) -> Self {
         let eps = J2000_OBLIQUITY_RAD;
         let phi = FRAME_BIAS_PHI_RAD;
-        let (sin_eps, cos_eps) = eps.sin_cos();
-        let (sin_phi, cos_phi) = phi.sin_cos();
+        let (sin_eps, cos_eps) = libm::sincos(eps);
+        let (sin_phi, cos_phi) = libm::sincos(phi);
 
         let x1 = icrs.x * cos_phi - icrs.y * sin_phi;
         let y1 = icrs.x * sin_phi + icrs.y * cos_phi;

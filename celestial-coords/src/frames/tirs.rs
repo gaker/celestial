@@ -45,14 +45,14 @@ impl TIRSPosition {
     }
 
     pub fn geocentric_distance(&self) -> f64 {
-        (self.x * self.x + self.y * self.y + self.z * self.z).sqrt()
+        libm::sqrt(self.x * self.x + self.y * self.y + self.z * self.z)
     }
 
     pub fn distance_to(&self, other: &Self) -> f64 {
         let dx = self.x - other.x;
         let dy = self.y - other.y;
         let dz = self.z - other.z;
-        (dx * dx + dy * dy + dz * dz).sqrt()
+        libm::sqrt(dx * dx + dy * dy + dz * dz)
     }
 
     fn polar_motion_matrix(xp: f64, yp: f64, sp: f64) -> [[f64; 3]; 3] {
@@ -69,7 +69,7 @@ impl TIRSPosition {
     }
 
     fn apply_rotation_z(matrix: &mut [[f64; 3]; 3], angle: f64) {
-        let (s, c) = angle.sin_cos();
+        let (s, c) = libm::sincos(angle);
         let temp = *matrix;
 
         for j in 0..3 {
@@ -79,7 +79,7 @@ impl TIRSPosition {
     }
 
     fn apply_rotation_y(matrix: &mut [[f64; 3]; 3], angle: f64) {
-        let (s, c) = angle.sin_cos();
+        let (s, c) = libm::sincos(angle);
         let temp = *matrix;
 
         for j in 0..3 {
@@ -89,7 +89,7 @@ impl TIRSPosition {
     }
 
     fn apply_rotation_x(matrix: &mut [[f64; 3]; 3], angle: f64) {
-        let (s, c) = angle.sin_cos();
+        let (s, c) = libm::sincos(angle);
         let temp = *matrix;
 
         for j in 0..3 {
@@ -145,7 +145,7 @@ impl TIRSPosition {
         let ut1 = epoch.to_ut1_with_delta_t(delta_t_seconds)?;
         let era = earth_rotation_angle(&ut1.to_julian_date())?;
 
-        let (sin_era, cos_era) = era.sin_cos();
+        let (sin_era, cos_era) = libm::sincos(era);
 
         let x_after_era = cos_era * self.x + sin_era * self.y;
         let y_after_era = -sin_era * self.x + cos_era * self.y;
@@ -193,7 +193,7 @@ impl TIRSPosition {
         let ut1 = epoch.to_ut1_with_delta_t(delta_t_seconds)?;
         let era = earth_rotation_angle(&ut1.to_julian_date())?;
 
-        let (sin_era, cos_era) = era.sin_cos();
+        let (sin_era, cos_era) = libm::sincos(era);
 
         let x_tirs = cos_era * x_before_pm - sin_era * y_before_pm;
         let y_tirs = sin_era * x_before_pm + cos_era * y_before_pm;
@@ -211,7 +211,7 @@ impl TIRSPosition {
         let ut1 = epoch.to_ut1_with_delta_t(delta_t_seconds)?;
         let era = earth_rotation_angle(&ut1.to_julian_date())?;
 
-        let (sin_era, cos_era) = era.sin_cos();
+        let (sin_era, cos_era) = libm::sincos(era);
 
         let x_tirs = cos_era * cirs_vec.x - sin_era * cirs_vec.y;
         let y_tirs = sin_era * cirs_vec.x + cos_era * cirs_vec.y;
@@ -230,7 +230,7 @@ impl TIRSPosition {
         let ut1 = self.epoch.to_ut1_with_delta_t(delta_t_seconds)?;
         let era = earth_rotation_angle(&ut1.to_julian_date())?;
 
-        let (sin_era, cos_era) = era.sin_cos();
+        let (sin_era, cos_era) = libm::sincos(era);
 
         let x_cirs = cos_era * self.x + sin_era * self.y;
         let y_cirs = -sin_era * self.x + cos_era * self.y;
@@ -442,11 +442,21 @@ mod tests {
         let tirs_x_axis = TIRSPosition::new(6378137.0, 0.0, 0.0, epoch);
         let itrs = tirs_x_axis.to_itrs(&epoch, &eop).unwrap();
 
-        let expected_x = 6378137.0 * era.cos();
-        let expected_y = -6378137.0 * era.sin();
+        let expected_x = 6378137.0 * libm::cos(era);
+        let expected_y = -6378137.0 * libm::sin(era);
 
-        celestial_core::test_helpers::assert_ulp_le(itrs.x(), expected_x, 1, "ERA X transformation");
-        celestial_core::test_helpers::assert_ulp_le(itrs.y(), expected_y, 1, "ERA Y transformation");
+        celestial_core::test_helpers::assert_ulp_le(
+            itrs.x(),
+            expected_x,
+            1,
+            "ERA X transformation",
+        );
+        celestial_core::test_helpers::assert_ulp_le(
+            itrs.y(),
+            expected_y,
+            1,
+            "ERA Y transformation",
+        );
         assert_eq!(itrs.z(), 0.0);
     }
 

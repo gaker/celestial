@@ -1,12 +1,16 @@
+use super::{Command, CommandOutput};
 use crate::error::Result;
 use crate::session::Session;
-use super::{Command, CommandOutput};
 
 pub struct Help;
 
 impl Command for Help {
-    fn name(&self) -> &str { "HELP" }
-    fn description(&self) -> &str { "Show available commands" }
+    fn name(&self) -> &str {
+        "HELP"
+    }
+    fn description(&self) -> &str {
+        "Show available commands"
+    }
 
     fn execute(&self, _session: &mut Session, args: &[&str]) -> Result<CommandOutput> {
         if let Some(cmd) = args.first() {
@@ -100,5 +104,6 @@ Commands:
   HELP [cmd]         Show help
   QUIT               Exit
 
-Type HELP <command> for details.".to_string()
+Type HELP <command> for details."
+        .to_string()
 }

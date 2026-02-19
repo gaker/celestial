@@ -83,7 +83,7 @@ impl GCRSPosition {
     }
 
     pub fn from_unit_vector(unit: Vector3, epoch: TT) -> CoordResult<Self> {
-        let r = (unit.x.powi(2) + unit.y.powi(2) + unit.z.powi(2)).sqrt();
+        let r = libm::sqrt(unit.x.powi(2) + unit.y.powi(2) + unit.z.powi(2));
 
         if r == 0.0 {
             return Err(CoordError::invalid_coordinate("Zero vector"));
@@ -94,8 +94,12 @@ impl GCRSPosition {
         let z = unit.z / r;
 
         let d2 = x * x + y * y;
-        let ra = if d2 == 0.0 { 0.0 } else { y.atan2(x) };
-        let dec = if z == 0.0 { 0.0 } else { z.atan2(d2.sqrt()) };
+        let ra = if d2 == 0.0 { 0.0 } else { libm::atan2(y, x) };
+        let dec = if z == 0.0 {
+            0.0
+        } else {
+            libm::atan2(z, libm::sqrt(d2))
+        };
 
         Self::new(Angle::from_radians(ra), Angle::from_radians(dec), epoch)
     }
@@ -154,8 +158,11 @@ impl GCRSPosition {
             }
         })?;
 
-        let c2i_matrix =
-            celestial_core::gcrs_to_cirs_matrix(cio_solution.cip.x, cio_solution.cip.y, cio_solution.s);
+        let c2i_matrix = celestial_core::gcrs_to_cirs_matrix(
+            cio_solution.cip.x,
+            cio_solution.cip.y,
+            cio_solution.s,
+        );
 
         Ok(c2i_matrix)
     }

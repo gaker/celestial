@@ -1,4 +1,4 @@
-use celestial_core::constants::{DEG_TO_RAD, HALF_PI, RAD_TO_DEG};
+use celestial_core::constants::{DEG_TO_RAD, HALF_PI, PI, RAD_TO_DEG, SQRT2};
 
 use crate::common::{asin_safe, native_coord_from_radians, newton_raphson_1d, NewtonConfig};
 use crate::coordinate::{IntermediateCoord, NativeCoord};
@@ -8,7 +8,7 @@ pub(crate) fn project_sfl(native: NativeCoord) -> WcsResult<IntermediateCoord> {
     let phi = native.phi().radians();
     let theta = native.theta().radians();
 
-    let x = phi * theta.cos() * RAD_TO_DEG;
+    let x = phi * libm::cos(theta) * RAD_TO_DEG;
     let y = theta * RAD_TO_DEG;
     Ok(IntermediateCoord::new(x, y))
 }
@@ -19,7 +19,7 @@ pub(crate) fn deproject_sfl(inter: IntermediateCoord) -> WcsResult<NativeCoord> 
 
     let theta = y;
 
-    let cos_theta = theta.cos();
+    let cos_theta = libm::cos(theta);
     if cos_theta.abs() < 1e-10 {
         return Err(WcsError::singularity(
             "SFL deprojection: singularity at theta = +/-90",
@@ -35,9 +35,9 @@ pub(crate) fn project_par(native: NativeCoord) -> WcsResult<IntermediateCoord> {
     let phi = native.phi().radians();
     let theta = native.theta().radians();
 
-    let scale = 2.0 * (2.0 * theta / 3.0).cos() - 1.0;
+    let scale = 2.0 * libm::cos(2.0 * theta / 3.0) - 1.0;
     let x = phi * scale * RAD_TO_DEG;
-    let y = 180.0 * (theta / 3.0).sin();
+    let y = 180.0 * libm::sin(theta / 3.0);
     Ok(IntermediateCoord::new(x, y))
 }
 
@@ -52,10 +52,10 @@ pub(crate) fn deproject_par(inter: IntermediateCoord) -> WcsResult<NativeCoord> 
         ));
     }
 
-    let theta_3 = sin_theta_3.asin();
+    let theta_3 = libm::asin(sin_theta_3);
     let theta = 3.0 * theta_3;
 
-    let scale = 2.0 * (2.0 * theta / 3.0).cos() - 1.0;
+    let scale = 2.0 * libm::cos(2.0 * theta / 3.0) - 1.0;
     if scale.abs() < 1e-10 {
         return Err(WcsError::singularity(
             "PAR deprojection: singularity at theta = +/-90",
@@ -73,10 +73,10 @@ pub(crate) fn project_mol(native: NativeCoord) -> WcsResult<IntermediateCoord> {
 
     let gamma = solve_mollweide_gamma(theta)?;
 
-    let sqrt_8_over_pi = (8.0_f64).sqrt() / std::f64::consts::PI;
-    let (gamma_sin, gamma_cos) = gamma.sin_cos();
+    let sqrt_8_over_pi = libm::sqrt(8.0_f64) / PI;
+    let (gamma_sin, gamma_cos) = libm::sincos(gamma);
     let x = sqrt_8_over_pi * phi * gamma_cos * RAD_TO_DEG;
-    let y = std::f64::consts::SQRT_2 * 90.0 * gamma_sin;
+    let y = SQRT2 * 90.0 * gamma_sin;
     Ok(IntermediateCoord::new(x, y))
 }
 
@@ -85,14 +85,14 @@ fn solve_mollweide_gamma(theta: f64) -> WcsResult<f64> {
         return Ok(theta.signum() * HALF_PI);
     }
 
-    let pi_sin_theta = std::f64::consts::PI * theta.sin();
+    let pi_sin_theta = PI * libm::sin(theta);
 
     const CONFIG: NewtonConfig = NewtonConfig::new((-HALF_PI, HALF_PI), "MOL forward");
     newton_raphson_1d(
         theta,
         pi_sin_theta,
-        |gamma| 2.0 * gamma + (2.0 * gamma).sin(),
-        |gamma| 2.0 + 2.0 * (2.0 * gamma).cos(),
+        |gamma| 2.0 * gamma + libm::sin(2.0 * gamma),
+        |gamma| 2.0 + 2.0 * libm::cos(2.0 * gamma),
         &CONFIG,
     )
 }
@@ -101,7 +101,7 @@ pub(crate) fn deproject_mol(inter: IntermediateCoord) -> WcsResult<NativeCoord> 
     let x = inter.x_deg();
     let y = inter.y_deg();
 
-    let sqrt_2_times_90 = std::f64::consts::SQRT_2 * 90.0;
+    let sqrt_2_times_90 = SQRT2 * 90.0;
     let sin_gamma = y / sqrt_2_times_90;
 
     if sin_gamma.abs() > 1.0 {
@@ -110,8 +110,8 @@ pub(crate) fn deproject_mol(inter: IntermediateCoord) -> WcsResult<NativeCoord> 
         ));
     }
 
-    let gamma = sin_gamma.asin();
-    let cos_gamma = gamma.cos();
+    let gamma = libm::asin(sin_gamma);
+    let cos_gamma = libm::cos(gamma);
 
     if cos_gamma.abs() < 1e-10 {
         return Err(WcsError::singularity(
@@ -119,10 +119,10 @@ pub(crate) fn deproject_mol(inter: IntermediateCoord) -> WcsResult<NativeCoord> 
         ));
     }
 
-    let sin_theta = (2.0 * gamma + (2.0 * gamma).sin()) / std::f64::consts::PI;
+    let sin_theta = (2.0 * gamma + libm::sin(2.0 * gamma)) / PI;
     let theta = asin_safe(sin_theta);
 
-    let sqrt_8_over_pi = (8.0_f64).sqrt() / std::f64::consts::PI;
+    let sqrt_8_over_pi = libm::sqrt(8.0_f64) / PI;
     let phi = x * DEG_TO_RAD / (sqrt_8_over_pi * cos_gamma);
 
     Ok(native_coord_from_radians(phi, theta))
@@ -132,9 +132,9 @@ pub(crate) fn project_ait(native: NativeCoord) -> WcsResult<IntermediateCoord> {
     let phi = native.phi().radians();
     let theta = native.theta().radians();
 
-    let (sin_theta, cos_theta) = theta.sin_cos();
+    let (sin_theta, cos_theta) = libm::sincos(theta);
     let half_phi = phi / 2.0;
-    let cos_theta_cos_half_phi = cos_theta * half_phi.cos();
+    let cos_theta_cos_half_phi = cos_theta * libm::cos(half_phi);
 
     let denom = 1.0 + cos_theta_cos_half_phi;
     if denom < 1e-10 {
@@ -143,8 +143,8 @@ pub(crate) fn project_ait(native: NativeCoord) -> WcsResult<IntermediateCoord> {
         ));
     }
 
-    let gamma = (2.0 / denom).sqrt();
-    let x = 2.0 * gamma * cos_theta * half_phi.sin() * RAD_TO_DEG;
+    let gamma = libm::sqrt(2.0 / denom);
+    let x = 2.0 * gamma * cos_theta * libm::sin(half_phi) * RAD_TO_DEG;
     let y = gamma * sin_theta * RAD_TO_DEG;
     Ok(IntermediateCoord::new(x, y))
 }
@@ -163,12 +163,12 @@ pub(crate) fn deproject_ait(inter: IntermediateCoord) -> WcsResult<NativeCoord> 
         ));
     }
 
-    let z = z_sq.sqrt();
+    let z = libm::sqrt(z_sq);
 
     let sin_theta = y * z;
     let theta = asin_safe(sin_theta);
 
-    let phi = 2.0 * (x * z / 2.0).atan2(2.0 * z * z - 1.0);
+    let phi = 2.0 * libm::atan2(x * z / 2.0, 2.0 * z * z - 1.0);
 
     Ok(native_coord_from_radians(phi, theta))
 }
@@ -416,7 +416,7 @@ mod tests {
         let native = NativeCoord::new(Angle::from_degrees(90.0), Angle::from_degrees(0.0));
         let inter = proj.project(native).unwrap();
         let recovered = proj.deproject(inter).unwrap();
-        assert_ulp_lt!(native.phi().degrees(), recovered.phi().degrees(), 5);
-        assert_ulp_lt!(native.theta().degrees(), recovered.theta().degrees(), 5);
+        assert_ulp_lt!(native.phi().degrees(), recovered.phi().degrees(), 1);
+        assert_ulp_lt!(native.theta().degrees(), recovered.theta().degrees(), 1);
     }
 }

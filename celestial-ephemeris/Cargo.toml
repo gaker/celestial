@@ -18,6 +18,7 @@ cli = ["dep:clap", "dep:reqwest", "dep:chrono"]
 celestial-coords.workspace = true
 celestial-core.workspace = true
 celestial-time.workspace = true
+libm.workspace = true
 chrono = { workspace = true, optional = true }
 clap = { workspace = true, optional = true }
 memmap2.workspace = true

@@ -30,9 +30,15 @@ pub fn parse_indat(content: &str) -> Result<IndatFile> {
         }
     }
 
-    let (site, date) = site_and_date
-        .ok_or_else(|| Error::Parse("no site line found".into()))?;
-    Ok(IndatFile { site, options, observations, mount_type, header_lines, date })
+    let (site, date) = site_and_date.ok_or_else(|| Error::Parse("no site line found".into()))?;
+    Ok(IndatFile {
+        site,
+        options,
+        observations,
+        mount_type,
+        header_lines,
+        date,
+    })
 }
 
 fn classify_line(
@@ -84,7 +90,10 @@ fn parse_option(line: &str) -> Result<(IndatOption, Option<MountType>)> {
 fn parse_gimbal(s: &str) -> Result<(IndatOption, Option<MountType>)> {
     let parts: Vec<&str> = s.split_whitespace().collect();
     if parts.len() != 4 {
-        return Err(Error::Parse(format!("GIMBAL requires 3 angles, got: {}", s)));
+        return Err(Error::Parse(format!(
+            "GIMBAL requires 3 angles, got: {}",
+            s
+        )));
     }
     let z = parse_f64(parts[1], "gimbal z")?;
     let y = parse_f64(parts[2], "gimbal y")?;
@@ -102,7 +111,10 @@ fn parse_gimbal(s: &str) -> Result<(IndatOption, Option<MountType>)> {
 fn parse_site_line(line: &str) -> Result<(SiteParams, JulianDate)> {
     let p: Vec<&str> = line.split_whitespace().collect();
     if p.len() < 12 {
-        return Err(Error::Parse(format!("site line needs 12 fields, got {}", p.len())));
+        return Err(Error::Parse(format!(
+            "site line needs 12 fields, got {}",
+            p.len()
+        )));
     }
     let lat = parse_dms_latitude(
         parse_f64(p[0], "lat_d")?,
@@ -124,14 +136,24 @@ fn parse_site_line(line: &str) -> Result<(SiteParams, JulianDate)> {
 }
 
 fn build_julian_date(parts: &[&str]) -> Result<JulianDate> {
-    let year: i32 = parts[0].parse().map_err(|e| Error::Parse(format!("year: {}", e)))?;
-    let month: u8 = parts[1].parse().map_err(|e| Error::Parse(format!("month: {}", e)))?;
-    let day: u8 = parts[2].parse().map_err(|e| Error::Parse(format!("day: {}", e)))?;
+    let year: i32 = parts[0]
+        .parse()
+        .map_err(|e| Error::Parse(format!("year: {}", e)))?;
+    let month: u8 = parts[1]
+        .parse()
+        .map_err(|e| Error::Parse(format!("month: {}", e)))?;
+    let day: u8 = parts[2]
+        .parse()
+        .map_err(|e| Error::Parse(format!("day: {}", e)))?;
     Ok(JulianDate::from_calendar(year, month, day, 0, 0, 0.0))
 }
 
 fn parse_dms_latitude(d: f64, m: f64, s: f64) -> Angle {
-    let sign = if d < 0.0 || (d == 0.0 && d.is_sign_negative()) { -1.0 } else { 1.0 };
+    let sign = if d < 0.0 || (d == 0.0 && d.is_sign_negative()) {
+        -1.0
+    } else {
+        1.0
+    };
     let deg = d.abs() + m / 60.0 + s / 3600.0;
     Angle::from_degrees(sign * deg)
 }
@@ -139,7 +161,10 @@ fn parse_dms_latitude(d: f64, m: f64, s: f64) -> Angle {
 fn parse_observation_line(line: &str) -> Result<Observation> {
     let p: Vec<&str> = line.split_whitespace().collect();
     if p.len() < 14 {
-        return Err(Error::Parse(format!("obs line needs 14 fields, got {}", p.len())));
+        return Err(Error::Parse(format!(
+            "obs line needs 14 fields, got {}",
+            p.len()
+        )));
     }
     let catalog_ra = parse_ra(&p[0..3])?;
     let catalog_dec = parse_dec_as_angle(&p[3..6])?;
@@ -183,7 +208,11 @@ fn parse_dec_raw(parts: &[&str]) -> Result<f64> {
     let d = parse_f64(parts[0], "dec_d")?;
     let m = parse_f64(parts[1], "dec_m")?;
     let s = parse_f64(parts[2], "dec_s")?;
-    let sign = if d < 0.0 || (d == 0.0 && parts[0].starts_with('-')) { -1.0 } else { 1.0 };
+    let sign = if d < 0.0 || (d == 0.0 && parts[0].starts_with('-')) {
+        -1.0
+    } else {
+        1.0
+    };
     Ok(sign * (d.abs() + m / 60.0 + s / 3600.0))
 }
 

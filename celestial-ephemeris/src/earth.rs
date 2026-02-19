@@ -76,10 +76,11 @@ mod tests {
         let earth_pos = earth.heliocentric_position(&tdb).unwrap();
         let emb_pos = emb.heliocentric_position(&tdb).unwrap();
 
-        let diff_au = ((earth_pos.x - emb_pos.x).powi(2)
-            + (earth_pos.y - emb_pos.y).powi(2)
-            + (earth_pos.z - emb_pos.z).powi(2))
-        .sqrt();
+        let diff_au = libm::sqrt(
+            (earth_pos.x - emb_pos.x).powi(2)
+                + (earth_pos.y - emb_pos.y).powi(2)
+                + (earth_pos.z - emb_pos.z).powi(2),
+        );
         let diff_km = diff_au * AU_KM;
 
         println!("Earth-EMB difference at J2000: {:.1} km", diff_km);
@@ -96,7 +97,7 @@ mod tests {
         let tdb = TDB::from_julian_date(JulianDate::new(J2000_JD, 0.0));
 
         let pos = earth.heliocentric_position(&tdb).unwrap();
-        let dist_au = (pos.x.powi(2) + pos.y.powi(2) + pos.z.powi(2)).sqrt();
+        let dist_au = libm::sqrt(pos.x.powi(2) + pos.y.powi(2) + pos.z.powi(2));
 
         assert!(
             dist_au > 0.98 && dist_au < 1.02,
@@ -118,8 +119,8 @@ mod tests {
         let pos_peri = earth.heliocentric_position(&tdb_peri).unwrap();
         let pos_aph = earth.heliocentric_position(&tdb_aph).unwrap();
 
-        let dist_peri = (pos_peri.x.powi(2) + pos_peri.y.powi(2) + pos_peri.z.powi(2)).sqrt();
-        let dist_aph = (pos_aph.x.powi(2) + pos_aph.y.powi(2) + pos_aph.z.powi(2)).sqrt();
+        let dist_peri = libm::sqrt(pos_peri.x.powi(2) + pos_peri.y.powi(2) + pos_peri.z.powi(2));
+        let dist_aph = libm::sqrt(pos_aph.x.powi(2) + pos_aph.y.powi(2) + pos_aph.z.powi(2));
 
         println!("Perihelion distance: {:.6} AU", dist_peri);
         println!("Aphelion distance: {:.6} AU", dist_aph);
@@ -148,7 +149,7 @@ mod tests {
         let tdb = TDB::from_julian_date(JulianDate::new(J2000_JD, 0.0));
         let pos = earth.heliocentric_position(&tdb).unwrap();
 
-        let dist_au = (pos.x.powi(2) + pos.y.powi(2) + pos.z.powi(2)).sqrt();
+        let dist_au = libm::sqrt(pos.x.powi(2) + pos.y.powi(2) + pos.z.powi(2));
         assert!(dist_au > 0.98 && dist_au < 1.02);
     }
 
@@ -158,10 +159,10 @@ mod tests {
         let tdb = TDB::from_julian_date(JulianDate::new(J2000_JD, 0.0));
         let (pos, vel) = earth.heliocentric_state(&tdb).unwrap();
 
-        let dist_au = (pos.x.powi(2) + pos.y.powi(2) + pos.z.powi(2)).sqrt();
+        let dist_au = libm::sqrt(pos.x.powi(2) + pos.y.powi(2) + pos.z.powi(2));
         assert!(dist_au > 0.98 && dist_au < 1.02);
 
-        let speed_au_day = (vel.x.powi(2) + vel.y.powi(2) + vel.z.powi(2)).sqrt();
+        let speed_au_day = libm::sqrt(vel.x.powi(2) + vel.y.powi(2) + vel.z.powi(2));
         assert!(
             speed_au_day > 0.016 && speed_au_day < 0.018,
             "Earth orbital speed {} AU/day should be ~0.017 AU/day (~30 km/s)",

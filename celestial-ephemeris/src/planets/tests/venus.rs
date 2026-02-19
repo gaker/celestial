@@ -14,7 +14,12 @@ const VENUS_VSOP2013_REF: &[(f64, f64, f64, f64)] = &[
     (2439545.0, 0.5874139778, 0.3983146995, 0.1419598205),
     (2443545.0, 0.5935137101, -0.3693448084, -0.2037088644),
     (2447545.0, -0.1985961433, -0.6413855038, -0.2759551516),
-    (celestial_core::constants::J2000_JD, -0.7183022964, -0.0462742464, 0.0246406381),
+    (
+        celestial_core::constants::J2000_JD,
+        -0.7183022964,
+        -0.0462742464,
+        0.0246406381,
+    ),
 ];
 
 #[test]
@@ -29,7 +34,7 @@ fn vsop2013_vs_reference() {
         let dx = pos[0] - x_exp;
         let dy = pos[1] - y_exp;
         let dz = pos[2] - z_exp;
-        let error_km = (dx * dx + dy * dy + dz * dz).sqrt() * AU_KM;
+        let error_km = libm::sqrt(dx * dx + dy * dy + dz * dz) * AU_KM;
 
         if error_km > max_error_km {
             max_error_km = error_km;
@@ -53,7 +58,7 @@ fn vsop2013_j2000() {
     let dx = pos[0] - expected.0;
     let dy = pos[1] - expected.1;
     let dz = pos[2] - expected.2;
-    let error_km = (dx * dx + dy * dy + dz * dz).sqrt() * AU_KM;
+    let error_km = libm::sqrt(dx * dx + dy * dy + dz * dz) * AU_KM;
 
     assert!(
         error_km < 2_000.0,
@@ -71,7 +76,7 @@ fn geocentric_distance_range() {
         let jd = start_jd + (i * 30) as f64;
         let tdb = TDB::from_julian_date(JulianDate::new(jd, 0.0));
         let pos = venus.geocentric_position(&tdb).unwrap();
-        let dist = (pos.x * pos.x + pos.y * pos.y + pos.z * pos.z).sqrt();
+        let dist = libm::sqrt(pos.x * pos.x + pos.y * pos.y + pos.z * pos.z);
         (min.min(dist), max.max(dist))
     });
 

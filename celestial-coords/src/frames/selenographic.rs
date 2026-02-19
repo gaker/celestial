@@ -1,4 +1,6 @@
 use crate::{lunar, transforms::CoordinateFrame, CoordResult, Distance, ICRSPosition};
+use celestial_core::constants::HALF_PI;
+use celestial_core::matrix::RotationMatrix3;
 use celestial_core::utils::normalize_angle_to_positive;
 use celestial_core::Angle;
 use celestial_time::TT;
@@ -108,97 +110,46 @@ impl SelenographicPosition {
     }
 }
 
+fn selenographic_to_icrs_matrix(epoch: &TT) -> CoordResult<RotationMatrix3> {
+    let orientation = lunar::compute_lunar_orientation(epoch);
+    let lib_lon = orientation.optical_libration.longitude.radians();
+    let lib_lat = orientation.optical_libration.latitude.radians();
+    let c = orientation.position_angle.radians();
+
+    let moon_icrs = lunar::get_moon_icrs(epoch)?;
+    let moon_ra = moon_icrs.ra().radians();
+    let moon_dec = moon_icrs.dec().radians();
+
+    let mut m = RotationMatrix3::identity();
+    m.rotate_z(-lib_lon);
+    m.rotate_y(-lib_lat);
+    m.rotate_z(c);
+    m.rotate_y(moon_dec - HALF_PI);
+    m.rotate_z(-moon_ra);
+    Ok(m)
+}
+
 impl CoordinateFrame for SelenographicPosition {
     fn to_icrs(&self, epoch: &TT) -> CoordResult<ICRSPosition> {
-        let orientation = lunar::compute_lunar_orientation(epoch);
-        let lib_lon = orientation.optical_libration.longitude.radians();
-        let lib_lat = orientation.optical_libration.latitude.radians();
-        let p = orientation.position_angle.radians();
-
-        let lat = self.latitude.radians();
-        let lon = self.longitude.radians();
-        let (sin_lat, cos_lat) = lat.sin_cos();
-        let (sin_lon, cos_lon) = lon.sin_cos();
-
-        let x_selen = cos_lat * cos_lon;
-        let y_selen = cos_lat * sin_lon;
-        let z_selen = sin_lat;
-
-        let (sin_lib_lat, cos_lib_lat) = lib_lat.sin_cos();
-        let x_lib = x_selen * cos_lib_lat + z_selen * sin_lib_lat;
-        let y_lib = y_selen;
-        let z_lib = -x_selen * sin_lib_lat + z_selen * cos_lib_lat;
-
-        let (sin_lib_lon, cos_lib_lon) = lib_lon.sin_cos();
-        let _x_earth = x_lib * cos_lib_lon - y_lib * sin_lib_lon;
-        let y_earth = x_lib * sin_lib_lon + y_lib * cos_lib_lon;
-        let z_earth = z_lib;
-
-        let (sin_p, cos_p) = p.sin_cos();
-        let y_proj = y_earth * cos_p + z_earth * sin_p;
-        let z_proj = -y_earth * sin_p + z_earth * cos_p;
-
-        let moon_icrs = lunar::get_moon_icrs(epoch)?;
-        let moon_ra = moon_icrs.ra().radians();
-        let moon_dec = moon_icrs.dec().radians();
-
-        let scale = 0.0000113;
-        let offset_x = -y_proj * scale;
-        let offset_y = z_proj * scale;
-
-        let ra_offset = offset_x / moon_dec.cos();
-        let dec_offset = offset_y;
-
-        let new_ra = moon_ra + ra_offset;
-        let new_dec = moon_dec + dec_offset;
+        let m = selenographic_to_icrs_matrix(epoch)?;
+        let (ra, dec) = m
+            .transpose()
+            .transform_spherical(self.longitude.radians(), self.latitude.radians());
 
         let mut icrs = ICRSPosition::new(
-            Angle::from_radians(normalize_angle_to_positive(new_ra)),
-            Angle::from_radians(new_dec),
+            Angle::from_radians(normalize_angle_to_positive(ra)),
+            Angle::from_radians(dec),
         )?;
 
         if let Some(radius) = self.radius {
             icrs.set_distance(radius);
         }
-
         Ok(icrs)
     }
 
     fn from_icrs(icrs: &ICRSPosition, epoch: &TT) -> CoordResult<Self> {
-        let orientation = lunar::compute_lunar_orientation(epoch);
-        let lib_lon = orientation.optical_libration.longitude.radians();
-        let lib_lat = orientation.optical_libration.latitude.radians();
-        let p = orientation.position_angle.radians();
-
-        let moon_icrs = lunar::get_moon_icrs(epoch)?;
-        let moon_ra = moon_icrs.ra().radians();
-        let moon_dec = moon_icrs.dec().radians();
-
-        let ra_offset = icrs.ra().radians() - moon_ra;
-        let dec_offset = icrs.dec().radians() - moon_dec;
-
-        let scale = 0.0000113;
-        let y_proj = -ra_offset * moon_dec.cos() / scale;
-        let z_proj = dec_offset / scale;
-
-        let (sin_p, cos_p) = p.sin_cos();
-        let y_earth = y_proj * cos_p - z_proj * sin_p;
-        let z_earth = y_proj * sin_p + z_proj * cos_p;
-
-        let (sin_lib_lon, cos_lib_lon) = lib_lon.sin_cos();
-        let x_earth = (1.0 - y_earth.powi(2) - z_earth.powi(2)).sqrt().max(0.0);
-
-        let x_lib = x_earth * cos_lib_lon + y_earth * sin_lib_lon;
-        let y_lib = -x_earth * sin_lib_lon + y_earth * cos_lib_lon;
-        let z_lib = z_earth;
-
-        let (sin_lib_lat, cos_lib_lat) = lib_lat.sin_cos();
-        let x_selen = x_lib * cos_lib_lat - z_lib * sin_lib_lat;
-        let y_selen = y_lib;
-        let z_selen = x_lib * sin_lib_lat + z_lib * cos_lib_lat;
-
-        let lat = z_selen.asin();
-        let lon = y_selen.atan2(x_selen);
+        let m = selenographic_to_icrs_matrix(epoch)?;
+        let (lon, lat) = m.transform_spherical(icrs.ra().radians(), icrs.dec().radians());
 
         let mut pos = Self::new(
             Angle::from_radians(lat),
@@ -208,7 +159,6 @@ impl CoordinateFrame for SelenographicPosition {
         if let Some(dist) = icrs.distance() {
             pos.set_radius(dist);
         }
-
         Ok(pos)
     }
 }
@@ -316,6 +266,47 @@ mod tests {
 
         assert!(icrs.ra().degrees() >= 0.0 && icrs.ra().degrees() < 360.0);
         assert!(icrs.dec().degrees() >= -90.0 && icrs.dec().degrees() <= 90.0);
+    }
+
+    #[test]
+    fn test_coordinate_frame_roundtrip() {
+        let epoch = TT::j2000();
+        let test_cases = [
+            (0.0, 0.0),
+            (5.0, 30.0),
+            (-5.0, 90.0),
+            (3.0, 180.0),
+            (-3.0, 270.0),
+        ];
+
+        for (lat, lon) in test_cases {
+            let original = SelenographicPosition::from_degrees(lat, lon).unwrap();
+            let icrs = original.to_icrs(&epoch).unwrap();
+            let recovered = SelenographicPosition::from_icrs(&icrs, &epoch).unwrap();
+
+            let lat_err = (original.latitude().degrees() - recovered.latitude().degrees()).abs();
+            let lon_diff = (original.longitude().radians() - recovered.longitude().radians()).abs();
+            let lon_err = if lon_diff > std::f64::consts::PI {
+                std::f64::consts::TAU - lon_diff
+            } else {
+                lon_diff
+            } * celestial_core::constants::RAD_TO_DEG;
+
+            assert!(
+                lat_err < 1.0 / 3600.0,
+                "({}, {}): Latitude error {:.6} arcsec",
+                lat,
+                lon,
+                lat_err * 3600.0,
+            );
+            assert!(
+                lon_err < 1.0 / 3600.0,
+                "({}, {}): Longitude error {:.6} arcsec",
+                lat,
+                lon,
+                lon_err * 3600.0,
+            );
+        }
     }
 
     #[test]

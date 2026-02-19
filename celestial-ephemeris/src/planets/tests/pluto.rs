@@ -29,7 +29,7 @@ fn vsop2013_vs_reference() {
         let dx = pos[0] - x_exp;
         let dy = pos[1] - y_exp;
         let dz = pos[2] - z_exp;
-        let error_km = (dx * dx + dy * dy + dz * dz).sqrt() * AU_KM;
+        let error_km = libm::sqrt(dx * dx + dy * dy + dz * dz) * AU_KM;
 
         if error_km > max_error_km {
             max_error_km = error_km;
@@ -53,7 +53,7 @@ fn vsop2013_j2000() {
     let dx = pos[0] - expected.0;
     let dy = pos[1] - expected.1;
     let dz = pos[2] - expected.2;
-    let error_km = (dx * dx + dy * dy + dz * dz).sqrt() * AU_KM;
+    let error_km = libm::sqrt(dx * dx + dy * dy + dz * dz) * AU_KM;
 
     assert!(
         error_km < 20_000.0,
@@ -71,7 +71,7 @@ fn geocentric_distance_range() {
         let jd = start_jd + (i * 30) as f64;
         let tdb = TDB::from_julian_date(JulianDate::new(jd, 0.0));
         let pos = pluto.geocentric_position(&tdb).unwrap();
-        let dist = (pos.x * pos.x + pos.y * pos.y + pos.z * pos.z).sqrt();
+        let dist = libm::sqrt(pos.x * pos.x + pos.y * pos.y + pos.z * pos.z);
         (min.min(dist), max.max(dist))
     });
 

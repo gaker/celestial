@@ -167,7 +167,9 @@ mod tests {
         assert_eq!(UT1::new(0, 0).to_julian_date().to_f64(), UNIX_EPOCH_JD);
         assert_eq!(UT1::j2000().to_julian_date().to_f64(), J2000_JD);
         assert_eq!(
-            ut1_from_calendar(2000, 1, 1, 12, 0, 0.0).to_julian_date().to_f64(),
+            ut1_from_calendar(2000, 1, 1, 12, 0, 0.0)
+                .to_julian_date()
+                .to_f64(),
             J2000_JD
         );
 
@@ -181,7 +183,10 @@ mod tests {
     fn test_ut1_arithmetic() {
         let ut1 = UT1::j2000();
         assert_eq!(ut1.add_days(1.0).to_julian_date().to_f64(), J2000_JD + 1.0);
-        assert_eq!(ut1.add_seconds(3600.0).to_julian_date().to_f64(), J2000_JD + 1.0 / 24.0);
+        assert_eq!(
+            ut1.add_seconds(3600.0).to_julian_date().to_f64(),
+            J2000_JD + 1.0 / 24.0
+        );
     }
 
     #[test]
@@ -194,7 +199,10 @@ mod tests {
     #[test]
     fn test_ut1_string_parsing() {
         assert_eq!(
-            UT1::from_str("2000-01-01T12:00:00").unwrap().to_julian_date().to_f64(),
+            UT1::from_str("2000-01-01T12:00:00")
+                .unwrap()
+                .to_julian_date()
+                .to_f64(),
             UT1::j2000().to_julian_date().to_f64()
         );
 

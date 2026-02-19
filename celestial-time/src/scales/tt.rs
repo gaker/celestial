@@ -180,10 +180,15 @@ mod tests {
         assert_eq!(TT::new(0, 0).to_julian_date().to_f64(), UNIX_EPOCH_JD);
         assert_eq!(TT::j2000().to_julian_date().to_f64(), J2000_JD);
         assert_eq!(
-            tt_from_calendar(2000, 1, 1, 12, 0, 0.0).to_julian_date().to_f64(),
+            tt_from_calendar(2000, 1, 1, 12, 0, 0.0)
+                .to_julian_date()
+                .to_f64(),
             J2000_JD
         );
-        assert_eq!(TT::from_jd(J2000_JD).unwrap().to_julian_date().to_f64(), J2000_JD);
+        assert_eq!(
+            TT::from_jd(J2000_JD).unwrap().to_julian_date().to_f64(),
+            J2000_JD
+        );
     }
 
     #[test]
@@ -197,7 +202,10 @@ mod tests {
     fn test_tt_arithmetic() {
         let tt = TT::j2000();
         assert_eq!(tt.add_days(1.0).to_julian_date().to_f64(), J2000_JD + 1.0);
-        assert_eq!(tt.add_seconds(3600.0).to_julian_date().to_f64(), J2000_JD + 1.0 / 24.0);
+        assert_eq!(
+            tt.add_seconds(3600.0).to_julian_date().to_f64(),
+            J2000_JD + 1.0 / 24.0
+        );
     }
 
     #[test]
@@ -216,8 +224,14 @@ mod tests {
         let tt_direct = TT::from_julian_date(jd);
         let tt_from_trait: TT = jd.into();
 
-        assert_eq!(tt_direct.to_julian_date().jd1(), tt_from_trait.to_julian_date().jd1());
-        assert_eq!(tt_direct.to_julian_date().jd2(), tt_from_trait.to_julian_date().jd2());
+        assert_eq!(
+            tt_direct.to_julian_date().jd1(),
+            tt_from_trait.to_julian_date().jd1()
+        );
+        assert_eq!(
+            tt_direct.to_julian_date().jd2(),
+            tt_from_trait.to_julian_date().jd2()
+        );
     }
 
     #[test]
@@ -231,7 +245,10 @@ mod tests {
     #[test]
     fn test_tt_string_parsing() {
         assert_eq!(
-            TT::from_str("2000-01-01T12:00:00").unwrap().to_julian_date().to_f64(),
+            TT::from_str("2000-01-01T12:00:00")
+                .unwrap()
+                .to_julian_date()
+                .to_f64(),
             TT::j2000().to_julian_date().to_f64()
         );
         assert!(TT::from_str("invalid-date").is_err());
@@ -241,7 +258,10 @@ mod tests {
     fn test_tt_string_parsing_fractional_seconds() {
         let result = TT::from_str("2000-01-01T12:00:00.123").unwrap();
         let expected = tt_from_calendar(2000, 1, 1, 12, 0, 0.123);
-        assert_eq!(result.to_julian_date().to_f64(), expected.to_julian_date().to_f64());
+        assert_eq!(
+            result.to_julian_date().to_f64(),
+            expected.to_julian_date().to_f64()
+        );
     }
 
     #[cfg(feature = "serde")]
@@ -260,7 +280,11 @@ mod tests {
 
             let total_diff =
                 (original.to_julian_date().to_f64() - deserialized.to_julian_date().to_f64()).abs();
-            assert!(total_diff < 1e-14, "serde precision loss: {:.2e}", total_diff);
+            assert!(
+                total_diff < 1e-14,
+                "serde precision loss: {:.2e}",
+                total_diff
+            );
         }
     }
 }

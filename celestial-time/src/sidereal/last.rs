@@ -107,7 +107,7 @@ impl LAST {
         let jd = tt.to_julian_date();
         let mean_obliquity = celestial_core::obliquity::iau_2006_mean_obliquity(jd.jd1(), jd.jd2());
 
-        let ee_rad = nutation.nutation_longitude() * mean_obliquity.cos();
+        let ee_rad = nutation.nutation_longitude() * libm::cos(mean_obliquity);
         let ee_hours = ee_rad * 12.0 / celestial_core::constants::PI;
 
         let lmst_hours = self.hours() - ee_hours;
@@ -124,8 +124,8 @@ impl LAST {
 
 impl std::fmt::Display for LAST {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let lat_deg = self.location.latitude.to_degrees();
-        let lon_deg = self.location.longitude.to_degrees();
+        let lat_deg = self.location.latitude * celestial_core::constants::RAD_TO_DEG;
+        let lon_deg = self.location.longitude * celestial_core::constants::RAD_TO_DEG;
         write!(
             f,
             "LAST {} at ({:.4}°, {:.4}°)",

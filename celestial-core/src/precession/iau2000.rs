@@ -145,7 +145,7 @@ impl PrecessionIAU2000 {
 
         let mut rb = RotationMatrix3::identity();
         rb.rotate_z(FRAME_BIAS_RA_OFFSET);
-        rb.rotate_y(FRAME_BIAS_LONGITUDE * EPS0.sin());
+        rb.rotate_y(FRAME_BIAS_LONGITUDE * libm::sin(EPS0));
         rb.rotate_x(-FRAME_BIAS_OBLIQUITY);
 
         rb

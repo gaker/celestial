@@ -1,14 +1,32 @@
-use crate::error::{Error, Result};
 use super::{MountTypeFlags, Term};
+use crate::error::{Error, Result};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TrigFunc { Sin, Cos }
+pub enum TrigFunc {
+    Sin,
+    Cos,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Coordinate { H, D, A, E, Z }
+pub enum Coordinate {
+    H,
+    D,
+    A,
+    E,
+    Z,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ResultType { H, D, X, P, A, E, Z, S }
+pub enum ResultType {
+    H,
+    D,
+    X,
+    P,
+    A,
+    E,
+    Z,
+    S,
+}
 
 #[derive(Debug, Clone)]
 pub struct HarmonicComponent {
@@ -27,12 +45,18 @@ pub struct HarmonicTerm {
 pub fn parse_harmonic(name: &str) -> Result<HarmonicTerm> {
     let chars: Vec<char> = name.chars().collect();
     if chars.len() < 4 || chars[0] != 'H' {
-        return Err(Error::InvalidHarmonic(format!("too short or missing H prefix: {}", name)));
+        return Err(Error::InvalidHarmonic(format!(
+            "too short or missing H prefix: {}",
+            name
+        )));
     }
     let result = parse_result_type(chars[1], name)?;
     let components = parse_components(&chars[2..], name)?;
     if components.is_empty() {
-        return Err(Error::InvalidHarmonic(format!("no components found: {}", name)));
+        return Err(Error::InvalidHarmonic(format!(
+            "no components found: {}",
+            name
+        )));
     }
     Ok(HarmonicTerm {
         result,
@@ -51,7 +75,10 @@ fn parse_result_type(ch: char, name: &str) -> Result<ResultType> {
         'E' => Ok(ResultType::E),
         'Z' => Ok(ResultType::Z),
         'S' => Ok(ResultType::S),
-        _ => Err(Error::InvalidHarmonic(format!("unknown result type '{}' in {}", ch, name))),
+        _ => Err(Error::InvalidHarmonic(format!(
+            "unknown result type '{}' in {}",
+            ch, name
+        ))),
     }
 }
 
@@ -59,7 +86,10 @@ fn parse_func(ch: char, name: &str) -> Result<TrigFunc> {
     match ch {
         'S' => Ok(TrigFunc::Sin),
         'C' => Ok(TrigFunc::Cos),
-        _ => Err(Error::InvalidHarmonic(format!("unknown function '{}' in {}", ch, name))),
+        _ => Err(Error::InvalidHarmonic(format!(
+            "unknown function '{}' in {}",
+            ch, name
+        ))),
     }
 }
 
@@ -70,7 +100,10 @@ fn parse_coord(ch: char, name: &str) -> Result<Coordinate> {
         'A' => Ok(Coordinate::A),
         'E' => Ok(Coordinate::E),
         'Z' => Ok(Coordinate::Z),
-        _ => Err(Error::InvalidHarmonic(format!("unknown coordinate '{}' in {}", ch, name))),
+        _ => Err(Error::InvalidHarmonic(format!(
+            "unknown coordinate '{}' in {}",
+            ch, name
+        ))),
     }
 }
 
@@ -79,7 +112,10 @@ fn parse_components(chars: &[char], name: &str) -> Result<Vec<HarmonicComponent>
     let mut i = 0;
     while i < chars.len() {
         if i + 1 >= chars.len() {
-            return Err(Error::InvalidHarmonic(format!("incomplete component in {}", name)));
+            return Err(Error::InvalidHarmonic(format!(
+                "incomplete component in {}",
+                name
+            )));
         }
         let func = parse_func(chars[i], name)?;
         let coord = parse_coord(chars[i + 1], name)?;
@@ -92,9 +128,16 @@ fn parse_components(chars: &[char], name: &str) -> Result<Vec<HarmonicComponent>
             1
         };
         if frequency == 0 {
-            return Err(Error::InvalidHarmonic(format!("frequency 0 not allowed in {}", name)));
+            return Err(Error::InvalidHarmonic(format!(
+                "frequency 0 not allowed in {}",
+                name
+            )));
         }
-        components.push(HarmonicComponent { func, coord, frequency });
+        components.push(HarmonicComponent {
+            func,
+            coord,
+            frequency,
+        });
     }
     Ok(components)
 }
@@ -127,14 +170,18 @@ impl HarmonicTerm {
 fn trig_value(func: TrigFunc, coord_val: f64, frequency: u8) -> f64 {
     let arg = coord_val * frequency as f64;
     match func {
-        TrigFunc::Sin => arg.sin(),
-        TrigFunc::Cos => arg.cos(),
+        TrigFunc::Sin => libm::sin(arg),
+        TrigFunc::Cos => libm::cos(arg),
     }
 }
 
 impl Term for HarmonicTerm {
-    fn name(&self) -> &str { &self.original_name }
-    fn description(&self) -> &str { "Harmonic correction term" }
+    fn name(&self) -> &str {
+        &self.original_name
+    }
+    fn description(&self) -> &str {
+        "Harmonic correction term"
+    }
 
     fn pier_sensitive(&self) -> bool {
         matches!(self.result, ResultType::P)
@@ -145,9 +192,7 @@ impl Term for HarmonicTerm {
             ResultType::H | ResultType::D | ResultType::X | ResultType::P => {
                 MountTypeFlags::EQUATORIAL
             }
-            ResultType::A | ResultType::E | ResultType::Z | ResultType::S => {
-                MountTypeFlags::ALTAZ
-            }
+            ResultType::A | ResultType::E | ResultType::Z | ResultType::S => MountTypeFlags::ALTAZ,
         }
     }
 
@@ -156,8 +201,8 @@ impl Term for HarmonicTerm {
         match self.result {
             ResultType::H => (val, 0.0),
             ResultType::D => (0.0, val),
-            ResultType::X => (val / dec.cos(), 0.0),
-            ResultType::P => (-pier * dec.tan() * val, 0.0),
+            ResultType::X => (val / libm::cos(dec), 0.0),
+            ResultType::P => (-pier * libm::tan(dec) * val, 0.0),
             _ => (0.0, 0.0),
         }
     }
@@ -168,7 +213,7 @@ impl Term for HarmonicTerm {
             ResultType::A => (val, 0.0),
             ResultType::E => (0.0, val),
             ResultType::Z => (0.0, -val),
-            ResultType::S => (val / el.cos(), 0.0),
+            ResultType::S => (val / libm::cos(el), 0.0),
             _ => (0.0, 0.0),
         }
     }
@@ -319,7 +364,7 @@ mod tests {
         let el = FRAC_PI_4;
         let (da, de) = term.jacobian_altaz(0.0, el, 0.0);
         assert_eq!(da, 0.0);
-        assert_eq!(de, el.sin());
+        assert_eq!(de, libm::sin(el));
     }
 
     #[test]
@@ -328,7 +373,7 @@ mod tests {
         let el = FRAC_PI_4;
         let (da, de) = term.jacobian_altaz(0.0, el, 0.0);
         assert_eq!(da, 0.0);
-        assert_eq!(de, -el.sin());
+        assert_eq!(de, -libm::sin(el));
     }
 
     #[test]
@@ -366,6 +411,6 @@ mod tests {
         let term = parse_harmonic("HHSH3").unwrap();
         let h = FRAC_PI_2;
         let (dh, _dd) = term.jacobian_equatorial(h, 0.0, 0.0, 1.0);
-        assert_eq!(dh, (3.0 * h).sin());
+        assert_eq!(dh, libm::sin(3.0 * h));
     }
 }

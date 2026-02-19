@@ -329,9 +329,9 @@ pub fn julian_to_calendar(jd1: f64, jd2: f64) -> TimeResult<(i32, i32, i32, f64)
         if a.abs() < 0.5 {
             0.0
         } else if a < 0.0 {
-            (a - 0.5).ceil()
+            libm::ceil(a - 0.5)
         } else {
-            (a + 0.5).floor()
+            libm::floor(a + 0.5)
         }
     }
 
@@ -475,7 +475,7 @@ mod tests {
             (J2000_JD, 0.123456789),
             (J2000_JD, 0.0),
             (J2000_JD, 0.999999),
-            (0.5, J2000_JD),  // jd2 > jd1 (alternate split in utc_to_tai)
+            (0.5, J2000_JD), // jd2 > jd1 (alternate split in utc_to_tai)
             (0.1, celestial_core::constants::J2000_JD), // jd2 > jd1 (alternate split in tai_to_utc)
         ];
 
@@ -537,7 +537,8 @@ mod tests {
         assert!(julian_to_calendar(-1e6, 0.0).is_err());
 
         // julian_to_calendar: negative fraction correction path
-        let (y, m, d, frac) = julian_to_calendar(celestial_core::constants::J2000_JD, -0.6).unwrap();
+        let (y, m, d, frac) =
+            julian_to_calendar(celestial_core::constants::J2000_JD, -0.6).unwrap();
         assert!(y > 0 && (1..=12).contains(&m) && (1..=31).contains(&d) && frac >= 0.0);
 
         // julian_to_calendar: Kahan summation else branch (|frac_2| > |sum|)

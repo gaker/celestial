@@ -847,7 +847,7 @@ mod tests {
     }
 
     #[test]
-    fn parse_ascii_format_comprehensive() {
+    fn parse_ascii_format() {
         let header = create_test_header(None);
         let info = create_test_hdu_info();
         let hdu = AsciiTableHdu::new(header, info);

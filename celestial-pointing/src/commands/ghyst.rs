@@ -49,11 +49,7 @@ fn split_by_pier(residuals: &[crate::plot::residuals::ObsResidual]) -> (PointVec
     (east, west)
 }
 
-fn terminal_output(
-    all: &[(f64, f64)],
-    n_east: usize,
-    n_west: usize,
-) -> Result<CommandOutput> {
+fn terminal_output(all: &[(f64, f64)], n_east: usize, n_west: usize) -> Result<CommandOutput> {
     let plot = crate::plot::terminal::xy_plot_terminal(
         all,
         "Residual vs Observation Sequence",
@@ -64,13 +60,17 @@ fn terminal_output(
     Ok(CommandOutput::Text(format!("{plot}\n{summary}")))
 }
 
-fn write_svg(
-    east: &[(f64, f64)],
-    west: &[(f64, f64)],
-    path: &Path,
-) -> Result<CommandOutput> {
-    let stem = path.file_stem().unwrap_or_default().to_str().unwrap_or("plot");
-    let ext = path.extension().unwrap_or_default().to_str().unwrap_or("svg");
+fn write_svg(east: &[(f64, f64)], west: &[(f64, f64)], path: &Path) -> Result<CommandOutput> {
+    let stem = path
+        .file_stem()
+        .unwrap_or_default()
+        .to_str()
+        .unwrap_or("plot");
+    let ext = path
+        .extension()
+        .unwrap_or_default()
+        .to_str()
+        .unwrap_or("svg");
     let parent = path.parent().unwrap_or(Path::new("."));
     let east_path = parent.join(format!("{stem}_east.{ext}"));
     let west_path = parent.join(format!("{stem}_west.{ext}"));

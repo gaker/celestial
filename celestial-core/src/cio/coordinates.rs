@@ -80,12 +80,15 @@ impl CipCoordinates {
     ///
     /// This is sqrt(X^2 + Y^2), useful for gauging the total pole offset.
     pub fn magnitude(&self) -> f64 {
-        (self.x * self.x + self.y * self.y).sqrt()
+        libm::sqrt(self.x * self.x + self.y * self.y)
     }
 
     /// Returns (X, Y) converted to degrees.
     pub fn to_degrees(&self) -> (f64, f64) {
-        (self.x.to_degrees(), self.y.to_degrees())
+        (
+            self.x * crate::constants::RAD_TO_DEG,
+            self.y * crate::constants::RAD_TO_DEG,
+        )
     }
 
     /// Returns (X, Y) converted to arcseconds.
@@ -93,7 +96,10 @@ impl CipCoordinates {
     /// Arcseconds are the conventional unit for reporting CIP coordinates
     /// in publications and IERS bulletins.
     pub fn to_arcseconds(&self) -> (f64, f64) {
-        (self.x.to_degrees() * 3600.0, self.y.to_degrees() * 3600.0)
+        (
+            self.x * crate::constants::RAD_TO_DEG * 3600.0,
+            self.y * crate::constants::RAD_TO_DEG * 3600.0,
+        )
     }
 }
 
@@ -170,6 +176,6 @@ mod tests {
         // These are the exact computed values for our test case
         assert_eq!(reasonable_cip.x, 1e-6);
         assert_eq!(reasonable_cip.y, 1e-6);
-        assert_eq!(reasonable_cip.magnitude(), (2e-12_f64).sqrt()); // sqrt(x² + y²)
+        assert_eq!(reasonable_cip.magnitude(), libm::sqrt(2e-12_f64)); // sqrt(x² + y²)
     }
 }

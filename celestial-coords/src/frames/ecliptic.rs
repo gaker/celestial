@@ -202,8 +202,8 @@ impl CoordinateFrame for EclipticPosition {
         let lambda = self.lambda.radians();
         let beta = self.beta.radians();
 
-        let (sin_beta, cos_beta) = beta.sin_cos();
-        let (sin_lambda, cos_lambda) = lambda.sin_cos();
+        let (sin_beta, cos_beta) = libm::sincos(beta);
+        let (sin_lambda, cos_lambda) = libm::sincos(lambda);
 
         let ecliptic_cartesian = [cos_beta * cos_lambda, cos_beta * sin_lambda, sin_beta];
 
@@ -217,8 +217,12 @@ impl CoordinateFrame for EclipticPosition {
         let z = icrs_cartesian[2];
 
         let rxy2 = x * x + y * y;
-        let ra = if rxy2 == 0.0 { 0.0 } else { y.atan2(x) };
-        let dec = if z == 0.0 { 0.0 } else { z.atan2(rxy2.sqrt()) };
+        let ra = if rxy2 == 0.0 { 0.0 } else { libm::atan2(y, x) };
+        let dec = if z == 0.0 {
+            0.0
+        } else {
+            libm::atan2(z, libm::sqrt(rxy2))
+        };
 
         let d2pi = celestial_core::constants::TWOPI;
         let mut ra_normalized = ra % d2pi;
@@ -229,7 +233,7 @@ impl CoordinateFrame for EclipticPosition {
         let dpi = celestial_core::constants::PI;
         let mut dec_normalized = dec % d2pi;
         if dec_normalized.abs() >= dpi {
-            dec_normalized -= d2pi.copysign(dec);
+            dec_normalized -= libm::copysign(d2pi, dec);
         }
 
         let mut icrs = ICRSPosition::new(
@@ -248,8 +252,8 @@ impl CoordinateFrame for EclipticPosition {
         let ra = icrs.ra().radians();
         let dec = icrs.dec().radians();
 
-        let (sin_dec, cos_dec) = dec.sin_cos();
-        let (sin_ra, cos_ra) = ra.sin_cos();
+        let (sin_dec, cos_dec) = libm::sincos(dec);
+        let (sin_ra, cos_ra) = libm::sincos(ra);
 
         let icrs_cartesian = [cos_dec * cos_ra, cos_dec * sin_ra, sin_dec];
 
@@ -261,9 +265,9 @@ impl CoordinateFrame for EclipticPosition {
         let z = ecliptic_cartesian[2];
 
         let rxy2 = x * x + y * y;
-        let lambda = if rxy2 != 0.0 { y.atan2(x) } else { 0.0 };
+        let lambda = if rxy2 != 0.0 { libm::atan2(y, x) } else { 0.0 };
         let beta = if rxy2 != 0.0 || z != 0.0 {
-            z.atan2(rxy2.sqrt())
+            libm::atan2(z, libm::sqrt(rxy2))
         } else {
             0.0
         };

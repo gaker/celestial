@@ -1,7 +1,7 @@
-use celestial_core::Angle;
 use crate::error::{Error, Result};
 use crate::observation::PierSide;
-use crate::terms::{Term, create_term};
+use crate::terms::{create_term, Term};
+use celestial_core::Angle;
 
 #[derive(Default)]
 pub struct PointingModel {
@@ -189,12 +189,8 @@ impl PointingModel {
         pier: PierSide,
     ) -> (Angle, Angle) {
         let ha = lst - ra;
-        let (dh, dd) = self.apply_equatorial(
-            ha.radians(),
-            dec.radians(),
-            lat.radians(),
-            pier.sign(),
-        );
+        let (dh, dd) =
+            self.apply_equatorial(ha.radians(), dec.radians(), lat.radians(), pier.sign());
         let cmd_ha = ha - Angle::from_arcseconds(dh);
         let cmd_dec = dec - Angle::from_arcseconds(dd);
         let cmd_ra = lst - cmd_ha;

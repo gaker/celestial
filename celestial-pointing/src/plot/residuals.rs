@@ -37,8 +37,8 @@ fn build_residual(
     let raw_dd = (obs.observed_dec - obs.catalog_dec).arcseconds();
     let dh = raw_dh - model_dh;
     let dd = raw_dd - model_dd;
-    let dx = dh * dec.cos();
-    let dr = (dx * dx + dd * dd).sqrt();
+    let dx = dh * libm::cos(dec);
+    let dr = libm::sqrt(dx * dx + dd * dd);
     ObsResidual {
         ha_deg: obs.commanded_ha.degrees(),
         dec_deg: obs.catalog_dec.degrees(),
@@ -63,8 +63,8 @@ pub fn require_fit(session: &Session) -> crate::error::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use celestial_core::Angle;
     use crate::observation::{Observation, PierSide};
+    use celestial_core::Angle;
 
     fn make_obs(
         cmd_ha_arcsec: f64,
@@ -97,12 +97,12 @@ mod tests {
     #[test]
     fn masked_observations_excluded() {
         let mut session = Session::new();
-        session.observations.push(
-            make_obs(0.0, 100.0, 45.0, 45.0, PierSide::East, false),
-        );
-        session.observations.push(
-            make_obs(0.0, 200.0, 30.0, 30.0, PierSide::East, true),
-        );
+        session
+            .observations
+            .push(make_obs(0.0, 100.0, 45.0, 45.0, PierSide::East, false));
+        session
+            .observations
+            .push(make_obs(0.0, 200.0, 30.0, 30.0, PierSide::East, true));
         let residuals = compute_residuals(&session);
         assert_eq!(residuals.len(), 1);
         assert_eq!(residuals[0].index, 0);
@@ -111,24 +111,24 @@ mod tests {
     #[test]
     fn residual_no_model_equals_raw() {
         let mut session = Session::new();
-        session.observations.push(
-            make_obs(0.0, 3600.0, 0.0, 2.0, PierSide::East, false),
-        );
+        session
+            .observations
+            .push(make_obs(0.0, 3600.0, 0.0, 2.0, PierSide::East, false));
         let residuals = compute_residuals(&session);
         assert_eq!(residuals.len(), 1);
         let r = &residuals[0];
         assert_eq!(r.dh, 3600.0);
         assert_eq!(r.dd, 7200.0);
-        assert_eq!(r.dx, 3600.0 * 0.0_f64.cos());
-        assert_eq!(r.dr, (3600.0_f64.powi(2) + 7200.0_f64.powi(2)).sqrt());
+        assert_eq!(r.dx, 3600.0 * libm::cos(0.0_f64));
+        assert_eq!(r.dr, libm::sqrt(3600.0_f64.powi(2) + 7200.0_f64.powi(2)));
     }
 
     #[test]
     fn residual_with_ih_model() {
         let mut session = Session::new();
-        session.observations.push(
-            make_obs(0.0, 100.0, 45.0, 45.0, PierSide::East, false),
-        );
+        session
+            .observations
+            .push(make_obs(0.0, 100.0, 45.0, 45.0, PierSide::East, false));
         session.model.add_term("IH").unwrap();
         session.model.set_coefficients(&[-100.0]).unwrap();
         let residuals = compute_residuals(&session);
@@ -137,18 +137,18 @@ mod tests {
         let model_dh = 100.0;
         let expected_dh = 100.0 - model_dh;
         assert_eq!(r.dh, expected_dh);
-        assert_eq!(r.dx, expected_dh * dec_rad.cos());
+        assert_eq!(r.dx, expected_dh * libm::cos(dec_rad));
     }
 
     #[test]
     fn pier_side_recorded() {
         let mut session = Session::new();
-        session.observations.push(
-            make_obs(0.0, 0.0, 0.0, 0.0, PierSide::East, false),
-        );
-        session.observations.push(
-            make_obs(0.0, 0.0, 0.0, 0.0, PierSide::West, false),
-        );
+        session
+            .observations
+            .push(make_obs(0.0, 0.0, 0.0, 0.0, PierSide::East, false));
+        session
+            .observations
+            .push(make_obs(0.0, 0.0, 0.0, 0.0, PierSide::West, false));
         let residuals = compute_residuals(&session);
         assert!(residuals[0].pier_east);
         assert!(!residuals[1].pier_east);
@@ -157,15 +157,15 @@ mod tests {
     #[test]
     fn index_tracks_original_position() {
         let mut session = Session::new();
-        session.observations.push(
-            make_obs(0.0, 0.0, 0.0, 0.0, PierSide::East, true),
-        );
-        session.observations.push(
-            make_obs(0.0, 0.0, 0.0, 0.0, PierSide::East, false),
-        );
-        session.observations.push(
-            make_obs(0.0, 0.0, 0.0, 0.0, PierSide::East, false),
-        );
+        session
+            .observations
+            .push(make_obs(0.0, 0.0, 0.0, 0.0, PierSide::East, true));
+        session
+            .observations
+            .push(make_obs(0.0, 0.0, 0.0, 0.0, PierSide::East, false));
+        session
+            .observations
+            .push(make_obs(0.0, 0.0, 0.0, 0.0, PierSide::East, false));
         let residuals = compute_residuals(&session);
         assert_eq!(residuals.len(), 2);
         assert_eq!(residuals[0].index, 1);
@@ -194,9 +194,14 @@ mod tests {
     fn ha_and_dec_degrees_populated() {
         let mut session = Session::new();
         let cmd_ha_arcsec = 3600.0 * 15.0;
-        session.observations.push(
-            make_obs(cmd_ha_arcsec, cmd_ha_arcsec, 45.0, 45.0, PierSide::East, false),
-        );
+        session.observations.push(make_obs(
+            cmd_ha_arcsec,
+            cmd_ha_arcsec,
+            45.0,
+            45.0,
+            PierSide::East,
+            false,
+        ));
         let residuals = compute_residuals(&session);
         let r = &residuals[0];
         assert_eq!(r.ha_deg, Angle::from_arcseconds(cmd_ha_arcsec).degrees());
@@ -206,12 +211,12 @@ mod tests {
     #[test]
     fn dr_is_sqrt_dx2_dd2() {
         let mut session = Session::new();
-        session.observations.push(
-            make_obs(0.0, 3.0, 0.0, 4.0 / 3600.0, PierSide::East, false),
-        );
+        session
+            .observations
+            .push(make_obs(0.0, 3.0, 0.0, 4.0 / 3600.0, PierSide::East, false));
         let residuals = compute_residuals(&session);
         let r = &residuals[0];
-        let expected_dr = (r.dx * r.dx + r.dd * r.dd).sqrt();
+        let expected_dr = libm::sqrt(r.dx * r.dx + r.dd * r.dd);
         assert_eq!(r.dr, expected_dr);
     }
 }

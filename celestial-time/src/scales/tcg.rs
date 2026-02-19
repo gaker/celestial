@@ -140,28 +140,42 @@ mod tests {
         assert_eq!(TCG::new(0, 0).to_julian_date().to_f64(), UNIX_EPOCH_JD);
         assert_eq!(TCG::j2000().to_julian_date().to_f64(), J2000_JD);
         assert_eq!(
-            tcg_from_calendar(2000, 1, 1, 12, 0, 0.0).to_julian_date().to_f64(),
+            tcg_from_calendar(2000, 1, 1, 12, 0, 0.0)
+                .to_julian_date()
+                .to_f64(),
             J2000_JD
         );
 
         let jd = JulianDate::new(J2000_JD, 0.123456789);
         let tcg_direct = TCG::from_julian_date(jd);
         let tcg_from_trait: TCG = jd.into();
-        assert_eq!(tcg_direct.to_julian_date().jd1(), tcg_from_trait.to_julian_date().jd1());
-        assert_eq!(tcg_direct.to_julian_date().jd2(), tcg_from_trait.to_julian_date().jd2());
+        assert_eq!(
+            tcg_direct.to_julian_date().jd1(),
+            tcg_from_trait.to_julian_date().jd1()
+        );
+        assert_eq!(
+            tcg_direct.to_julian_date().jd2(),
+            tcg_from_trait.to_julian_date().jd2()
+        );
     }
 
     #[test]
     fn test_tcg_arithmetic() {
         let tcg = TCG::j2000();
         assert_eq!(tcg.add_days(1.0).to_julian_date().to_f64(), J2000_JD + 1.0);
-        assert_eq!(tcg.add_seconds(3600.0).to_julian_date().to_f64(), J2000_JD + 1.0 / 24.0);
+        assert_eq!(
+            tcg.add_seconds(3600.0).to_julian_date().to_f64(),
+            J2000_JD + 1.0 / 24.0
+        );
     }
 
     #[test]
     fn test_tcg_string_parsing() {
         assert_eq!(
-            TCG::from_str("2000-01-01T12:00:00").unwrap().to_julian_date().to_f64(),
+            TCG::from_str("2000-01-01T12:00:00")
+                .unwrap()
+                .to_julian_date()
+                .to_f64(),
             TCG::j2000().to_julian_date().to_f64()
         );
 
@@ -186,8 +200,14 @@ mod tests {
         let test_cases = [
             ("J2000", TCG::j2000()),
             ("Unix epoch", TCG::new(0, 0)),
-            ("Modern date", tcg_from_calendar(2024, 6, 15, 14, 30, 45.123)),
-            ("High precision", tcg_from_calendar(1990, 12, 31, 23, 59, 59.999999999)),
+            (
+                "Modern date",
+                tcg_from_calendar(2024, 6, 15, 14, 30, 45.123),
+            ),
+            (
+                "High precision",
+                tcg_from_calendar(1990, 12, 31, 23, 59, 59.999999999),
+            ),
         ];
 
         for (name, original) in test_cases {
@@ -203,7 +223,12 @@ mod tests {
 
             assert!(jd1_diff < 1e-14, "{}: jd1 diff {:.2e}", name, jd1_diff);
             assert!(jd2_diff < 1e-14, "{}: jd2 diff {:.2e}", name, jd2_diff);
-            assert!(total_diff < 1e-14, "{}: total diff {:.2e}", name, total_diff);
+            assert!(
+                total_diff < 1e-14,
+                "{}: total diff {:.2e}",
+                name,
+                total_diff
+            );
         }
     }
 }

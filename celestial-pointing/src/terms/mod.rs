@@ -1,9 +1,9 @@
-pub mod equatorial;
 pub mod altaz;
+pub mod equatorial;
 pub mod harmonic;
 
-use bitflags::bitflags;
 use crate::error::{Error, Result};
+use bitflags::bitflags;
 
 bitflags! {
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -21,7 +21,9 @@ pub trait Term: Send + Sync {
     fn jacobian_equatorial(&self, h: f64, dec: f64, lat: f64, pier: f64) -> (f64, f64);
     fn jacobian_altaz(&self, az: f64, el: f64, lat: f64) -> (f64, f64);
 
-    fn pier_sensitive(&self) -> bool { false }
+    fn pier_sensitive(&self) -> bool {
+        false
+    }
     fn applicable_mounts(&self) -> MountTypeFlags;
 }
 
@@ -61,8 +63,10 @@ mod tests {
 
     #[test]
     fn create_known_equatorial_terms() {
-        let names = ["IH", "ID", "CH", "NP", "MA", "ME", "TF", "TX",
-                      "DAF", "FO", "HCES", "HCEC", "DCES", "DCEC"];
+        let names = [
+            "IH", "ID", "CH", "NP", "MA", "ME", "TF", "TX", "DAF", "FO", "HCES", "HCEC", "DCES",
+            "DCEC",
+        ];
         for name in &names {
             let term = create_term(name).unwrap();
             assert_eq!(term.name(), *name);

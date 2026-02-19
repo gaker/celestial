@@ -48,7 +48,7 @@ pub fn compute_p(epoch: &TT) -> Angle {
 pub fn carrington_rotation_number(epoch: &TT) -> u32 {
     let jd = epoch.to_julian_date();
     let jd_days = (jd.jd1() - CARRINGTON_EPOCH_JD) + jd.jd2();
-    (jd_days / CARRINGTON_SYNODIC_PERIOD).floor() as u32 + 1
+    libm::floor(jd_days / CARRINGTON_SYNODIC_PERIOD) as u32 + 1
 }
 
 pub fn sun_earth_distance(epoch: &TT) -> f64 {
@@ -59,14 +59,14 @@ pub fn sun_earth_distance(epoch: &TT) -> f64 {
     let m = (357.52911 + 35999.05029 * t - 0.0001537 * t * t) * DEG_TO_RAD;
     let e = 0.016708634 - 0.000042037 * t - 0.0000001267 * t * t;
 
-    let c_rad = (1.914602 - 0.004817 * t - 0.000014 * t * t) * DEG_TO_RAD * m.sin()
-        + (0.019993 - 0.000101 * t) * DEG_TO_RAD * (2.0 * m).sin()
-        + 0.000289 * DEG_TO_RAD * (3.0 * m).sin();
+    let c_rad = (1.914602 - 0.004817 * t - 0.000014 * t * t) * DEG_TO_RAD * libm::sin(m)
+        + (0.019993 - 0.000101 * t) * DEG_TO_RAD * libm::sin(2.0 * m)
+        + 0.000289 * DEG_TO_RAD * libm::sin(3.0 * m);
 
     let true_anomaly = m + c_rad;
     let a = 1.000001018; // semi-major axis in AU
 
-    a * (1.0 - e * e) / (1.0 + e * true_anomaly.cos())
+    a * (1.0 - e * e) / (1.0 + e * libm::cos(true_anomaly))
 }
 
 fn heliographic_coords(t: f64, sun_lon: f64, _sun_lat: f64, obliquity: f64) -> (f64, f64, f64) {
@@ -75,20 +75,20 @@ fn heliographic_coords(t: f64, sun_lon: f64, _sun_lat: f64, obliquity: f64) -> (
 
     let lambda = sun_lon;
     let theta = lambda - k;
-    let (sin_theta, cos_theta) = theta.sin_cos();
-    let (sin_i, cos_i) = i.sin_cos();
-    let (_sin_obl, cos_obl) = obliquity.sin_cos();
+    let (sin_theta, cos_theta) = libm::sincos(theta);
+    let (sin_i, cos_i) = libm::sincos(i);
+    let (_sin_obl, cos_obl) = libm::sincos(obliquity);
 
-    let b0 = (sin_theta * sin_i).asin();
+    let b0 = libm::asin(sin_theta * sin_i);
 
-    let eta = (sin_i * cos_theta).atan2(cos_i);
+    let eta = libm::atan2(sin_i * cos_theta, cos_i);
     let jd_days =
         t * celestial_core::constants::DAYS_PER_JULIAN_CENTURY + J2000_JD - CARRINGTON_EPOCH_JD;
     let l0_raw = 360.0 / CARRINGTON_SYNODIC_PERIOD * jd_days;
     let l0 = normalize_angle_to_positive((l0_raw * DEG_TO_RAD - eta) % TWOPI);
 
-    let rho = (cos_theta * sin_i / cos_obl).atan();
-    let sigma = (sin_theta * cos_i).atan();
+    let rho = libm::atan(cos_theta * sin_i / cos_obl);
+    let sigma = libm::atan(sin_theta * cos_i);
     let p = normalize_angle_rad(rho + sigma);
 
     (b0, l0, p)
@@ -99,15 +99,15 @@ fn solar_ecliptic_coords(t: f64) -> (f64, f64, f64) {
     let m = 357.52911 + 35999.05029 * t - 0.0001537 * t * t;
     let m_rad = m * DEG_TO_RAD;
 
-    let c = (1.914602 - 0.004817 * t - 0.000014 * t * t) * m_rad.sin()
-        + (0.019993 - 0.000101 * t) * (2.0 * m_rad).sin()
-        + 0.000289 * (3.0 * m_rad).sin();
+    let c = (1.914602 - 0.004817 * t - 0.000014 * t * t) * libm::sin(m_rad)
+        + (0.019993 - 0.000101 * t) * libm::sin(2.0 * m_rad)
+        + 0.000289 * libm::sin(3.0 * m_rad);
 
     let sun_true_lon = l0 + c;
 
     let omega = 125.04 - 1934.136 * t;
     let omega_rad = omega * DEG_TO_RAD;
-    let apparent_lon = sun_true_lon - 0.00569 - 0.00478 * omega_rad.sin();
+    let apparent_lon = sun_true_lon - 0.00569 - 0.00478 * libm::sin(omega_rad);
 
     let obliquity = mean_obliquity(t);
 
@@ -132,23 +132,23 @@ pub(crate) fn get_sun_icrs(epoch: &TT) -> CoordResult<ICRSPosition> {
     let m = 357.52911 + 35999.05029 * t - 0.0001537 * t * t;
     let m_rad = m * DEG_TO_RAD;
 
-    let c = (1.914602 - 0.004817 * t - 0.000014 * t * t) * m_rad.sin()
-        + (0.019993 - 0.000101 * t) * (2.0 * m_rad).sin()
-        + 0.000289 * (3.0 * m_rad).sin();
+    let c = (1.914602 - 0.004817 * t - 0.000014 * t * t) * libm::sin(m_rad)
+        + (0.019993 - 0.000101 * t) * libm::sin(2.0 * m_rad)
+        + 0.000289 * libm::sin(3.0 * m_rad);
 
     let sun_true_lon = l0 + c;
     let omega = 125.04 - 1934.136 * t;
     let omega_rad = omega * DEG_TO_RAD;
-    let apparent_lon = sun_true_lon - 0.00569 - 0.00478 * omega_rad.sin();
+    let apparent_lon = sun_true_lon - 0.00569 - 0.00478 * libm::sin(omega_rad);
 
     let lambda = apparent_lon * DEG_TO_RAD;
     let eps = (23.439291 - 0.0130042 * t) * DEG_TO_RAD;
 
-    let (sin_lambda, cos_lambda) = lambda.sin_cos();
-    let (sin_eps, cos_eps) = eps.sin_cos();
+    let (sin_lambda, cos_lambda) = libm::sincos(lambda);
+    let (sin_eps, cos_eps) = libm::sincos(eps);
 
-    let ra = (sin_lambda * cos_eps).atan2(cos_lambda);
-    let dec = (sin_lambda * sin_eps).asin();
+    let ra = libm::atan2(sin_lambda * cos_eps, cos_lambda);
+    let dec = libm::asin(sin_lambda * sin_eps);
 
     ICRSPosition::new(
         Angle::from_radians(normalize_angle_to_positive(ra)),

@@ -69,7 +69,7 @@ pub struct Vsop2013Term {
 
 impl Vsop2013Term {
     pub fn amplitude(&self) -> f64 {
-        (self.s_coeff.powi(2) + self.c_coeff.powi(2)).sqrt()
+        libm::sqrt(self.s_coeff.powi(2) + self.c_coeff.powi(2))
     }
 }
 

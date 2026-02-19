@@ -1,0 +1,49 @@
+[package]
+name = "celestial-catalog"
+version = "0.1.0-alpha.1"
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Astronomical Catalog operations"
+keywords = ["astronomy", "coordinates", "celestial", "astrometry", "GAIA"]
+categories = ["science"]
+
+[[bin]]
+name = "forge"
+path = "src/bin/forge/main.rs"
+required-features = ["cli"]
+
+[[bin]]
+name = "query-catalog"
+path = "src/bin/query.rs"
+required-features = ["cli"]
+
+[dependencies]
+celestial-core.workspace = true
+celestial-time.workspace = true
+celestial-coords.workspace = true
+libm.workspace = true
+memmap2.workspace = true
+
+anyhow.workspace = true
+
+# CLI and pipeline dependencies (only needed for forge/query-healpix binaries)
+clap = { workspace = true, optional = true }
+flate2 = { workspace = true, optional = true }
+csv = { workspace = true, optional = true }
+rayon = { workspace = true, optional = true }
+indicatif = { workspace = true, optional = true }
+serde = { workspace = true, features = ["derive"], optional = true }
+serde_json = { workspace = true, optional = true }
+reqwest = { workspace = true, features = ["blocking"], optional = true }
+tokio = { workspace = true, optional = true }
+quick-xml = { workspace = true, optional = true }
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[features]
+default = []
+integration-tests = []
+cli = ["dep:clap", "dep:flate2", "dep:csv", "dep:rayon", "dep:indicatif", "dep:serde", "dep:serde_json", "dep:reqwest", "dep:tokio", "dep:quick-xml"]

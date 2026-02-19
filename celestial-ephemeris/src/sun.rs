@@ -60,7 +60,7 @@ mod tests {
         let tdb = TDB::from_julian_date(JulianDate::new(J2000_JD, 0.0));
         let sun_geo = sun.geocentric_position(&tdb).unwrap();
 
-        let dist_au = (sun_geo.x.powi(2) + sun_geo.y.powi(2) + sun_geo.z.powi(2)).sqrt();
+        let dist_au = libm::sqrt(sun_geo.x.powi(2) + sun_geo.y.powi(2) + sun_geo.z.powi(2));
         assert!(
             dist_au > 0.98 && dist_au < 1.02,
             "Sun-Earth distance {} AU should be ~1 AU",
@@ -76,7 +76,7 @@ mod tests {
             let jd = J2000_JD + days_offset as f64;
             let tdb = TDB::from_julian_date(JulianDate::new(jd, 0.0));
             let sun_geo = sun.geocentric_position(&tdb).unwrap();
-            let dist_au = (sun_geo.x.powi(2) + sun_geo.y.powi(2) + sun_geo.z.powi(2)).sqrt();
+            let dist_au = libm::sqrt(sun_geo.x.powi(2) + sun_geo.y.powi(2) + sun_geo.z.powi(2));
 
             assert!(
                 dist_au > 0.983 && dist_au < 1.017,
@@ -93,10 +93,10 @@ mod tests {
         let tdb = TDB::from_julian_date(JulianDate::new(J2000_JD, 0.0));
         let (pos, vel) = sun.geocentric_state(&tdb).unwrap();
 
-        let dist_au = (pos.x.powi(2) + pos.y.powi(2) + pos.z.powi(2)).sqrt();
+        let dist_au = libm::sqrt(pos.x.powi(2) + pos.y.powi(2) + pos.z.powi(2));
         assert!(dist_au > 0.98 && dist_au < 1.02);
 
-        let speed_au_day = (vel.x.powi(2) + vel.y.powi(2) + vel.z.powi(2)).sqrt();
+        let speed_au_day = libm::sqrt(vel.x.powi(2) + vel.y.powi(2) + vel.z.powi(2));
         assert!(
             speed_au_day > 0.016 && speed_au_day < 0.018,
             "Sun apparent speed {} AU/day should match Earth orbital speed ~0.017 AU/day",

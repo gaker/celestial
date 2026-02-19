@@ -442,7 +442,7 @@ fn sum_terms(w: &mut f64, terms: &[SeriesTerm], fa: &[f64; 8]) {
         for (i, item) in fa.iter().enumerate() {
             arg += f64::from(term.coeffs[i]) * item;
         }
-        *w += term.sine * arg.sin() + term.cosine * arg.cos();
+        *w += term.sine * libm::sin(arg) + term.cosine * libm::cos(arg);
     }
 }
 

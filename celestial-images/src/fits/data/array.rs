@@ -125,7 +125,7 @@ impl DataArray for u8 {
     fn apply_scaling(data: &mut [Self], bscale: f64, bzero: f64) {
         for val in data.iter_mut() {
             let scaled = (*val as f64 * bscale) + bzero;
-            *val = scaled.round().clamp(0.0, 255.0) as u8;
+            *val = libm::round(scaled).clamp(0.0, 255.0) as u8;
         }
     }
 }
@@ -175,7 +175,7 @@ impl DataArray for i16 {
     fn apply_scaling(data: &mut [Self], bscale: f64, bzero: f64) {
         for val in data.iter_mut() {
             let scaled = (*val as f64 * bscale) + bzero;
-            *val = scaled.round().clamp(i16::MIN as f64, i16::MAX as f64) as i16;
+            *val = libm::round(scaled).clamp(i16::MIN as f64, i16::MAX as f64) as i16;
         }
     }
 }
@@ -225,7 +225,7 @@ impl DataArray for i32 {
     fn apply_scaling(data: &mut [Self], bscale: f64, bzero: f64) {
         for val in data.iter_mut() {
             let scaled = (*val as f64 * bscale) + bzero;
-            *val = scaled.round().clamp(i32::MIN as f64, i32::MAX as f64) as i32;
+            *val = libm::round(scaled).clamp(i32::MIN as f64, i32::MAX as f64) as i32;
         }
     }
 }
@@ -275,7 +275,7 @@ impl DataArray for i64 {
     fn apply_scaling(data: &mut [Self], bscale: f64, bzero: f64) {
         for val in data.iter_mut() {
             let scaled = (*val as f64 * bscale) + bzero;
-            *val = scaled.round().clamp(i64::MIN as f64, i64::MAX as f64) as i64;
+            *val = libm::round(scaled).clamp(i64::MIN as f64, i64::MAX as f64) as i64;
         }
     }
 }
@@ -905,7 +905,7 @@ mod tests {
     }
 
     #[test]
-    fn data_value_comprehensive_operations() {
+    fn data_value_operations() {
         let value = DataValue::Value(42);
         let null = DataValue::<i32>::Null;
 

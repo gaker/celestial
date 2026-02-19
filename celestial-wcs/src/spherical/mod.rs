@@ -39,7 +39,7 @@ pub struct SphericalRotation {
 impl SphericalRotation {
     pub fn new(alpha_p: Angle, delta_p: Angle, phi_p: Angle) -> Self {
         let delta_p_rad = delta_p.radians();
-        let (sin_delta_p, cos_delta_p) = delta_p_rad.sin_cos();
+        let (sin_delta_p, cos_delta_p) = libm::sincos(delta_p_rad);
         Self {
             alpha_p: alpha_p.radians(),
             delta_p: delta_p_rad,
@@ -71,9 +71,9 @@ impl SphericalRotation {
         let theta_0_rad = theta_0.radians();
         let phi_p_rad = phi_p.radians();
 
-        let (sin_delta_0, cos_delta_0) = delta_0_rad.sin_cos();
-        let (sin_theta_0, cos_theta_0) = theta_0_rad.sin_cos();
-        let (sin_phi_p, cos_phi_p) = phi_p_rad.sin_cos();
+        let (sin_delta_0, cos_delta_0) = libm::sincos(delta_0_rad);
+        let (sin_theta_0, cos_theta_0) = libm::sincos(theta_0_rad);
+        let (sin_phi_p, cos_phi_p) = libm::sincos(phi_p_rad);
 
         let delta_p = Self::compute_delta_p(
             sin_delta_0,
@@ -87,7 +87,7 @@ impl SphericalRotation {
 
         let x = -cos_theta_0 * sin_phi_p;
         let y = sin_theta_0 * cos_delta_0 - cos_theta_0 * sin_delta_0 * cos_phi_p;
-        let alpha_p = alpha_0.radians() + x.atan2(y);
+        let alpha_p = alpha_0.radians() + libm::atan2(x, y);
 
         let alpha_p_deg = normalize_longitude(alpha_p * RAD_TO_DEG);
         let delta_p_deg = delta_p * RAD_TO_DEG;
@@ -120,7 +120,7 @@ impl SphericalRotation {
             ));
         }
 
-        let denom = denom_sq.sqrt();
+        let denom = libm::sqrt(denom_sq);
         let arg = sin_delta_0 / denom;
 
         if arg.abs() > 1.0 + 1e-15 {
@@ -130,8 +130,8 @@ impl SphericalRotation {
         }
 
         let arg_clamped = arg.clamp(-1.0, 1.0);
-        let acos_term = arg_clamped.acos();
-        let base = sin_theta_0.atan2(cos_theta_0 * cos_phi_p);
+        let acos_term = libm::acos(arg_clamped);
+        let base = libm::atan2(sin_theta_0, cos_theta_0 * cos_phi_p);
 
         let delta_p_1 = base + acos_term;
         let delta_p_2 = base - acos_term;
@@ -164,16 +164,16 @@ impl SphericalRotation {
         let phi = native.phi().radians();
         let theta = native.theta().radians();
 
-        let (sin_theta, cos_theta) = theta.sin_cos();
+        let (sin_theta, cos_theta) = libm::sincos(theta);
         let d_phi = phi - self.phi_p;
-        let (sin_d_phi, cos_d_phi) = d_phi.sin_cos();
+        let (sin_d_phi, cos_d_phi) = libm::sincos(d_phi);
 
         let sin_delta = sin_theta * self.sin_delta_p + cos_theta * self.cos_delta_p * cos_d_phi;
         let delta = asin_safe(sin_delta);
 
         let x = -cos_theta * sin_d_phi;
         let y = sin_theta * self.cos_delta_p - cos_theta * self.sin_delta_p * cos_d_phi;
-        let alpha = self.alpha_p + x.atan2(y);
+        let alpha = self.alpha_p + libm::atan2(x, y);
 
         let alpha_deg = normalize_longitude(alpha * RAD_TO_DEG);
         let delta_deg = delta * RAD_TO_DEG;
@@ -188,16 +188,16 @@ impl SphericalRotation {
         let alpha = celestial.alpha().radians();
         let delta = celestial.delta().radians();
 
-        let (sin_delta, cos_delta) = delta.sin_cos();
+        let (sin_delta, cos_delta) = libm::sincos(delta);
         let d_alpha = alpha - self.alpha_p;
-        let (sin_d_alpha, cos_d_alpha) = d_alpha.sin_cos();
+        let (sin_d_alpha, cos_d_alpha) = libm::sincos(d_alpha);
 
         let sin_theta = sin_delta * self.sin_delta_p + cos_delta * self.cos_delta_p * cos_d_alpha;
         let theta = asin_safe(sin_theta);
 
         let x = -cos_delta * sin_d_alpha;
         let y = sin_delta * self.cos_delta_p - cos_delta * self.sin_delta_p * cos_d_alpha;
-        let phi = self.phi_p + x.atan2(y);
+        let phi = self.phi_p + libm::atan2(x, y);
 
         Ok(native_coord_from_radians(phi, theta))
     }

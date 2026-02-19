@@ -65,7 +65,7 @@ impl LinearTransform {
 
     #[inline]
     pub fn pixel_scale(&self) -> f64 {
-        self.determinant.abs().sqrt()
+        libm::sqrt(self.determinant.abs())
     }
 }
 

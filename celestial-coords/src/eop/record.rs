@@ -24,6 +24,10 @@ pub struct EopRecord {
 
     pub dy_encoded: Option<i16>,
 
+    pub xrt_encoded: Option<i32>,
+
+    pub yrt_encoded: Option<i32>,
+
     pub flags: EopFlags,
 }
 
@@ -39,6 +43,8 @@ pub struct EopFlags {
     pub has_ut1_utc: bool,
 
     pub has_cip_offsets: bool,
+
+    pub has_pole_rates: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -109,12 +115,14 @@ impl EopRecord {
 
         Ok(Self {
             mjd,
-            x_p_encoded: (x_p_arcsec * Self::ARCSEC_TO_UNITS).round() as i32,
-            y_p_encoded: (y_p_arcsec * Self::ARCSEC_TO_UNITS).round() as i32,
-            ut1_utc_encoded: (ut1_utc_sec * Self::SEC_TO_UNITS).round() as i32,
-            lod_encoded: (lod_sec * Self::SEC_TO_UNITS).round() as i32,
+            x_p_encoded: libm::round(x_p_arcsec * Self::ARCSEC_TO_UNITS) as i32,
+            y_p_encoded: libm::round(y_p_arcsec * Self::ARCSEC_TO_UNITS) as i32,
+            ut1_utc_encoded: libm::round(ut1_utc_sec * Self::SEC_TO_UNITS) as i32,
+            lod_encoded: libm::round(lod_sec * Self::SEC_TO_UNITS) as i32,
             dx_encoded: None,
             dy_encoded: None,
+            xrt_encoded: None,
+            yrt_encoded: None,
             flags: EopFlags::default(),
         })
     }
@@ -138,10 +146,33 @@ impl EopRecord {
             )));
         }
 
-        self.dx_encoded = Some((dx_milliarcsec * Self::MILLIARCSEC_TO_UNITS).round() as i16);
-        self.dy_encoded = Some((dy_milliarcsec * Self::MILLIARCSEC_TO_UNITS).round() as i16);
+        self.dx_encoded = Some(libm::round(dx_milliarcsec * Self::MILLIARCSEC_TO_UNITS) as i16);
+        self.dy_encoded = Some(libm::round(dy_milliarcsec * Self::MILLIARCSEC_TO_UNITS) as i16);
         self.flags.has_cip_offsets = true;
 
+        Ok(self)
+    }
+
+    pub fn with_pole_rates(
+        mut self,
+        xrt_arcsec_per_day: f64,
+        yrt_arcsec_per_day: f64,
+    ) -> CoordResult<Self> {
+        if xrt_arcsec_per_day.abs() > 1.0 {
+            return Err(CoordError::invalid_coordinate(format!(
+                "Pole rate xrt out of range: {} arcsec/day",
+                xrt_arcsec_per_day
+            )));
+        }
+        if yrt_arcsec_per_day.abs() > 1.0 {
+            return Err(CoordError::invalid_coordinate(format!(
+                "Pole rate yrt out of range: {} arcsec/day",
+                yrt_arcsec_per_day
+            )));
+        }
+        self.xrt_encoded = Some(libm::round(xrt_arcsec_per_day * Self::ARCSEC_TO_UNITS) as i32);
+        self.yrt_encoded = Some(libm::round(yrt_arcsec_per_day * Self::ARCSEC_TO_UNITS) as i32);
+        self.flags.has_pole_rates = true;
         Ok(self)
     }
 
@@ -163,6 +194,8 @@ impl EopRecord {
             dy: self
                 .dy_encoded
                 .map(|v| v as f64 / Self::MILLIARCSEC_TO_UNITS),
+            xrt: self.xrt_encoded.map(|v| v as f64 / Self::ARCSEC_TO_UNITS),
+            yrt: self.yrt_encoded.map(|v| v as f64 / Self::ARCSEC_TO_UNITS),
             s_prime: 0.0,
             flags: self.flags,
         }
@@ -184,6 +217,10 @@ pub struct EopParameters {
     pub dx: Option<f64>,
 
     pub dy: Option<f64>,
+
+    pub xrt: Option<f64>,
+
+    pub yrt: Option<f64>,
 
     pub s_prime: f64,
 
@@ -211,10 +248,11 @@ impl EopParameters {
     }
 
     pub fn compute_era(&self) -> CoordResult<f64> {
-        let ut1_jd =
-            self.mjd + MJD_ZERO_POINT + self.ut1_utc / celestial_core::constants::SECONDS_PER_DAY_F64;
+        let ut1_jd = self.mjd
+            + MJD_ZERO_POINT
+            + self.ut1_utc / celestial_core::constants::SECONDS_PER_DAY_F64;
 
-        let ut1_jd1 = ut1_jd.floor();
+        let ut1_jd1 = libm::floor(ut1_jd);
         let ut1_jd2 = ut1_jd - ut1_jd1;
 
         let jd = JulianDate::new(ut1_jd1, ut1_jd2);
@@ -241,6 +279,7 @@ impl Default for EopFlags {
             has_polar_motion: true,
             has_ut1_utc: true,
             has_cip_offsets: false,
+            has_pole_rates: false,
         }
     }
 }
@@ -304,6 +343,8 @@ mod tests {
             lod: 0.001,
             dx: None,
             dy: None,
+            xrt: None,
+            yrt: None,
             s_prime: 0.0,
             flags: EopFlags::default(),
         };

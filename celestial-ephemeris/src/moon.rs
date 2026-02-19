@@ -7,8 +7,8 @@
 //! with positions in kilometers.
 
 use celestial_core::{
-    AstroResult,
     constants::{ARCSEC_TO_RAD, DEG_TO_RAD, J2000_JD, PI},
+    AstroResult,
 };
 use celestial_time::TDB;
 
@@ -133,8 +133,8 @@ impl ElpMpp02Moon {
             + 4.0 * w[0][4] * t[3];
         v[4] /= rad;
 
-        let (slamb, clamb) = v[0].sin_cos();
-        let (sbeta, cbeta) = v[1].sin_cos();
+        let (slamb, clamb) = libm::sincos(v[0]);
+        let (sbeta, cbeta) = libm::sincos(v[1]);
         let cw = v[2] * cbeta;
         let sw = v[2] * sbeta;
 
@@ -147,7 +147,7 @@ impl ElpMpp02Moon {
         let xp3 = v[5] * sbeta + v[4] * cw;
 
         let (pw, qw) = self.precession_pq(&t);
-        let ra = 2.0 * (1.0 - pw * pw - qw * qw).sqrt();
+        let ra = 2.0 * libm::sqrt(1.0 - pw * pw - qw * qw);
         let pwqw = 2.0 * pw * qw;
         let pw2 = 1.0 - 2.0 * pw * pw;
         let qw2 = 1.0 - 2.0 * qw * qw;
@@ -316,8 +316,8 @@ impl ElpMpp02Moon {
             }
 
             let a0 = term.coeffs[0];
-            val += a0 * y.sin();
-            deriv += a0 * yp * y.cos();
+            val += a0 * libm::sin(y);
+            deriv += a0 * yp * libm::cos(y);
         }
 
         (val, deriv)
@@ -364,8 +364,8 @@ impl ElpMpp02Moon {
                     0.0
                 };
 
-                val += x * t[it] * y.sin();
-                deriv += xp * y.sin() + x * t[it] * yp * y.cos();
+                val += x * t[it] * libm::sin(y);
+                deriv += xp * libm::sin(y) + x * t[it] * yp * libm::cos(y);
             }
         }
 
@@ -420,7 +420,7 @@ fn ecliptic_to_icrs(ecl: [f64; 3]) -> [f64; 3] {
     const EPS0_ARCSEC: f64 = 84381.406;
     let eps = EPS0_ARCSEC * ARCSEC_TO_RAD;
 
-    let (sin_eps, cos_eps) = eps.sin_cos();
+    let (sin_eps, cos_eps) = libm::sincos(eps);
 
     // Rotation about X-axis by -ε (from ecliptic to equatorial)
     [
@@ -446,7 +446,7 @@ mod tests {
         println!("  Y = {:.3} km", pos[1]);
         println!("  Z = {:.3} km", pos[2]);
 
-        let dist = (pos[0] * pos[0] + pos[1] * pos[1] + pos[2] * pos[2]).sqrt();
+        let dist = libm::sqrt(pos[0] * pos[0] + pos[1] * pos[1] + pos[2] * pos[2]);
         println!("  Distance = {:.3} km", dist);
 
         assert!(
@@ -463,7 +463,7 @@ mod tests {
         for days in [0, 7, 14, 21, 28] {
             let tdb = TDB::from_julian_date(JulianDate::new(J2000_JD + days as f64, 0.0));
             let pos = moon.geocentric_position(&tdb).unwrap();
-            let dist = (pos[0] * pos[0] + pos[1] * pos[1] + pos[2] * pos[2]).sqrt();
+            let dist = libm::sqrt(pos[0] * pos[0] + pos[1] * pos[1] + pos[2] * pos[2]);
 
             assert!(
                 dist > 356_000.0 && dist < 407_000.0,
@@ -490,7 +490,7 @@ mod tests {
             println!("  Y = {:17.7} km", pos[1]);
             println!("  Z = {:17.7} km", pos[2]);
 
-            let dist = (pos[0] * pos[0] + pos[1] * pos[1] + pos[2] * pos[2]).sqrt();
+            let dist = libm::sqrt(pos[0] * pos[0] + pos[1] * pos[1] + pos[2] * pos[2]);
             assert!(
                 dist > 356_000.0 && dist < 407_000.0,
                 "JD {}: distance {} km out of range",
@@ -519,8 +519,8 @@ mod tests {
         );
 
         // Distance should be preserved
-        let dist_ecl = (ecl[0] * ecl[0] + ecl[1] * ecl[1] + ecl[2] * ecl[2]).sqrt();
-        let dist_icrs = (icrs[0] * icrs[0] + icrs[1] * icrs[1] + icrs[2] * icrs[2]).sqrt();
+        let dist_ecl = libm::sqrt(ecl[0] * ecl[0] + ecl[1] * ecl[1] + ecl[2] * ecl[2]);
+        let dist_icrs = libm::sqrt(icrs[0] * icrs[0] + icrs[1] * icrs[1] + icrs[2] * icrs[2]);
         assert!((dist_ecl - dist_icrs).abs() < 1e-6, "Distance mismatch");
 
         // X should be unchanged (rotation about X-axis)
@@ -539,8 +539,8 @@ mod tests {
         let pos1 = moon.geocentric_position(&t1).unwrap();
 
         // Normalize positions
-        let norm0 = (pos0[0] * pos0[0] + pos0[1] * pos0[1] + pos0[2] * pos0[2]).sqrt();
-        let norm1 = (pos1[0] * pos1[0] + pos1[1] * pos1[1] + pos1[2] * pos1[2]).sqrt();
+        let norm0 = libm::sqrt(pos0[0] * pos0[0] + pos0[1] * pos0[1] + pos0[2] * pos0[2]);
+        let norm1 = libm::sqrt(pos1[0] * pos1[0] + pos1[1] * pos1[1] + pos1[2] * pos1[2]);
 
         let unit0 = [pos0[0] / norm0, pos0[1] / norm0, pos0[2] / norm0];
         let unit1 = [pos1[0] / norm1, pos1[1] / norm1, pos1[2] / norm1];
@@ -574,7 +574,7 @@ mod tests {
         let tdb = TDB::from_julian_date(JulianDate::new(J2000_JD, 0.0));
 
         let state = moon.geocentric_state(&tdb).unwrap();
-        let v_mag = (state[3] * state[3] + state[4] * state[4] + state[5] * state[5]).sqrt();
+        let v_mag = libm::sqrt(state[3] * state[3] + state[4] * state[4] + state[5] * state[5]);
 
         // Moon's orbital velocity is ~1.022 km/s = ~88,300 km/day
         let v_km_s = v_mag / celestial_core::constants::SECONDS_PER_DAY_F64;
@@ -596,7 +596,7 @@ mod tests {
             (p2[1] - p1[1]) / (2.0 * dt),
             (p2[2] - p1[2]) / (2.0 * dt),
         ];
-        let v_num_mag = (v_num[0] * v_num[0] + v_num[1] * v_num[1] + v_num[2] * v_num[2]).sqrt();
+        let v_num_mag = libm::sqrt(v_num[0] * v_num[0] + v_num[1] * v_num[1] + v_num[2] * v_num[2]);
 
         println!(
             "  Numerical velocity: {:.3} km/day = {:.4} km/s",
@@ -635,7 +635,7 @@ mod tests {
             let dx = pos[0] - jpl_x;
             let dy = pos[1] - jpl_y;
             let dz = pos[2] - jpl_z;
-            let delta = (dx * dx + dy * dy + dz * dz).sqrt();
+            let delta = libm::sqrt(dx * dx + dy * dy + dz * dz);
 
             println!("  JD {:.1}:", jd);
             println!(
@@ -671,7 +671,7 @@ mod tests {
         let pos = moon.geocentric_position(&tdb).unwrap();
 
         // Should work the same as new()
-        let dist = (pos[0] * pos[0] + pos[1] * pos[1] + pos[2] * pos[2]).sqrt();
+        let dist = libm::sqrt(pos[0] * pos[0] + pos[1] * pos[1] + pos[2] * pos[2]);
         assert!(dist > 350_000.0 && dist < 410_000.0);
     }
 
@@ -683,7 +683,7 @@ mod tests {
 
         // Test position
         let pos = moon.geocentric_position(&tdb).unwrap();
-        let dist = (pos[0] * pos[0] + pos[1] * pos[1] + pos[2] * pos[2]).sqrt();
+        let dist = libm::sqrt(pos[0] * pos[0] + pos[1] * pos[1] + pos[2] * pos[2]);
         assert!(
             dist > 350_000.0 && dist < 410_000.0,
             "DE405 fit distance: {} km",
@@ -710,11 +710,11 @@ mod tests {
         let vel_icrs = [state_icrs[3], state_icrs[4], state_icrs[5]];
 
         // Position distance should be preserved
-        let dist = (pos_icrs[0].powi(2) + pos_icrs[1].powi(2) + pos_icrs[2].powi(2)).sqrt();
+        let dist = libm::sqrt(pos_icrs[0].powi(2) + pos_icrs[1].powi(2) + pos_icrs[2].powi(2));
         assert!(dist > 350_000.0 && dist < 410_000.0);
 
         // Velocity should be non-zero
-        let vel_mag = (vel_icrs[0].powi(2) + vel_icrs[1].powi(2) + vel_icrs[2].powi(2)).sqrt();
+        let vel_mag = libm::sqrt(vel_icrs[0].powi(2) + vel_icrs[1].powi(2) + vel_icrs[2].powi(2));
         assert!(vel_mag > 0.0);
 
         // Compare with separate calls
@@ -736,10 +736,11 @@ mod tests {
         let pos_de405 = moon_de405.geocentric_position(&tdb).unwrap();
 
         // Positions should be slightly different due to different constants
-        let diff = ((pos_llr[0] - pos_de405[0]).powi(2)
-            + (pos_llr[1] - pos_de405[1]).powi(2)
-            + (pos_llr[2] - pos_de405[2]).powi(2))
-        .sqrt();
+        let diff = libm::sqrt(
+            (pos_llr[0] - pos_de405[0]).powi(2)
+                + (pos_llr[1] - pos_de405[1]).powi(2)
+                + (pos_llr[2] - pos_de405[2]).powi(2),
+        );
 
         // The difference should be small but measurable (a few meters to km)
         assert!(diff > 0.0, "LLR and DE405 positions should differ");
@@ -757,7 +758,7 @@ mod tests {
         let state = moon.geocentric_state(&tdb).unwrap();
 
         // Velocity magnitude should be ~1 km/s = 86400 km/day
-        let v_mag = (state[3].powi(2) + state[4].powi(2) + state[5].powi(2)).sqrt();
+        let v_mag = libm::sqrt(state[3].powi(2) + state[4].powi(2) + state[5].powi(2));
         let v_km_s = v_mag / celestial_core::constants::SECONDS_PER_DAY_F64;
 
         println!("DE405 fit velocity: {:.4} km/s", v_km_s);

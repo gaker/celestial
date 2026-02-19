@@ -1,15 +1,19 @@
-use celestial_core::Angle;
+use super::{Command, CommandOutput};
 use crate::error::Result;
 use crate::observation::PierSide;
 use crate::parser::parse_coordinates;
 use crate::session::Session;
-use super::{Command, CommandOutput};
+use celestial_core::Angle;
 
 pub struct Correct;
 
 impl Command for Correct {
-    fn name(&self) -> &str { "CORRECT" }
-    fn description(&self) -> &str { "Compute actual sky position from encoder reading" }
+    fn name(&self) -> &str {
+        "CORRECT"
+    }
+    fn description(&self) -> &str {
+        "Compute actual sky position from encoder reading"
+    }
 
     fn execute(&self, session: &mut Session, args: &[&str]) -> Result<CommandOutput> {
         let (enc_ra, enc_dec) = parse_coordinates(args)?;
@@ -17,15 +21,23 @@ impl Command for Correct {
         let lat = Angle::from_radians(session.latitude());
         let ha = lst - enc_ra;
         let pier = pier_from_ha(ha);
-        let (true_ra, true_dec) = session.model.command_to_target(enc_ra, enc_dec, lst, lat, pier);
+        let (true_ra, true_dec) = session
+            .model
+            .command_to_target(enc_ra, enc_dec, lst, lat, pier);
         let delta_ra = (true_ra - enc_ra).wrapped();
         let delta_dec = (true_dec - enc_dec).wrapped();
-        Ok(CommandOutput::Text(format_result(enc_ra, enc_dec, true_ra, true_dec, delta_ra, delta_dec)))
+        Ok(CommandOutput::Text(format_result(
+            enc_ra, enc_dec, true_ra, true_dec, delta_ra, delta_dec,
+        )))
     }
 }
 
 fn pier_from_ha(ha: Angle) -> PierSide {
-    if ha.radians() >= 0.0 { PierSide::East } else { PierSide::West }
+    if ha.radians() >= 0.0 {
+        PierSide::East
+    } else {
+        PierSide::West
+    }
 }
 
 fn format_result(
@@ -49,9 +61,9 @@ fn format_result(
 
 fn format_ra(a: Angle) -> String {
     let total_h = a.normalized().hours();
-    let h = total_h.floor() as u32;
+    let h = libm::floor(total_h) as u32;
     let rem = (total_h - h as f64) * 60.0;
-    let m = rem.floor() as u32;
+    let m = libm::floor(rem) as u32;
     let s = (rem - m as f64) * 60.0;
     format!("{:02}h {:02}m {:05.2}s", h, m, s)
 }
@@ -60,9 +72,9 @@ fn format_dec(a: Angle) -> String {
     let deg = a.degrees();
     let sign = if deg < 0.0 { '-' } else { '+' };
     let abs = deg.abs();
-    let d = abs.floor() as u32;
+    let d = libm::floor(abs) as u32;
     let rem = (abs - d as f64) * 60.0;
-    let m = rem.floor() as u32;
+    let m = libm::floor(rem) as u32;
     let s = (rem - m as f64) * 60.0;
     format!("{}{:02}\u{00b0} {:02}' {:04.1}\"", sign, d, m, s)
 }

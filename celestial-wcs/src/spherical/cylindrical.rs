@@ -30,7 +30,7 @@ pub(crate) fn project_mer(native: NativeCoord) -> WcsResult<IntermediateCoord> {
         ));
     }
 
-    let y = (std::f64::consts::FRAC_PI_4 + theta / 2.0).tan().ln() * RAD_TO_DEG;
+    let y = libm::log(libm::tan(std::f64::consts::FRAC_PI_4 + theta / 2.0)) * RAD_TO_DEG;
     Ok(IntermediateCoord::new(phi, y))
 }
 
@@ -38,7 +38,7 @@ pub(crate) fn deproject_mer(inter: IntermediateCoord) -> WcsResult<NativeCoord> 
     let phi = inter.x_deg();
     let y = inter.y_deg() * DEG_TO_RAD;
 
-    let theta = 2.0 * y.exp().atan() - HALF_PI;
+    let theta = 2.0 * libm::atan(libm::exp(y)) - HALF_PI;
     Ok(NativeCoord::new(
         Angle::from_degrees(phi),
         Angle::from_degrees(theta * RAD_TO_DEG),
@@ -49,7 +49,7 @@ pub(crate) fn project_cea(native: NativeCoord, lambda: f64) -> WcsResult<Interme
     let phi = native.phi().degrees();
     let theta = native.theta().radians();
 
-    let y = theta.sin() / lambda * RAD_TO_DEG;
+    let y = libm::sin(theta) / lambda * RAD_TO_DEG;
     Ok(IntermediateCoord::new(phi, y))
 }
 
@@ -64,7 +64,7 @@ pub(crate) fn deproject_cea(inter: IntermediateCoord, lambda: f64) -> WcsResult<
         ));
     }
 
-    let theta = sin_theta.asin();
+    let theta = libm::asin(sin_theta);
     Ok(NativeCoord::new(
         Angle::from_degrees(phi),
         Angle::from_degrees(theta * RAD_TO_DEG),
@@ -79,7 +79,7 @@ pub(crate) fn project_cyp(
     let phi = native.phi().radians();
     let theta = native.theta().radians();
 
-    let (sin_theta, cos_theta) = theta.sin_cos();
+    let (sin_theta, cos_theta) = libm::sincos(theta);
     let denom = mu + cos_theta;
 
     if denom.abs() < 1e-10 {
@@ -115,7 +115,7 @@ pub(crate) fn deproject_cyp(
     let c = eta * (mu + 1.0);
 
     let theta = if a.abs() < 1e-15 {
-        2.0 * (c / 2.0).atan()
+        2.0 * libm::atan(c / 2.0)
     } else {
         let discriminant = 4.0 - 4.0 * a * c;
         if discriminant < 0.0 {
@@ -123,8 +123,8 @@ pub(crate) fn deproject_cyp(
                 "CYP deprojection: point outside valid region",
             ));
         }
-        let t = (2.0 - discriminant.sqrt()) / (2.0 * a);
-        2.0 * t.atan()
+        let t = (2.0 - libm::sqrt(discriminant)) / (2.0 * a);
+        2.0 * libm::atan(t)
     };
 
     Ok(native_coord_from_radians(phi, theta))
@@ -302,7 +302,7 @@ mod tests {
         let inter = proj.project(native).unwrap();
 
         assert_eq!(inter.x_deg(), 90.0);
-        let expected_y = 30.0_f64.to_radians().sin() * RAD_TO_DEG;
+        let expected_y = libm::sin(30.0_f64.to_radians()) * RAD_TO_DEG;
         assert_ulp_lt!(inter.y_deg(), expected_y, 1);
     }
 

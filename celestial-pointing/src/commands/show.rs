@@ -1,13 +1,17 @@
+use super::{Command, CommandOutput};
 use crate::error::Result;
 use crate::observation::MountType;
 use crate::session::Session;
-use super::{Command, CommandOutput};
 
 pub struct Show;
 
 impl Command for Show {
-    fn name(&self) -> &str { "SHOW" }
-    fn description(&self) -> &str { "Display session state" }
+    fn name(&self) -> &str {
+        "SHOW"
+    }
+    fn description(&self) -> &str {
+        "Display session state"
+    }
 
     fn execute(&self, session: &mut Session, _args: &[&str]) -> Result<CommandOutput> {
         let mount = match session.mount_type {
@@ -16,7 +20,9 @@ impl Command for Show {
             MountType::Altazimuth => "Altazimuth",
         };
 
-        let lat_str = session.site.as_ref()
+        let lat_str = session
+            .site
+            .as_ref()
             .map(|s| format_dms_lat(s.latitude.degrees()))
             .unwrap_or_else(|| "not set".to_string());
 
@@ -28,7 +34,9 @@ impl Command for Show {
             format!("{}", total)
         };
 
-        let rms_str = session.last_fit.as_ref()
+        let rms_str = session
+            .last_fit
+            .as_ref()
             .map(|f| format!("{:.2}\"", f.sky_rms))
             .unwrap_or_else(|| "no fit yet".to_string());
 

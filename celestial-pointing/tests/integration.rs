@@ -147,11 +147,11 @@ fn compute_raw_rms(session: &Session) -> f64 {
     for obs in &session.observations {
         let dh = (obs.actual_ha - obs.commanded_ha).arcseconds();
         let dd = (obs.observed_dec - obs.catalog_dec).arcseconds();
-        let cos_dec = obs.catalog_dec.radians().cos();
+        let cos_dec = libm::cos(obs.catalog_dec.radians());
         let dx = dh * cos_dec;
         sum_sq += dx * dx + dd * dd;
     }
-    (sum_sq / n as f64).sqrt()
+    libm::sqrt(sum_sq / n as f64)
 }
 
 // --- Model apply round-trip ---
@@ -372,7 +372,9 @@ fn cgx_l_fit_with_daf_and_fo() {
 #[test]
 fn cgx_l_fit_with_centering_errors() {
     let mut session = load_cgx_l();
-    for term in &["IH", "ID", "CH", "NP", "MA", "ME", "HCES", "HCEC", "DCES", "DCEC"] {
+    for term in &[
+        "IH", "ID", "CH", "NP", "MA", "ME", "HCES", "HCEC", "DCES", "DCEC",
+    ] {
         session.model.add_term(term).unwrap();
     }
     let result = session.fit().unwrap();
@@ -426,10 +428,14 @@ fn model_correction_applied_to_each_observation() {
 #[test]
 fn cgx_l_has_both_pier_sides() {
     let session = load_cgx_l();
-    let east_count = session.observations.iter()
+    let east_count = session
+        .observations
+        .iter()
         .filter(|o| o.pier_side == PierSide::East)
         .count();
-    let west_count = session.observations.iter()
+    let west_count = session
+        .observations
+        .iter()
         .filter(|o| o.pier_side == PierSide::West)
         .count();
 
@@ -532,7 +538,11 @@ fn mask_range() {
     let mut session = load_cgx_l();
     dispatch(&mut session, "MASK 1-5").unwrap();
     for i in 0..5 {
-        assert!(session.observations[i].masked, "obs {} should be masked", i + 1);
+        assert!(
+            session.observations[i].masked,
+            "obs {} should be masked",
+            i + 1
+        );
     }
     assert!(!session.observations[5].masked);
 }
@@ -558,7 +568,10 @@ fn masked_observations_excluded_from_fit() {
     dispatch(&mut session, "FIT").unwrap();
     let rms_masked = session.last_fit.as_ref().unwrap().sky_rms;
 
-    assert!(rms_all != rms_masked, "RMS should differ after masking observations");
+    assert!(
+        rms_all != rms_masked,
+        "RMS should differ after masking observations"
+    );
 }
 
 #[test]
@@ -592,8 +605,12 @@ fn inmod_outmod_round_trip() {
     dispatch(&mut session, "USE IH ID CH NP MA ME").unwrap();
     dispatch(&mut session, "FIT").unwrap();
     let original_coeffs: Vec<f64> = session.model.coefficients().to_vec();
-    let original_names: Vec<String> = session.model.term_names()
-        .iter().map(|s| s.to_string()).collect();
+    let original_names: Vec<String> = session
+        .model
+        .term_names()
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
 
     let tmp = "/tmp/celestial_test_round_trip.mod";
     dispatch(&mut session, &format!("OUTMOD {}", tmp)).unwrap();
@@ -601,15 +618,22 @@ fn inmod_outmod_round_trip() {
     let mut session2 = Session::new();
     dispatch(&mut session2, &format!("INMOD {}", tmp)).unwrap();
 
-    let loaded_names: Vec<String> = session2.model.term_names()
-        .iter().map(|s| s.to_string()).collect();
+    let loaded_names: Vec<String> = session2
+        .model
+        .term_names()
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
     let loaded_coeffs = session2.model.coefficients().to_vec();
 
     assert_eq!(loaded_names, original_names);
     for (i, (&orig, &loaded)) in original_coeffs.iter().zip(loaded_coeffs.iter()).enumerate() {
         assert!(
             (orig - loaded).abs() < 1e-4,
-            "coefficient {} differs: {} vs {}", i, orig, loaded
+            "coefficient {} differs: {} vs {}",
+            i,
+            orig,
+            loaded
         );
     }
 
@@ -736,8 +760,11 @@ fn fix_term_and_fit() {
     dispatch(&mut session, "FIX IH").unwrap();
     dispatch(&mut session, "FIT").unwrap();
 
-    assert_eq!(session.model.coefficients()[0], 0.0,
-        "fixed term should remain at its pre-fix value (zeroed by RESET effect)");
+    assert_eq!(
+        session.model.coefficients()[0],
+        0.0,
+        "fixed term should remain at its pre-fix value (zeroed by RESET effect)"
+    );
 }
 
 #[test]

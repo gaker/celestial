@@ -6,8 +6,6 @@ pub enum InterpolationMethod {
     Linear,
 
     Lagrange5,
-
-    CubicSpline,
 }
 
 pub struct EopInterpolator {
@@ -46,8 +44,13 @@ impl EopInterpolator {
             ));
         }
 
-        if let Some(record) = self.records.iter().find(|r| (r.mjd - mjd).abs() < 1e-10) {
-            return Ok(record.to_parameters());
+        if let Ok(idx) = self
+            .records
+            .binary_search_by(|r| r.mjd.partial_cmp(&mjd).unwrap())
+        {
+            let mut params = self.records[idx].to_parameters();
+            params.compute_s_prime();
+            return Ok(params);
         }
 
         let (before_idx, after_idx) = self.find_interpolation_interval(mjd)?;
@@ -63,7 +66,6 @@ impl EopInterpolator {
         match self.method {
             InterpolationMethod::Linear => self.linear_interpolate(mjd, before_idx, after_idx),
             InterpolationMethod::Lagrange5 => self.lagrange_interpolate(mjd, 5),
-            InterpolationMethod::CubicSpline => self.linear_interpolate(mjd, before_idx, after_idx),
         }
     }
 
@@ -127,6 +129,16 @@ impl EopInterpolator {
             _ => None,
         };
 
+        let xrt = match (p1.xrt, p2.xrt) {
+            (Some(v1), Some(v2)) => Some(v1 + t * (v2 - v1)),
+            _ => None,
+        };
+
+        let yrt = match (p1.yrt, p2.yrt) {
+            (Some(v1), Some(v2)) => Some(v1 + t * (v2 - v1)),
+            _ => None,
+        };
+
         let mut params = EopParameters {
             mjd,
             x_p,
@@ -135,6 +147,8 @@ impl EopInterpolator {
             lod,
             dx,
             dy,
+            xrt,
+            yrt,
             s_prime: 0.0,
             flags: p1.flags,
         };
@@ -175,17 +189,26 @@ impl EopInterpolator {
         let ut1_utc = self.lagrange_interpolate_value(mjd, &points, |p| p.ut1_utc);
         let lod = self.lagrange_interpolate_value(mjd, &points, |p| p.lod);
 
-        let has_dx = points.iter().all(|p| p.dx.is_some());
-        let has_dy = points.iter().all(|p| p.dy.is_some());
-
-        let dx = if has_dx {
+        let dx = if points.iter().all(|p| p.dx.is_some()) {
             Some(self.lagrange_interpolate_value(mjd, &points, |p| p.dx.unwrap()))
         } else {
             None
         };
 
-        let dy = if has_dy {
+        let dy = if points.iter().all(|p| p.dy.is_some()) {
             Some(self.lagrange_interpolate_value(mjd, &points, |p| p.dy.unwrap()))
+        } else {
+            None
+        };
+
+        let xrt = if points.iter().all(|p| p.xrt.is_some()) {
+            Some(self.lagrange_interpolate_value(mjd, &points, |p| p.xrt.unwrap()))
+        } else {
+            None
+        };
+
+        let yrt = if points.iter().all(|p| p.yrt.is_some()) {
+            Some(self.lagrange_interpolate_value(mjd, &points, |p| p.yrt.unwrap()))
         } else {
             None
         };
@@ -198,6 +221,8 @@ impl EopInterpolator {
             lod,
             dx,
             dy,
+            xrt,
+            yrt,
             s_prime: 0.0,
             flags: points[0].flags,
         };
@@ -208,18 +233,28 @@ impl EopInterpolator {
     }
 
     fn find_center_index(&self, mjd: f64) -> CoordResult<usize> {
-        let mut best_idx = 0;
-        let mut best_diff = (self.records[0].mjd - mjd).abs();
+        let idx = self
+            .records
+            .binary_search_by(|r| r.mjd.partial_cmp(&mjd).unwrap());
 
-        for (idx, record) in self.records.iter().enumerate() {
-            let diff = (record.mjd - mjd).abs();
-            if diff < best_diff {
-                best_diff = diff;
-                best_idx = idx;
+        match idx {
+            Ok(i) => Ok(i),
+            Err(i) => {
+                if i == 0 {
+                    Ok(0)
+                } else if i >= self.records.len() {
+                    Ok(self.records.len() - 1)
+                } else {
+                    let before = (self.records[i - 1].mjd - mjd).abs();
+                    let after = (self.records[i].mjd - mjd).abs();
+                    if before <= after {
+                        Ok(i - 1)
+                    } else {
+                        Ok(i)
+                    }
+                }
             }
         }
-
-        Ok(best_idx)
     }
 
     fn lagrange_interpolate_value<F>(&self, mjd: f64, points: &[EopParameters], extract: F) -> f64
@@ -257,6 +292,13 @@ impl EopInterpolator {
 
     pub fn record_count(&self) -> usize {
         self.records.len()
+    }
+
+    pub fn extend(&mut self, records: Vec<EopRecord>) {
+        self.records.extend(records);
+        self.records
+            .sort_by(|a, b| a.mjd.partial_cmp(&b.mjd).unwrap());
+        self.records.dedup_by(|a, b| a.mjd == b.mjd);
     }
 }
 
@@ -422,19 +464,6 @@ mod tests {
     fn test_empty_records_time_span() {
         let interpolator = EopInterpolator::new(vec![]);
         assert_eq!(interpolator.time_span(), None);
-    }
-
-    #[test]
-    fn test_cubic_spline_fallback_to_linear() {
-        let records = create_test_records();
-        let interpolator =
-            EopInterpolator::new(records).with_method(InterpolationMethod::CubicSpline);
-
-        let mjd = 59946.5;
-        let params = interpolator.get(mjd).unwrap();
-
-        let expected_x_p = (0.101 + 0.102) / 2.0;
-        assert!((params.x_p - expected_x_p).abs() < 1e-10);
     }
 
     #[test]

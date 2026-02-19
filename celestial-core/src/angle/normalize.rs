@@ -128,7 +128,7 @@ pub enum NormalizeMode {
 pub fn wrap_pm_pi(x: f64) -> f64 {
     let w = fmod(x, TWOPI);
     if w.abs() >= PI {
-        return w - TWOPI.copysign(x);
+        return w - libm::copysign(TWOPI, x);
     }
 
     w

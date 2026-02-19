@@ -1,13 +1,17 @@
+use super::{Command, CommandOutput, FitDisplay};
 use crate::error::{Error, Result};
 use crate::session::Session;
 use crate::solver;
-use super::{Command, CommandOutput, FitDisplay};
 
 pub struct Fit;
 
 impl Command for Fit {
-    fn name(&self) -> &str { "FIT" }
-    fn description(&self) -> &str { "Fit model to observations" }
+    fn name(&self) -> &str {
+        "FIT"
+    }
+    fn description(&self) -> &str {
+        "Fit model to observations"
+    }
 
     fn execute(&self, session: &mut Session, _args: &[&str]) -> Result<CommandOutput> {
         if session.model.term_count() == 0 {
@@ -24,9 +28,7 @@ impl Command for Fit {
 }
 
 fn raw_rms(session: &Session) -> Result<CommandOutput> {
-    let active: Vec<&_> = session.observations.iter()
-        .filter(|o| !o.masked)
-        .collect();
+    let active: Vec<&_> = session.observations.iter().filter(|o| !o.masked).collect();
     if active.is_empty() {
         return Err(Error::Fit("no observations loaded".into()));
     }

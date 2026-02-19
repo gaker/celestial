@@ -29,12 +29,14 @@ pub fn fit_model(
         return Err(Error::Fit("insufficient observations".into()));
     }
 
-    let free_indices: Vec<usize> = fixed.iter()
+    let free_indices: Vec<usize> = fixed
+        .iter()
         .enumerate()
         .filter(|(_, &f)| !f)
         .map(|(i, _)| i)
         .collect();
-    let fixed_indices: Vec<usize> = fixed.iter()
+    let fixed_indices: Vec<usize> = fixed
+        .iter()
         .enumerate()
         .filter(|(_, &f)| f)
         .map(|(i, _)| i)
@@ -44,9 +46,7 @@ pub fn fit_model(
     let w = build_weights(observations);
     let a_full = build_design_matrix(observations, terms, latitude);
 
-    subtract_fixed_contributions(
-        &mut b, &a_full, coefficients, &fixed_indices,
-    );
+    subtract_fixed_contributions(&mut b, &a_full, coefficients, &fixed_indices);
 
     let a_free = extract_columns(&a_full, &free_indices);
     let free_coeffs = solve_weighted(&a_free, &b, &w)?;
@@ -62,9 +62,7 @@ pub fn fit_model(
     let all_coeffs_dv = DVector::from_vec(all_coeffs.clone());
     let actual_residuals = &full_residuals - full_a * &all_coeffs_dv;
 
-    let sigma = compute_sigma_free(
-        &a_free, &free_residuals, &w, &free_indices, terms.len(),
-    );
+    let sigma = compute_sigma_free(&a_free, &free_residuals, &w, &free_indices, terms.len());
     let sky_rms = compute_sky_rms(&actual_residuals, observations);
     let term_names = terms.iter().map(|t| t.name().to_string()).collect();
 
@@ -116,7 +114,7 @@ fn build_weights(observations: &[&Observation]) -> DVector<f64> {
     let n = observations.len();
     let mut w = DVector::zeros(2 * n);
     for (i, obs) in observations.iter().enumerate() {
-        let cos_dec = obs.catalog_dec.radians().cos();
+        let cos_dec = libm::cos(obs.catalog_dec.radians());
         w[2 * i] = cos_dec * cos_dec;
         w[2 * i + 1] = 1.0;
     }
@@ -144,12 +142,8 @@ fn build_design_matrix(
     a
 }
 
-fn solve_weighted(
-    a: &DMatrix<f64>,
-    b: &DVector<f64>,
-    w: &DVector<f64>,
-) -> Result<DVector<f64>> {
-    let sqrt_w = w.map(|v| v.sqrt());
+fn solve_weighted(a: &DMatrix<f64>, b: &DVector<f64>, w: &DVector<f64>) -> Result<DVector<f64>> {
+    let sqrt_w = w.map(libm::sqrt);
     let rows = a.nrows();
     let cols = a.ncols();
     let a_w = DMatrix::from_fn(rows, cols, |i, j| a[(i, j)] * sqrt_w[i]);
@@ -169,13 +163,15 @@ fn compute_sigma_free(
     let n = a_free.nrows();
     let m = a_free.ncols();
     let dof = n.saturating_sub(m).max(1);
-    let sqrt_w = w.map(|v| v.sqrt());
+    let sqrt_w = w.map(libm::sqrt);
     let a_w = DMatrix::from_fn(n, m, |i, j| a_free[(i, j)] * sqrt_w[i]);
     let r_w = DVector::from_fn(n, |i, _| residuals[i] * sqrt_w[i]);
     let s2 = r_w.dot(&r_w) / dof as f64;
     let ata = a_w.transpose() * &a_w;
     let free_sigma = match ata.try_inverse() {
-        Some(inv) => (0..m).map(|j| (s2 * inv[(j, j)]).abs().sqrt()).collect::<Vec<_>>(),
+        Some(inv) => (0..m)
+            .map(|j| libm::sqrt((s2 * inv[(j, j)]).abs()))
+            .collect::<Vec<_>>(),
         None => vec![f64::NAN; m],
     };
     let mut sigma = vec![0.0; total_terms];
@@ -194,19 +190,19 @@ pub fn compute_sky_rms(residuals: &DVector<f64>, observations: &[&Observation]) 
     for i in 0..n {
         let dh = residuals[2 * i];
         let dd = residuals[2 * i + 1];
-        let cos_dec = observations[i].catalog_dec.radians().cos();
+        let cos_dec = libm::cos(observations[i].catalog_dec.radians());
         let dx = dh * cos_dec;
         sum_sq += dx * dx + dd * dd;
     }
-    (sum_sq / n as f64).sqrt()
+    libm::sqrt(sum_sq / n as f64)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use celestial_core::Angle;
     use crate::observation::PierSide;
     use crate::terms::create_term;
+    use celestial_core::Angle;
 
     fn make_obs(cmd_ha_arcsec: f64, act_ha_arcsec: f64, dec_deg: f64) -> Observation {
         Observation {
@@ -242,10 +238,8 @@ mod tests {
     fn fit_insufficient_observations() {
         let obs = [make_obs(0.0, 100.0, 30.0)];
         let refs: Vec<&Observation> = obs.iter().collect();
-        let terms: Vec<Box<dyn Term>> = vec![
-            create_term("IH").unwrap(),
-            create_term("ID").unwrap(),
-        ];
+        let terms: Vec<Box<dyn Term>> =
+            vec![create_term("IH").unwrap(), create_term("ID").unwrap()];
         let fixed = [false, false];
         let coeffs = [0.0, 0.0];
         let result = fit_model(&refs, &terms, &fixed, &coeffs, 0.7);
@@ -265,10 +259,7 @@ mod tests {
 
     #[test]
     fn sky_rms_known_residuals() {
-        let obs = [
-            make_obs(0.0, 0.0, 0.0),
-            make_obs(0.0, 0.0, 0.0),
-        ];
+        let obs = [make_obs(0.0, 0.0, 0.0), make_obs(0.0, 0.0, 0.0)];
         let refs: Vec<&Observation> = obs.iter().collect();
         let n = obs.len();
         let mut residuals = DVector::zeros(2 * n);

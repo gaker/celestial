@@ -1,8 +1,8 @@
-use celestial_core::Angle;
 use crate::error::{Error, Result};
 use crate::model::PointingModel;
 use crate::observation::{IndatFile, MountType, Observation, SiteParams};
 use crate::solver::{self, FitResult};
+use celestial_core::Angle;
 use celestial_time::JulianDate;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -56,14 +56,10 @@ impl Session {
 
     pub fn fit(&mut self) -> Result<&FitResult> {
         let lat = self.latitude();
-        let active: Vec<&Observation> = self.observations.iter()
-            .filter(|o| !o.masked)
-            .collect();
+        let active: Vec<&Observation> = self.observations.iter().filter(|o| !o.masked).collect();
         let fixed = self.model.fixed_flags();
         let coefficients = self.model.coefficients();
-        let result = solver::fit_model(
-            &active, self.model.terms(), fixed, coefficients, lat,
-        )?;
+        let result = solver::fit_model(&active, self.model.terms(), fixed, coefficients, lat)?;
         self.model.set_coefficients(&result.coefficients)?;
         self.last_fit = Some(result);
         Ok(self.last_fit.as_ref().unwrap())
@@ -96,9 +92,9 @@ impl Session {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use celestial_core::Angle;
     use crate::observation::PierSide;
     use crate::parser::parse_indat;
+    use celestial_core::Angle;
 
     #[test]
     fn new_session_defaults() {

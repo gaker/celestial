@@ -160,22 +160,33 @@ mod tests {
         assert_eq!(TAI::new(0, 0).to_julian_date().to_f64(), UNIX_EPOCH_JD);
         assert_eq!(TAI::j2000().to_julian_date().to_f64(), J2000_JD);
         assert_eq!(
-            tai_from_calendar(2000, 1, 1, 12, 0, 0.0).to_julian_date().to_f64(),
+            tai_from_calendar(2000, 1, 1, 12, 0, 0.0)
+                .to_julian_date()
+                .to_f64(),
             J2000_JD
         );
 
         let jd = JulianDate::new(J2000_JD, 0.123456789);
         let tai_direct = TAI::from_julian_date(jd);
         let tai_from_trait: TAI = jd.into();
-        assert_eq!(tai_direct.to_julian_date().jd1(), tai_from_trait.to_julian_date().jd1());
-        assert_eq!(tai_direct.to_julian_date().jd2(), tai_from_trait.to_julian_date().jd2());
+        assert_eq!(
+            tai_direct.to_julian_date().jd1(),
+            tai_from_trait.to_julian_date().jd1()
+        );
+        assert_eq!(
+            tai_direct.to_julian_date().jd2(),
+            tai_from_trait.to_julian_date().jd2()
+        );
     }
 
     #[test]
     fn test_tai_arithmetic() {
         let tai = TAI::j2000();
         assert_eq!(tai.add_days(1.0).to_julian_date().to_f64(), J2000_JD + 1.0);
-        assert_eq!(tai.add_seconds(3600.0).to_julian_date().to_f64(), J2000_JD + 1.0 / 24.0);
+        assert_eq!(
+            tai.add_seconds(3600.0).to_julian_date().to_f64(),
+            J2000_JD + 1.0 / 24.0
+        );
     }
 
     #[test]
@@ -188,7 +199,10 @@ mod tests {
     #[test]
     fn test_tai_string_parsing() {
         assert_eq!(
-            TAI::from_str("2000-01-01T12:00:00").unwrap().to_julian_date().to_f64(),
+            TAI::from_str("2000-01-01T12:00:00")
+                .unwrap()
+                .to_julian_date()
+                .to_f64(),
             TAI::j2000().to_julian_date().to_f64()
         );
 
@@ -216,7 +230,11 @@ mod tests {
 
             let total_diff =
                 (original.to_julian_date().to_f64() - deserialized.to_julian_date().to_f64()).abs();
-            assert!(total_diff < 1e-14, "serde precision loss: {:.2e}", total_diff);
+            assert!(
+                total_diff < 1e-14,
+                "serde precision loss: {:.2e}",
+                total_diff
+            );
         }
     }
 }

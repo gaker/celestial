@@ -236,7 +236,8 @@ mod tests {
                 jd_j2000,
             )
             .expect("Failed to compute Earth state");
-        let distance_au = (pos[0].powi(2) + pos[1].powi(2) + pos[2].powi(2)).sqrt() / 149597870.7;
+        let distance_au =
+            libm::sqrt(pos[0].powi(2) + pos[1].powi(2) + pos[2].powi(2)) / 149597870.7;
         println!("Earth-Moon barycenter at J2000.0:");
         println!(
             "  Position: [{:.3}, {:.3}, {:.3}] km",
@@ -262,7 +263,8 @@ mod tests {
         let (pos, vel) = spk
             .compute_state(bodies::MARS_BARYCENTER, bodies::SOLAR_SYSTEM_BARYCENTER, jd)
             .expect("Failed to compute Mars state");
-        let distance_au = (pos[0].powi(2) + pos[1].powi(2) + pos[2].powi(2)).sqrt() / 149597870.7;
+        let distance_au =
+            libm::sqrt(pos[0].powi(2) + pos[1].powi(2) + pos[2].powi(2)) / 149597870.7;
         println!("Mars barycenter at JD {}:", jd);
         println!(
             "  Position: [{:.3}, {:.3}, {:.3}] km",

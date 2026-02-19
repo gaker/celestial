@@ -113,7 +113,7 @@ impl Distance {
     }
 
     pub fn distance_modulus(self) -> f64 {
-        5.0 * self.parsecs.log10() - 5.0
+        5.0 * libm::log10(self.parsecs) - 5.0
     }
 
     pub fn from_distance_modulus(dm: f64) -> CoordResult<Self> {

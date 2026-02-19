@@ -1,15 +1,19 @@
 use std::path::Path;
 
+use super::{Command, CommandOutput};
 use crate::error::Result;
 use crate::plot::residuals::{compute_residuals, require_fit};
 use crate::session::Session;
-use super::{Command, CommandOutput};
 
 pub struct Gdist;
 
 impl Command for Gdist {
-    fn name(&self) -> &str { "GDIST" }
-    fn description(&self) -> &str { "Histogram of residual distribution" }
+    fn name(&self) -> &str {
+        "GDIST"
+    }
+    fn description(&self) -> &str {
+        "Histogram of residual distribution"
+    }
 
     fn execute(&self, session: &mut Session, args: &[&str]) -> Result<CommandOutput> {
         require_fit(session)?;
@@ -33,12 +37,7 @@ fn terminal_output(dx: &[f64], dd: &[f64]) -> Result<CommandOutput> {
     Ok(CommandOutput::Text(format!("{dx_hist}\n{dd_hist}")))
 }
 
-fn svg_output(
-    path: &str,
-    args: &[&str],
-    dx: &[f64],
-    dd: &[f64],
-) -> Result<CommandOutput> {
+fn svg_output(path: &str, args: &[&str], dx: &[f64], dd: &[f64]) -> Result<CommandOutput> {
     let is_dec = args.get(1).is_some_and(|a| a.eq_ignore_ascii_case("D"));
     let (values, title, label) = if is_dec {
         (dd, "dDec Distribution", "dDec (arcsec)")
@@ -48,15 +47,13 @@ fn svg_output(
     write_svg(values, Path::new(path), title, label)
 }
 
-fn write_svg(
-    values: &[f64],
-    path: &Path,
-    title: &str,
-    x_label: &str,
-) -> Result<CommandOutput> {
+fn write_svg(values: &[f64], path: &Path, title: &str, x_label: &str) -> Result<CommandOutput> {
     crate::plot::svg::histogram_svg(values, path, title, x_label)
         .map_err(|e| crate::error::Error::Io(std::io::Error::other(e.to_string())))?;
-    Ok(CommandOutput::Text(format!("Written to {}", path.display())))
+    Ok(CommandOutput::Text(format!(
+        "Written to {}",
+        path.display()
+    )))
 }
 
 #[cfg(test)]
@@ -102,8 +99,8 @@ mod tests {
     }
 
     fn build_session_with_obs() -> Session {
-        use celestial_core::Angle;
         use crate::observation::{Observation, PierSide};
+        use celestial_core::Angle;
 
         let mut session = Session::new();
         session.last_fit = Some(crate::solver::FitResult {

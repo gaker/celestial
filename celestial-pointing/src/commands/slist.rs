@@ -1,15 +1,20 @@
-use celestial_core::Angle;
+use super::{Command, CommandOutput};
 use crate::error::Result;
 use crate::model::PointingModel;
 use crate::observation::{Observation, PierSide};
 use crate::session::Session;
-use super::{Command, CommandOutput};
+use celestial_core::constants::{DEG_TO_RAD, RAD_TO_DEG};
+use celestial_core::Angle;
 
 pub struct Slist;
 
 impl Command for Slist {
-    fn name(&self) -> &str { "SLIST" }
-    fn description(&self) -> &str { "List observations with residuals" }
+    fn name(&self) -> &str {
+        "SLIST"
+    }
+    fn description(&self) -> &str {
+        "List observations with residuals"
+    }
 
     fn execute(&self, session: &mut Session, _args: &[&str]) -> Result<CommandOutput> {
         let lat = session.latitude();
@@ -35,9 +40,9 @@ fn format_row(num: usize, obs: &Observation, model: &PointingModel, lat: f64) ->
     let (raw_dh, raw_dd) = compute_raw_residuals(obs);
     let dh = raw_dh - model_dh;
     let dd = raw_dd - model_dd;
-    let dx = dh * dec.cos();
+    let dx = dh * libm::cos(dec);
     let (az, zd) = compute_az_zd(h, dec, lat);
-    let dr = (dx * dx + dd * dd).sqrt();
+    let dr = libm::sqrt(dx * dx + dd * dd);
     let pier_char = pier_indicator(obs.pier_side);
     let mask_char = if obs.masked { "*" } else { "" };
 
@@ -48,12 +53,12 @@ fn format_row(num: usize, obs: &Observation, model: &PointingModel, lat: f64) ->
         mask_char,
         format_hms(obs.commanded_ha),
         format_dms(obs.catalog_dec),
-        az.to_degrees(),
-        zd.to_degrees(),
+        az * RAD_TO_DEG,
+        zd * RAD_TO_DEG,
         dx,
         dd,
         dx,
-        zd.to_degrees(),
+        zd * RAD_TO_DEG,
         dr
     )
 }
@@ -65,18 +70,18 @@ fn compute_raw_residuals(obs: &Observation) -> (f64, f64) {
 }
 
 fn compute_az_zd(h: f64, dec: f64, lat: f64) -> (f64, f64) {
-    let sin_alt = lat.sin() * dec.sin() + lat.cos() * dec.cos() * h.cos();
-    let alt = sin_alt.asin();
-    let zd = 90.0_f64.to_radians() - alt;
-    let cos_alt = alt.cos();
+    let sin_alt = libm::sin(lat) * libm::sin(dec) + libm::cos(lat) * libm::cos(dec) * libm::cos(h);
+    let alt = libm::asin(sin_alt);
+    let zd = 90.0 * DEG_TO_RAD - alt;
+    let cos_alt = libm::cos(alt);
     let (sin_az, cos_az) = if cos_alt.abs() < 1e-10 {
         (0.0, 1.0)
     } else {
-        let sa = -(dec.cos() * h.sin()) / cos_alt;
-        let ca = (dec.sin() - lat.sin() * sin_alt) / (lat.cos() * cos_alt);
+        let sa = -(libm::cos(dec) * libm::sin(h)) / cos_alt;
+        let ca = (libm::sin(dec) - libm::sin(lat) * sin_alt) / (libm::cos(lat) * cos_alt);
         (sa, ca)
     };
-    let az = sin_az.atan2(cos_az);
+    let az = libm::atan2(sin_az, cos_az);
     (az, zd)
 }
 

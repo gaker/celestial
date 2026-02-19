@@ -791,7 +791,7 @@ mod tests {
     }
 
     #[test]
-    fn keyword_comprehensive_example() {
+    fn keyword_example() {
         let keyword = Keyword::new("CRVAL1".to_string())
             .with_value(KeywordValue::Real(180.0))
             .with_comment("Reference coordinate value");

@@ -69,7 +69,7 @@ fn evaluate_variable(blocks: &[TimeBlock], t: f64, lambdas: &[f64; 17]) -> f64 {
         let mut block_sum = 0.0;
         for term in block.terms {
             let arg = compute_argument(&term.mult, lambdas);
-            let (arg_sin, arg_cos) = arg.sin_cos();
+            let (arg_sin, arg_cos) = libm::sincos(arg);
             block_sum += term.s * arg_sin + term.c * arg_cos;
         }
         result += block_sum * t.powi(block.power as i32);
@@ -90,21 +90,21 @@ fn compute_argument(mult: &[i16; 17], lambdas: &[f64; 17]) -> f64 {
 fn elements_to_cartesian(el: &OrbitalElements) -> AstroResult<Vector3> {
     let (xa, xl, xk, xh, xq, xp) = (el.a, el.lambda, el.k, el.h, el.q, el.p);
 
-    let xfi = (1.0 - xk * xk - xh * xh).sqrt();
-    let xki = (1.0 - xq * xq - xp * xp).sqrt();
+    let xfi = libm::sqrt(1.0 - xk * xk - xh * xh);
+    let xki = libm::sqrt(1.0 - xq * xq - xp * xp);
     let u = 1.0 / (1.0 + xfi);
 
-    let ex = (xk * xk + xh * xh).sqrt();
+    let ex = libm::sqrt(xk * xk + xh * xh);
     let gl = xl % TWOPI;
-    let gm = gl - xh.atan2(xk);
+    let gm = gl - libm::atan2(xh, xk);
 
     let mut e_anom = gl
-        + (ex - 0.125 * ex.powi(3)) * gm.sin()
-        + 0.5 * ex.powi(2) * (2.0 * gm).sin()
-        + 0.375 * ex.powi(3) * (3.0 * gm).sin();
+        + (ex - 0.125 * ex.powi(3)) * libm::sin(gm)
+        + 0.5 * ex.powi(2) * libm::sin(2.0 * gm)
+        + 0.375 * ex.powi(3) * libm::sin(3.0 * gm);
 
     loop {
-        let (sin_e, cos_e) = e_anom.sin_cos();
+        let (sin_e, cos_e) = libm::sincos(e_anom);
         let z3_real = xk * cos_e + xh * sin_e;
         let z3_imag = xk * sin_e - xh * cos_e;
         let dl = gl - e_anom + z3_imag;
@@ -114,7 +114,7 @@ fn elements_to_cartesian(el: &OrbitalElements) -> AstroResult<Vector3> {
         }
     }
 
-    let (sin_e, cos_e) = e_anom.sin_cos();
+    let (sin_e, cos_e) = libm::sincos(e_anom);
     let z3_real = xk * cos_e + xh * sin_e;
     let z3_imag = xk * sin_e - xh * cos_e;
     let rsa = 1.0 - z3_real;
@@ -274,7 +274,7 @@ mod test {
         let tdb = TDB::from_julian_date(JulianDate::new(J2000_JD, 0.0));
 
         let (pos, vel) = mars.heliocentric_state(&tdb).unwrap();
-        let vel_mag = (vel.x.powi(2) + vel.y.powi(2) + vel.z.powi(2)).sqrt();
+        let vel_mag = libm::sqrt(vel.x.powi(2) + vel.y.powi(2) + vel.z.powi(2));
 
         println!("Mars at J2000.0:");
         println!("  Position: ({:.6}, {:.6}, {:.6}) AU", pos.x, pos.y, pos.z);
@@ -290,7 +290,7 @@ mod test {
             vel_mag
         );
 
-        let pos_mag = (pos.x.powi(2) + pos.y.powi(2) + pos.z.powi(2)).sqrt();
+        let pos_mag = libm::sqrt(pos.x.powi(2) + pos.y.powi(2) + pos.z.powi(2));
         let dot = pos.x * vel.x + pos.y * vel.y + pos.z * vel.z;
         let cos_angle = dot / (pos_mag * vel_mag);
         let angle_deg = cos_angle.acos().to_degrees();
@@ -347,7 +347,7 @@ mod test {
             vsop_pos.z - de_helio_pos_au[2],
         ];
         let pos_error_km =
-            (pos_error_au[0].powi(2) + pos_error_au[1].powi(2) + pos_error_au[2].powi(2)).sqrt()
+            libm::sqrt(pos_error_au[0].powi(2) + pos_error_au[1].powi(2) + pos_error_au[2].powi(2))
                 * AU_KM;
 
         let vel_error_au_day = [
@@ -355,10 +355,9 @@ mod test {
             vsop_vel.y - de_helio_vel_au_day[1],
             vsop_vel.z - de_helio_vel_au_day[2],
         ];
-        let vel_error_mag = (vel_error_au_day[0].powi(2)
-            + vel_error_au_day[1].powi(2)
-            + vel_error_au_day[2].powi(2))
-        .sqrt();
+        let vel_error_mag = libm::sqrt(
+            vel_error_au_day[0].powi(2) + vel_error_au_day[1].powi(2) + vel_error_au_day[2].powi(2),
+        );
 
         assert!(
             pos_error_km < 1000.0,
@@ -379,14 +378,14 @@ mod test {
 
         let (pos, vel) = mars.geocentric_state(&tdb).unwrap();
 
-        let dist_au = (pos.x.powi(2) + pos.y.powi(2) + pos.z.powi(2)).sqrt();
+        let dist_au = libm::sqrt(pos.x.powi(2) + pos.y.powi(2) + pos.z.powi(2));
         assert!(
             dist_au > 0.5 && dist_au < 2.7,
             "Mars geocentric distance {} AU outside expected range",
             dist_au
         );
 
-        let speed_au_day = (vel.x.powi(2) + vel.y.powi(2) + vel.z.powi(2)).sqrt();
+        let speed_au_day = libm::sqrt(vel.x.powi(2) + vel.y.powi(2) + vel.z.powi(2));
         assert!(
             speed_au_day > 0.001 && speed_au_day < 0.05,
             "Mars geocentric velocity {} AU/day outside expected range",

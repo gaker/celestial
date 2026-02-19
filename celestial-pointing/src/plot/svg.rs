@@ -20,12 +20,7 @@ pub fn scatter_svg(
     Ok(())
 }
 
-pub fn histogram_svg(
-    values: &[f64],
-    path: &Path,
-    title: &str,
-    x_label: &str,
-) -> PlotResult {
+pub fn histogram_svg(values: &[f64], path: &Path, title: &str, x_label: &str) -> PlotResult {
     if values.is_empty() {
         return Ok(());
     }
@@ -97,7 +92,11 @@ fn build_chart<'a, DB: DrawingBackend + 'a>(
     x_range: &(f64, f64),
     y_range: &(f64, f64),
 ) -> std::result::Result<
-    ChartContext<'a, DB, Cartesian2d<plotters::coord::types::RangedCoordf64, plotters::coord::types::RangedCoordf64>>,
+    ChartContext<
+        'a,
+        DB,
+        Cartesian2d<plotters::coord::types::RangedCoordf64, plotters::coord::types::RangedCoordf64>,
+    >,
     Box<dyn std::error::Error>,
 >
 where
@@ -118,7 +117,10 @@ where
 }
 
 fn draw_crosshairs<DB: DrawingBackend>(
-    chart: &mut ChartContext<DB, Cartesian2d<plotters::coord::types::RangedCoordf64, plotters::coord::types::RangedCoordf64>>,
+    chart: &mut ChartContext<
+        DB,
+        Cartesian2d<plotters::coord::types::RangedCoordf64, plotters::coord::types::RangedCoordf64>,
+    >,
     x_range: &(f64, f64),
     y_range: &(f64, f64),
 ) -> PlotResult
@@ -138,7 +140,10 @@ where
 }
 
 fn draw_points<DB: DrawingBackend>(
-    chart: &mut ChartContext<DB, Cartesian2d<plotters::coord::types::RangedCoordf64, plotters::coord::types::RangedCoordf64>>,
+    chart: &mut ChartContext<
+        DB,
+        Cartesian2d<plotters::coord::types::RangedCoordf64, plotters::coord::types::RangedCoordf64>,
+    >,
     points: &[(f64, f64)],
 ) -> PlotResult
 where
@@ -153,7 +158,10 @@ where
 }
 
 fn draw_histogram_bars<DB: DrawingBackend>(
-    chart: &mut ChartContext<DB, Cartesian2d<plotters::coord::types::RangedCoordf64, plotters::coord::types::RangedCoordu32>>,
+    chart: &mut ChartContext<
+        DB,
+        Cartesian2d<plotters::coord::types::RangedCoordf64, plotters::coord::types::RangedCoordu32>,
+    >,
     bins: &[u32],
     min_val: f64,
     bin_width: f64,
@@ -170,7 +178,10 @@ where
 }
 
 fn draw_vectors<DB: DrawingBackend>(
-    chart: &mut ChartContext<DB, Cartesian2d<plotters::coord::types::RangedCoordf64, plotters::coord::types::RangedCoordf64>>,
+    chart: &mut ChartContext<
+        DB,
+        Cartesian2d<plotters::coord::types::RangedCoordf64, plotters::coord::types::RangedCoordf64>,
+    >,
     positions: &[(f64, f64)],
     vectors: &[(f64, f64)],
     scale: f64,
@@ -179,11 +190,7 @@ where
     DB::ErrorType: 'static,
 {
     for (&(px, py), &(vx, vy)) in positions.iter().zip(vectors.iter()) {
-        chart.draw_series(std::iter::once(Circle::new(
-            (px, py),
-            3,
-            BLUE.filled(),
-        )))?;
+        chart.draw_series(std::iter::once(Circle::new((px, py), 3, BLUE.filled())))?;
         let ex = px + vx * scale;
         let ey = py + vy * scale;
         chart.draw_series(std::iter::once(PathElement::new(
@@ -200,7 +207,7 @@ fn bin_values(values: &[f64], n_bins: usize) -> (Vec<u32>, f64, f64) {
     let bin_width = range / n_bins as f64;
     let mut bins = vec![0u32; n_bins];
     for &v in values {
-        let idx = ((v - min_val) / bin_width).floor() as usize;
+        let idx = libm::floor((v - min_val) / bin_width) as usize;
         bins[idx.min(n_bins - 1)] += 1;
     }
     (bins, bin_width, min_val)

@@ -1,7 +1,7 @@
 use crate::ser::SerError;
+use byteorder::{ByteOrder, LittleEndian};
 use celestial_core::constants::SECONDS_PER_DAY_F64;
 use celestial_time::{constants::UNIX_EPOCH_JD, TimeError, TimeResult, UTC};
-use byteorder::{ByteOrder, LittleEndian};
 use std::fmt;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -141,8 +141,8 @@ impl SerTimestamp {
 
     pub fn from_unix_seconds(seconds: f64) -> TimeResult<Self> {
         let ticks = Self::unix_seconds_to_ticks(seconds)?;
-        let unix_secs = seconds.trunc() as i64;
-        let unix_nanos = ((seconds.fract() * 1e9) as u32).min(999_999_999);
+        let unix_secs = libm::trunc(seconds) as i64;
+        let unix_nanos = (((seconds - libm::trunc(seconds)) * 1e9) as u32).min(999_999_999);
         let utc = UTC::new(unix_secs, unix_nanos);
         Ok(Self {
             ticks,
@@ -196,7 +196,7 @@ fn utc_to_unix_timestamp(utc: &UTC) -> TimeResult<(i64, u32)> {
     }
 
     let total_seconds = (jd - UNIX_EPOCH_JD) * SECONDS_PER_DAY_F64;
-    let seconds = total_seconds.trunc() as i64;
+    let seconds = libm::trunc(total_seconds) as i64;
     let nanos = ((total_seconds - seconds as f64) * 1e9) as u32;
 
     Ok((seconds, nanos.min(999_999_999)))

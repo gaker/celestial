@@ -1,4 +1,6 @@
 use crate::{solar, transforms::CoordinateFrame, CoordResult, Distance, ICRSPosition};
+use celestial_core::constants::HALF_PI;
+use celestial_core::matrix::RotationMatrix3;
 use celestial_core::utils::normalize_angle_to_positive;
 use celestial_core::Angle;
 use celestial_time::TT;
@@ -144,87 +146,44 @@ impl HeliographicCarrington {
     }
 }
 
+fn heliographic_to_icrs_matrix(epoch: &TT) -> CoordResult<RotationMatrix3> {
+    let orientation = solar::compute_solar_orientation(epoch);
+    let b0 = orientation.b0.radians();
+    let p = orientation.p.radians();
+
+    let sun_icrs = solar::get_sun_icrs(epoch)?;
+    let sun_ra = sun_icrs.ra().radians();
+    let sun_dec = sun_icrs.dec().radians();
+
+    let mut m = RotationMatrix3::identity();
+    m.rotate_y(-b0);
+    m.rotate_z(p);
+    m.rotate_y(sun_dec - HALF_PI);
+    m.rotate_z(-sun_ra);
+    Ok(m)
+}
+
 impl CoordinateFrame for HeliographicStonyhurst {
     fn to_icrs(&self, epoch: &TT) -> CoordResult<ICRSPosition> {
-        let orientation = solar::compute_solar_orientation(epoch);
-        let b0 = orientation.b0.radians();
-        let p = orientation.p.radians();
-
-        let lat = self.latitude.radians();
-        let lon = self.longitude.radians();
-        let (sin_lat, cos_lat) = lat.sin_cos();
-        let (sin_lon, cos_lon) = lon.sin_cos();
-
-        let x_helio = cos_lat * cos_lon;
-        let y_helio = cos_lat * sin_lon;
-        let z_helio = sin_lat;
-
-        let (sin_b0, cos_b0) = b0.sin_cos();
-        let _x_proj = x_helio;
-        let y_proj = y_helio * cos_b0 - z_helio * sin_b0;
-        let z_proj = y_helio * sin_b0 + z_helio * cos_b0;
-
-        let (sin_p, cos_p) = p.sin_cos();
-        let y_disk = y_proj * cos_p + z_proj * sin_p;
-        let z_disk = -y_proj * sin_p + z_proj * cos_p;
-
-        let sun_icrs = solar::get_sun_icrs(epoch)?;
-        let sun_ra = sun_icrs.ra().radians();
-        let sun_dec = sun_icrs.dec().radians();
-
-        let scale = 0.00465047; // ~1 solar radius in AU
-        let offset_x = -y_disk * scale;
-        let offset_y = z_disk * scale;
-
-        let (_sin_dec, cos_dec) = sun_dec.sin_cos();
-        let (_sin_ra, _cos_ra) = sun_ra.sin_cos();
-
-        let ra_offset = offset_x / cos_dec;
-        let dec_offset = offset_y;
-
-        let new_ra = sun_ra + ra_offset;
-        let new_dec = sun_dec + dec_offset;
+        let m = heliographic_to_icrs_matrix(epoch)?;
+        let (ra, dec) = m
+            .transpose()
+            .transform_spherical(self.longitude.radians(), self.latitude.radians());
 
         let mut icrs = ICRSPosition::new(
-            Angle::from_radians(normalize_angle_to_positive(new_ra)),
-            Angle::from_radians(new_dec),
+            Angle::from_radians(normalize_angle_to_positive(ra)),
+            Angle::from_radians(dec),
         )?;
 
         if let Some(radius) = self.radius {
             icrs.set_distance(radius);
         }
-
         Ok(icrs)
     }
 
     fn from_icrs(icrs: &ICRSPosition, epoch: &TT) -> CoordResult<Self> {
-        let orientation = solar::compute_solar_orientation(epoch);
-        let b0 = orientation.b0.radians();
-        let p = orientation.p.radians();
-
-        let sun_icrs = solar::get_sun_icrs(epoch)?;
-        let sun_ra = sun_icrs.ra().radians();
-        let sun_dec = sun_icrs.dec().radians();
-
-        let ra_offset = icrs.ra().radians() - sun_ra;
-        let dec_offset = icrs.dec().radians() - sun_dec;
-
-        let scale = 0.00465047;
-        let y_disk = -ra_offset * sun_dec.cos() / scale;
-        let z_disk = dec_offset / scale;
-
-        let (sin_p, cos_p) = p.sin_cos();
-        let y_proj = y_disk * cos_p - z_disk * sin_p;
-        let z_proj = y_disk * sin_p + z_disk * cos_p;
-
-        let (sin_b0, cos_b0) = b0.sin_cos();
-        let y_helio = y_proj * cos_b0 + z_proj * sin_b0;
-        let z_helio = -y_proj * sin_b0 + z_proj * cos_b0;
-
-        let x_helio = (1.0 - y_helio.powi(2) - z_helio.powi(2)).sqrt().max(0.0);
-
-        let lat = z_helio.asin();
-        let lon = y_helio.atan2(x_helio);
+        let m = heliographic_to_icrs_matrix(epoch)?;
+        let (lon, lat) = m.transform_spherical(icrs.ra().radians(), icrs.dec().radians());
 
         let mut pos = Self::new(
             Angle::from_radians(lat),
@@ -234,7 +193,6 @@ impl CoordinateFrame for HeliographicStonyhurst {
         if let Some(dist) = icrs.distance() {
             pos.set_radius(dist);
         }
-
         Ok(pos)
     }
 }
@@ -370,17 +328,42 @@ mod tests {
     #[test]
     fn test_coordinate_frame_roundtrip() {
         let epoch = TT::j2000();
-        let original = HeliographicStonyhurst::from_degrees(20.0, 30.0).unwrap();
+        let test_cases = [
+            (20.0, 30.0),
+            (0.0, 0.0),
+            (45.0, 90.0),
+            (-7.0, 180.0),
+            (7.0, 270.0),
+        ];
 
-        let icrs = original.to_icrs(&epoch).unwrap();
-        let recovered = HeliographicStonyhurst::from_icrs(&icrs, &epoch).unwrap();
+        for (lat, lon) in test_cases {
+            let original = HeliographicStonyhurst::from_degrees(lat, lon).unwrap();
+            let icrs = original.to_icrs(&epoch).unwrap();
+            let recovered = HeliographicStonyhurst::from_icrs(&icrs, &epoch).unwrap();
 
-        assert!(
-            (original.latitude().degrees() - recovered.latitude().degrees()).abs() < 5.0,
-            "Latitude mismatch: {} vs {}",
-            original.latitude().degrees(),
-            recovered.latitude().degrees()
-        );
+            let lat_err = (original.latitude().degrees() - recovered.latitude().degrees()).abs();
+            let lon_diff = (original.longitude().radians() - recovered.longitude().radians()).abs();
+            let lon_err = if lon_diff > std::f64::consts::PI {
+                std::f64::consts::TAU - lon_diff
+            } else {
+                lon_diff
+            } * celestial_core::constants::RAD_TO_DEG;
+
+            assert!(
+                lat_err < 1.0 / 3600.0,
+                "({}, {}): Latitude error {:.6} arcsec",
+                lat,
+                lon,
+                lat_err * 3600.0,
+            );
+            assert!(
+                lon_err < 1.0 / 3600.0,
+                "({}, {}): Longitude error {:.6} arcsec",
+                lat,
+                lon,
+                lon_err * 3600.0,
+            );
+        }
     }
 
     #[test]

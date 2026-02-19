@@ -1,3 +1,4 @@
+use celestial_core::constants::DEG_TO_RAD;
 use celestial_core::Angle;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -24,8 +25,8 @@ impl PixelCoord {
 
     #[inline]
     pub fn to_array_index(&self) -> (usize, usize) {
-        let row = (self.y - 1.0).round() as usize;
-        let col = (self.x - 1.0).round() as usize;
+        let row = libm::round(self.y - 1.0) as usize;
+        let col = libm::round(self.x - 1.0) as usize;
         (row, col)
     }
 
@@ -62,12 +63,12 @@ impl IntermediateCoord {
 
     #[inline]
     pub fn x_rad(&self) -> f64 {
-        self.x.to_radians()
+        self.x * DEG_TO_RAD
     }
 
     #[inline]
     pub fn y_rad(&self) -> f64 {
-        self.y.to_radians()
+        self.y * DEG_TO_RAD
     }
 }
 

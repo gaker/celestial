@@ -57,7 +57,7 @@ impl EquationOfOrigins {
         let q = matrix[1][0] * xs + matrix[1][1] * ys + matrix[1][2] * zs;
 
         let eo = if p != 0.0 || q != 0.0 {
-            s - q.atan2(p)
+            s - libm::atan2(q, p)
         } else {
             s
         };
@@ -88,12 +88,12 @@ impl EquationOfOrigins {
 
     /// Converts EO from radians to arcseconds.
     pub fn to_arcseconds(eo_radians: f64) -> f64 {
-        eo_radians.to_degrees() * 3600.0
+        eo_radians * crate::constants::RAD_TO_DEG * 3600.0
     }
 
     /// Converts EO from radians to milliarcseconds.
     pub fn to_milliarcseconds(eo_radians: f64) -> f64 {
-        eo_radians.to_degrees() * 3600.0 * 1000.0
+        eo_radians * crate::constants::RAD_TO_DEG * 3600.0 * 1000.0
     }
 }
 

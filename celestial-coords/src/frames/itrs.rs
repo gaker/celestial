@@ -27,16 +27,20 @@ impl ITRSPosition {
     ) -> CoordResult<Self> {
         const A: f64 = 6378137.0;
         const F: f64 = 1.0 / 298.257223563;
-        const E2: f64 = F * (2.0 - F);
 
         let (sin_lat, cos_lat) = latitude.sin_cos();
         let (sin_lon, cos_lon) = longitude.sin_cos();
 
-        let n = A / (1.0 - E2 * sin_lat * sin_lat).sqrt();
+        let w = 1.0 - F;
+        let w2 = w * w;
+        let d = cos_lat * cos_lat + w2 * sin_lat * sin_lat;
+        let ac = A / libm::sqrt(d);
+        let a_s = w2 * ac;
 
-        let x = (n + height) * cos_lat * cos_lon;
-        let y = (n + height) * cos_lat * sin_lon;
-        let z = (n * (1.0 - E2) + height) * sin_lat;
+        let r = (ac + height) * cos_lat;
+        let x = r * cos_lon;
+        let y = r * sin_lon;
+        let z = (a_s + height) * sin_lat;
 
         Ok(Self::new(x, y, z, epoch))
     }
@@ -70,19 +74,24 @@ impl ITRSPosition {
         const F: f64 = 1.0 / 298.257223563;
         const B: f64 = A * (1.0 - F);
         const E2: f64 = F * (2.0 - F);
-        const EP2: f64 = E2 / (1.0 - E2);
+        let p = libm::sqrt(self.x * self.x + self.y * self.y);
+        let longitude = libm::atan2(self.y, self.x);
 
-        let p = (self.x * self.x + self.y * self.y).sqrt();
-        let theta = (self.z * A).atan2(p * B);
+        let theta = libm::atan2(self.z * A, p * B);
+        let (sin_theta, cos_theta) = libm::sincos(theta);
+        let ep2 = E2 / (1.0 - E2);
+        let mut latitude = libm::atan2(
+            self.z + ep2 * B * sin_theta.powi(3),
+            p - E2 * A * cos_theta.powi(3),
+        );
+        let mut height = 0.0;
 
-        let (sin_theta, cos_theta) = theta.sin_cos();
-        let longitude = self.y.atan2(self.x);
-
-        let latitude = (self.z + EP2 * B * sin_theta.powi(3)).atan2(p - E2 * A * cos_theta.powi(3));
-
-        let (sin_lat, cos_lat) = latitude.sin_cos();
-        let n = A / (1.0 - E2 * sin_lat * sin_lat).sqrt();
-        let height = p / cos_lat - n;
+        for _ in 0..5 {
+            let (sin_lat, cos_lat) = libm::sincos(latitude);
+            let n = A / libm::sqrt(1.0 - E2 * sin_lat * sin_lat);
+            height = p / cos_lat - n;
+            latitude = libm::atan2(self.z, p * (1.0 - E2 * n / (n + height)));
+        }
 
         Ok((
             Angle::from_radians(longitude),
@@ -92,14 +101,14 @@ impl ITRSPosition {
     }
 
     pub fn geocentric_distance(&self) -> f64 {
-        (self.x * self.x + self.y * self.y + self.z * self.z).sqrt()
+        libm::sqrt(self.x * self.x + self.y * self.y + self.z * self.z)
     }
 
     pub fn distance_to(&self, other: &Self) -> f64 {
         let dx = self.x - other.x;
         let dy = self.y - other.y;
         let dz = self.z - other.z;
-        (dx * dx + dy * dy + dz * dz).sqrt()
+        libm::sqrt(dx * dx + dy * dy + dz * dz)
     }
 
     pub fn to_tirs(

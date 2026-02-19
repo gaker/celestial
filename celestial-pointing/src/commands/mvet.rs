@@ -1,23 +1,31 @@
+use super::{Command, CommandOutput};
 use crate::error::{Error, Result};
 use crate::session::Session;
-use super::{Command, CommandOutput};
 
 pub struct Mvet;
 
 impl Command for Mvet {
-    fn name(&self) -> &str { "MVET" }
-    fn description(&self) -> &str { "Find and optionally remove weak terms" }
+    fn name(&self) -> &str {
+        "MVET"
+    }
+    fn description(&self) -> &str {
+        "Find and optionally remove weak terms"
+    }
 
     fn execute(&self, session: &mut Session, args: &[&str]) -> Result<CommandOutput> {
         if args.is_empty() {
-            return Err(Error::Parse("MVET requires a significance threshold".into()));
+            return Err(Error::Parse(
+                "MVET requires a significance threshold".into(),
+            ));
         }
-        let threshold: f64 = args[0].parse()
+        let threshold: f64 = args[0]
+            .parse()
             .map_err(|e| Error::Parse(format!("invalid threshold: {}", e)))?;
-        let remove = args.get(1)
-            .is_some_and(|a| a.eq_ignore_ascii_case("R"));
+        let remove = args.get(1).is_some_and(|a| a.eq_ignore_ascii_case("R"));
 
-        let fit = session.last_fit.as_ref()
+        let fit = session
+            .last_fit
+            .as_ref()
             .ok_or_else(|| Error::Fit("no fit results available (run FIT first)".into()))?;
 
         let mut weak: Vec<(String, f64, f64, f64)> = Vec::new();
@@ -34,7 +42,8 @@ impl Command for Mvet {
 
         if weak.is_empty() {
             return Ok(CommandOutput::Text(format!(
-                "No weak terms (all significance >= {:.1})", threshold
+                "No weak terms (all significance >= {:.1})",
+                threshold
             )));
         }
 

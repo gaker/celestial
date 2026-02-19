@@ -68,19 +68,37 @@ println!("Distance: {:.2} pc", proxima.distance().unwrap().parsecs());
 
 ## Transformation Chain
 
-```
+The full IAU 2000/2006 transformation from catalog to telescope has two paths from ICRS.
+
+**CIRS path** (full pipeline -- precession, nutation, aberration, light deflection):
+
+```text
 ICRS (catalog)
-  ↓ frame bias + precession + nutation (IAU 2006A)
-  ↓ stellar aberration (~20.5")
-  ↓ gravitational light deflection (~1.75" max)
+  | frame bias + precession + nutation (IAU 2006A)
+  | stellar aberration (~20.5")
+  | gravitational light deflection (~1.75" max)
+  v
 CIRS (geocentric apparent)
-  ↓ Earth rotation (GAST)
+  | Earth Rotation Angle
+  v
 TIRS
-  ↓ polar motion (EOP)
+  | polar motion (EOP)
+  v
 ITRS (terrestrial)
 ```
 
-All transformations use ICRS as the pivot frame. The `CoordinateFrame` trait provides:
+**GCRS path** (aberration only -- no light deflection, no precession/nutation):
+
+```text
+ICRS (catalog)
+  | stellar aberration only
+  v
+GCRS (geocentric, no Earth rotation applied)
+```
+
+Use the CIRS path for telescope pointing and observational work. GCRS is used for intermediate calculations where you need aberration correction without the full pipeline.
+
+All transformations route through ICRS as the pivot frame. The `CoordinateFrame` trait provides:
 
 ```rust
 pub trait CoordinateFrame: Sized {
@@ -89,28 +107,41 @@ pub trait CoordinateFrame: Sized {
 }
 ```
 
+Eight frames implement `CoordinateFrame`: `ICRSPosition`, `GCRSPosition`, `CIRSPosition`, `GalacticPosition`, `EclipticPosition`, `HeliographicStonyhurst`, `HeliographicCarrington`, `SelenographicPosition`.
+
+Four frames do **not** implement it: `TIRSPosition`, `ITRSPosition`, `TopocentricPosition`, `HourAnglePosition`. These require Earth Orientation Parameters or an observer location beyond just an epoch, so they use dedicated conversion methods instead.
+
 ## Earth Orientation Parameters
 
 Required for CIRS to ITRS transformations (polar motion, UT1-UTC):
 
 ```rust
-use celestial_coords::eop::{EopManager, EopBuilder};
+use celestial_coords::eop::EopProvider;
 
-// Load embedded baseline data (1962-present)
-let mut eop = EopBuilder::default().build()?;
+// Bundled IERS C04 + finals2000A data (1962-present + predictions)
+let provider = EopProvider::bundled()?;
 
 // Get parameters for a specific MJD
-let params = eop.get(60000.0)?;
+let params = provider.get(60000.0)?;
 println!("UT1-UTC = {:.4} s", params.ut1_utc);
-println!("Polar motion: x={:.3}\", y={:.3}\"",
-    params.x_p * 206264.806,
-    params.y_p * 206264.806);
+println!("Polar motion: x={:.6}\", y={:.6}\"", params.x_p, params.y_p);
 ```
 
-## Features
+Additional constructors:
 
-- **`serde`** - Serialization for coordinate types and EOP records
-- **`eop-download`** - Network download of EOP data (requires `serde`)
+```rust
+// C04 data only (no finals2000A predictions)
+let provider = EopProvider::bundled_c04()?;
+
+// Parse a finals2000A file from disk
+let provider = EopProvider::from_finals_file("/path/to/finals2000A.data")?;
+
+// Bundled data merged with a newer finals file (extends prediction range)
+let provider = EopProvider::bundled_with_update("/path/to/finals2000A.data")?;
+
+// From raw finals2000A text
+let provider = EopProvider::from_finals_str(&text_content)?;
+```
 
 ## Topocentric Observations
 
@@ -162,6 +193,10 @@ println!("Carrington rotation: {}", carrington_rotation_number(&epoch));
 let (lib_lon, lib_lat) = compute_optical_libration(&epoch);
 println!("Libration: lon={:.2}°, lat={:.2}°", lib_lon.degrees(), lib_lat.degrees());
 ```
+
+## Features
+
+- **`serde`** - Serialization for coordinate types and EOP records
 
 ## License
 

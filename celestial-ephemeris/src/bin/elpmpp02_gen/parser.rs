@@ -54,11 +54,11 @@ pub struct PertTerm {
 
 impl PertTerm {
     pub fn amplitude(&self) -> f64 {
-        (self.sin_coeff.powi(2) + self.cos_coeff.powi(2)).sqrt()
+        libm::sqrt(self.sin_coeff.powi(2) + self.cos_coeff.powi(2))
     }
 
     pub fn phase(&self) -> f64 {
-        self.cos_coeff.atan2(self.sin_coeff)
+        libm::atan2(self.cos_coeff, self.sin_coeff)
     }
 }
 

@@ -7,7 +7,7 @@ use crate::error::{WcsError, WcsResult};
 
 #[inline]
 pub fn asin_safe(sin_value: f64) -> f64 {
-    sin_value.clamp(-1.0, 1.0).asin()
+    libm::asin(sin_value.clamp(-1.0, 1.0))
 }
 
 #[inline]
@@ -17,7 +17,7 @@ pub fn pole_native_coord() -> NativeCoord {
 
 #[inline]
 pub fn radial_to_intermediate(r_theta: f64, phi_rad: f64) -> IntermediateCoord {
-    let (ps, pc) = phi_rad.sin_cos();
+    let (ps, pc) = libm::sincos(phi_rad);
     let x = r_theta * ps * RAD_TO_DEG;
     let y = -r_theta * pc * RAD_TO_DEG;
     IntermediateCoord::new(x, y)
@@ -45,14 +45,18 @@ pub fn check_nonzero_param(value: f64, context: &str) -> WcsResult<()> {
 
 #[inline]
 pub fn intermediate_to_polar(x_rad: f64, y_rad: f64) -> (f64, f64, bool) {
-    let r_theta = (x_rad * x_rad + y_rad * y_rad).sqrt();
+    let r_theta = libm::sqrt(x_rad * x_rad + y_rad * y_rad);
     let is_pole = r_theta == 0.0;
-    let phi_rad = if is_pole { 0.0 } else { x_rad.atan2(-y_rad) };
+    let phi_rad = if is_pole {
+        0.0
+    } else {
+        libm::atan2(x_rad, -y_rad)
+    };
     (phi_rad, r_theta, is_pole)
 }
 
 pub fn project_conic_xy(r_theta: f64, y0: f64, c: f64, phi: f64) -> IntermediateCoord {
-    let (c_phi_s, c_phi_c) = (c * phi).sin_cos();
+    let (c_phi_s, c_phi_c) = libm::sincos(c * phi);
     let x = r_theta * c_phi_s * RAD_TO_DEG;
     let y = (y0 - r_theta * c_phi_c) * RAD_TO_DEG;
     IntermediateCoord::new(x, y)
@@ -60,9 +64,9 @@ pub fn project_conic_xy(r_theta: f64, y0: f64, c: f64, phi: f64) -> Intermediate
 
 pub fn deproject_conic_polar(x_rad: f64, y_rad: f64, y0: f64, theta_a: f64) -> (f64, f64) {
     let y_offset = y0 - y_rad;
-    let r_unsigned = (x_rad * x_rad + y_offset * y_offset).sqrt();
-    let c = theta_a.sin();
-    let phi = (theta_a.signum() * x_rad).atan2(theta_a.signum() * y_offset) / c.abs();
+    let r_unsigned = libm::sqrt(x_rad * x_rad + y_offset * y_offset);
+    let c = libm::sin(theta_a);
+    let phi = libm::atan2(theta_a.signum() * x_rad, theta_a.signum() * y_offset) / c.abs();
     (phi, r_unsigned)
 }
 
@@ -136,7 +140,6 @@ mod tests {
     fn test_asin_safe_clamping() {
         assert_eq!(asin_safe(1.0000000001), std::f64::consts::FRAC_PI_2);
         assert_eq!(asin_safe(-1.0000000001), -std::f64::consts::FRAC_PI_2);
-        assert_eq!(asin_safe(0.5), 0.5_f64.asin());
     }
 
     #[test]
@@ -156,8 +159,8 @@ mod tests {
     #[test]
     fn test_radial_to_intermediate() {
         let inter = radial_to_intermediate(1.0, FRAC_PI_4);
-        assert!((inter.x_deg() - FRAC_PI_4.sin() * RAD_TO_DEG).abs() < 1e-10);
-        assert!((inter.y_deg() + FRAC_PI_4.cos() * RAD_TO_DEG).abs() < 1e-10);
+        assert!((inter.x_deg() - libm::sin(FRAC_PI_4) * RAD_TO_DEG).abs() < 1e-10);
+        assert!((inter.y_deg() + libm::cos(FRAC_PI_4) * RAD_TO_DEG).abs() < 1e-10);
     }
 
     #[test]

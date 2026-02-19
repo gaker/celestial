@@ -12,7 +12,7 @@ pub(crate) fn project_bon(native: NativeCoord, theta_1_deg: f64) -> WcsResult<In
 
     check_nonzero_param(theta_1, "BON projection: theta_1")?;
 
-    let (theta_1_s, theta_1_c) = theta_1.sin_cos();
+    let (theta_1_s, theta_1_c) = libm::sincos(theta_1);
     let cot_theta_1 = theta_1_c / theta_1_s;
 
     let y0 = cot_theta_1;
@@ -20,7 +20,7 @@ pub(crate) fn project_bon(native: NativeCoord, theta_1_deg: f64) -> WcsResult<In
     if theta.abs() < 1e-10 {
         let r_theta = cot_theta_1 + theta_1;
         let a = phi * theta_1_s / r_theta;
-        let (a_sin, a_cos) = a.sin_cos();
+        let (a_sin, a_cos) = libm::sincos(a);
         let x = r_theta * a_sin * RAD_TO_DEG;
         let y = (y0 - r_theta * a_cos) * RAD_TO_DEG;
         return Ok(IntermediateCoord::new(x, y));
@@ -28,8 +28,8 @@ pub(crate) fn project_bon(native: NativeCoord, theta_1_deg: f64) -> WcsResult<In
 
     let r_theta = cot_theta_1 + theta_1 - theta;
 
-    let a = phi * theta.sin() / r_theta;
-    let (a_sin, a_cos) = a.sin_cos();
+    let a = phi * libm::sin(theta) / r_theta;
+    let (a_sin, a_cos) = libm::sincos(a);
 
     let x = r_theta * a_sin * RAD_TO_DEG;
     let y = (y0 - r_theta * a_cos) * RAD_TO_DEG;
@@ -44,17 +44,17 @@ pub(crate) fn deproject_bon(inter: IntermediateCoord, theta_1_deg: f64) -> WcsRe
 
     check_nonzero_param(theta_1, "BON projection: theta_1")?;
 
-    let (theta_1_s, theta_1_c) = theta_1.sin_cos();
+    let (theta_1_s, theta_1_c) = libm::sincos(theta_1);
     let cot_theta_1 = theta_1_c / theta_1_s;
     let y0 = cot_theta_1;
     let y_offset = y0 - y;
 
-    let r_unsigned = (x * x + y_offset * y_offset).sqrt();
+    let r_unsigned = libm::sqrt(x * x + y_offset * y_offset);
     let r = theta_1.signum() * r_unsigned;
 
     let theta = cot_theta_1 + theta_1 - r;
 
-    let a = (theta_1.signum() * x).atan2(theta_1.signum() * y_offset);
+    let a = libm::atan2(theta_1.signum() * x, theta_1.signum() * y_offset);
 
     if theta.abs() < 1e-10 {
         let r_at_equator = cot_theta_1 + theta_1;
@@ -62,7 +62,7 @@ pub(crate) fn deproject_bon(inter: IntermediateCoord, theta_1_deg: f64) -> WcsRe
         return Ok(native_coord_from_radians(phi, theta));
     }
 
-    let phi = a * r / theta.sin();
+    let phi = a * r / libm::sin(theta);
 
     Ok(native_coord_from_radians(phi, theta))
 }
@@ -77,10 +77,10 @@ pub(crate) fn project_pco(native: NativeCoord) -> WcsResult<IntermediateCoord> {
         return Ok(IntermediateCoord::new(x, y));
     }
 
-    let (sin_theta, cos_theta) = theta.sin_cos();
+    let (sin_theta, cos_theta) = libm::sincos(theta);
     let tan_theta = sin_theta / cos_theta;
     let e = phi * sin_theta;
-    let (e_sin, e_cos) = e.sin_cos();
+    let (e_sin, e_cos) = libm::sincos(e);
 
     let x = e_sin / tan_theta * RAD_TO_DEG;
     let y = (theta + (1.0 - e_cos) / tan_theta) * RAD_TO_DEG;
@@ -109,15 +109,15 @@ pub(crate) fn deproject_pco(inter: IntermediateCoord) -> WcsResult<NativeCoord> 
         return Ok(native_coord_from_radians(x, 0.0));
     }
 
-    let sin_theta = theta.sin();
-    let tan_theta = theta.tan();
+    let sin_theta = libm::sin(theta);
+    let tan_theta = libm::tan(theta);
 
     let sin_e = x * tan_theta;
     if sin_e.abs() > 1.0 {
         return Err(WcsError::out_of_bounds("PCO deprojection: |sin(E)| > 1"));
     }
 
-    let e = sin_e.asin();
+    let e = libm::asin(sin_e);
     let phi = e / sin_theta;
 
     Ok(native_coord_from_radians(phi, theta))
@@ -134,7 +134,7 @@ fn solve_pco_inverse(x: f64, y: f64) -> WcsResult<f64> {
             return Ok(0.0);
         }
 
-        let (sin_theta, cos_theta) = theta.sin_cos();
+        let (sin_theta, cos_theta) = libm::sincos(theta);
 
         if cos_theta.abs() < 1e-15 {
             return Err(WcsError::singularity(
@@ -150,12 +150,12 @@ fn solve_pco_inverse(x: f64, y: f64) -> WcsResult<f64> {
             continue;
         }
 
-        let e = sin_e.asin();
-        let (e_sin, e_cos) = e.sin_cos();
+        let e = libm::asin(sin_e);
+        let (e_sin, e_cos) = libm::sincos(e);
 
         let f = theta + (1.0 - e_cos) / tan_theta - y;
 
-        let de_dtheta = x / (cos_theta * cos_theta * (1.0 - sin_e * sin_e).sqrt().max(1e-15));
+        let de_dtheta = x / (cos_theta * cos_theta * libm::sqrt(1.0 - sin_e * sin_e).max(1e-15));
         let d_cos_e_dtheta = -e_sin * de_dtheta;
 
         let df_dtheta = 1.0 - d_cos_e_dtheta / tan_theta - (1.0 - e_cos) / (sin_theta * sin_theta);

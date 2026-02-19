@@ -33,7 +33,10 @@ use crate::session::Session;
 
 pub enum CommandOutput {
     Text(String),
-    Table { headers: Vec<String>, rows: Vec<Vec<String>> },
+    Table {
+        headers: Vec<String>,
+        rows: Vec<Vec<String>>,
+    },
     FitDisplay(FitDisplay),
     None,
 }
@@ -92,9 +95,10 @@ pub fn dispatch(session: &mut Session, input: &str) -> Result<CommandOutput> {
         "UNFIX" => fix::Unfix.execute(session, args),
         "UNMASK" => mask::Unmask.execute(session, args),
         "USE" => use_term::Use.execute(session, args),
-        _ => Err(crate::error::Error::Parse(
-            format!("unknown command: {}", parts[0]),
-        )),
+        _ => Err(crate::error::Error::Parse(format!(
+            "unknown command: {}",
+            parts[0]
+        ))),
     }
 }
 

@@ -15,8 +15,8 @@ struct QuadcubeFace {
 }
 
 fn select_quadcube_face(phi: f64, theta: f64) -> QuadcubeFace {
-    let (sin_theta, cos_theta) = theta.sin_cos();
-    let (sin_phi, cos_phi) = phi.sin_cos();
+    let (sin_theta, cos_theta) = libm::sincos(theta);
+    let (sin_phi, cos_phi) = libm::sincos(phi);
 
     let l = cos_theta * cos_phi;
     let m = cos_theta * sin_phi;
@@ -142,14 +142,14 @@ pub(crate) fn deproject_tsc(inter: IntermediateCoord) -> WcsResult<NativeCoord> 
         ));
     }
 
-    let zeta = 1.0 / (1.0 + chi * chi + psi * psi).sqrt();
+    let zeta = 1.0 / libm::sqrt(1.0 + chi * chi + psi * psi);
     let xi = chi * zeta;
     let eta = psi * zeta;
 
     let (l, m, n) = face_coords_to_direction_cosines(face, xi, eta, zeta);
 
-    let theta = n.asin();
-    let phi = m.atan2(l);
+    let theta = libm::asin(n);
+    let phi = libm::atan2(m, l);
 
     Ok(native_coord_from_radians(phi, theta))
 }
@@ -223,14 +223,14 @@ pub(crate) fn deproject_csc(inter: IntermediateCoord) -> WcsResult<NativeCoord> 
     let chi = csc_inverse_poly(x_norm, y_norm);
     let psi = csc_inverse_poly(y_norm, x_norm);
 
-    let zeta = 1.0 / (1.0 + chi * chi + psi * psi).sqrt();
+    let zeta = 1.0 / libm::sqrt(1.0 + chi * chi + psi * psi);
     let xi = chi * zeta;
     let eta = psi * zeta;
 
     let (l, m, n) = face_coords_to_direction_cosines(face, xi, eta, zeta);
 
-    let theta = n.asin();
-    let phi = m.atan2(l);
+    let theta = libm::asin(n);
+    let phi = libm::atan2(m, l);
 
     Ok(native_coord_from_radians(phi, theta))
 }
@@ -331,12 +331,12 @@ pub(crate) fn project_qsc(native: NativeCoord) -> WcsResult<IntermediateCoord> {
         let omega2 = omega * omega;
 
         let s = if face.xi >= 0.0 { 1.0 } else { -1.0 };
-        let denom = 1.0 - 1.0 / 2.0_f64.sqrt() + omega2;
-        let u_val = s * 45.0 * ((1.0 - face.zeta) / denom).sqrt();
+        let denom = 1.0 - 1.0 / libm::sqrt(2.0_f64) + omega2;
+        let u_val = s * 45.0 * libm::sqrt((1.0 - face.zeta) / denom);
 
         let v_val = if u_val.abs() > 1e-10 {
-            let atan_omega = omega.atan() * RAD_TO_DEG;
-            let asin_term = (omega / (2.0 * (1.0 + omega2)).sqrt()).asin() * RAD_TO_DEG;
+            let atan_omega = libm::atan(omega) * RAD_TO_DEG;
+            let asin_term = libm::asin(omega / libm::sqrt(2.0 * (1.0 + omega2))) * RAD_TO_DEG;
             (u_val / 15.0) * (atan_omega - asin_term)
         } else {
             0.0
@@ -352,12 +352,12 @@ pub(crate) fn project_qsc(native: NativeCoord) -> WcsResult<IntermediateCoord> {
         let omega2 = omega * omega;
 
         let s = if face.eta >= 0.0 { 1.0 } else { -1.0 };
-        let denom = 1.0 - 1.0 / 2.0_f64.sqrt() + omega2;
-        let u_val = s * 45.0 * ((1.0 - face.zeta) / denom).sqrt();
+        let denom = 1.0 - 1.0 / libm::sqrt(2.0_f64) + omega2;
+        let u_val = s * 45.0 * libm::sqrt((1.0 - face.zeta) / denom);
 
         let v_val = if u_val.abs() > 1e-10 {
-            let atan_omega = omega.atan() * RAD_TO_DEG;
-            let asin_term = (omega / (2.0 * (1.0 + omega2)).sqrt()).asin() * RAD_TO_DEG;
+            let atan_omega = libm::atan(omega) * RAD_TO_DEG;
+            let asin_term = libm::asin(omega / libm::sqrt(2.0 * (1.0 + omega2))) * RAD_TO_DEG;
             (u_val / 15.0) * (atan_omega - asin_term)
         } else {
             0.0
@@ -391,10 +391,10 @@ pub(crate) fn deproject_qsc(inter: IntermediateCoord) -> WcsResult<NativeCoord> 
 
         let omega = qsc_inverse_omega(u, v);
         let omega2 = omega * omega;
-        let denom = 1.0 - 1.0 / 2.0_f64.sqrt() + omega2;
+        let denom = 1.0 - 1.0 / libm::sqrt(2.0_f64) + omega2;
         let zeta_val = 1.0 - (u / 45.0) * (u / 45.0) * denom;
 
-        let factor = ((1.0 - zeta_val * zeta_val) / (1.0 + omega2)).sqrt();
+        let factor = libm::sqrt((1.0 - zeta_val * zeta_val) / (1.0 + omega2));
         let xi_val = factor;
         let eta_val = omega * factor;
 
@@ -408,10 +408,10 @@ pub(crate) fn deproject_qsc(inter: IntermediateCoord) -> WcsResult<NativeCoord> 
 
         let omega = qsc_inverse_omega(u, v);
         let omega2 = omega * omega;
-        let denom = 1.0 - 1.0 / 2.0_f64.sqrt() + omega2;
+        let denom = 1.0 - 1.0 / libm::sqrt(2.0_f64) + omega2;
         let zeta_val = 1.0 - (u / 45.0) * (u / 45.0) * denom;
 
-        let factor = ((1.0 - zeta_val * zeta_val) / (1.0 + omega2)).sqrt();
+        let factor = libm::sqrt((1.0 - zeta_val * zeta_val) / (1.0 + omega2));
         let eta_val = factor;
         let xi_val = omega * factor;
 
@@ -423,8 +423,8 @@ pub(crate) fn deproject_qsc(inter: IntermediateCoord) -> WcsResult<NativeCoord> 
 
     let (l, m, n) = face_coords_to_direction_cosines(face, xi, eta, zeta);
 
-    let theta = n.asin();
-    let phi = m.atan2(l);
+    let theta = libm::asin(n);
+    let phi = libm::atan2(m, l);
 
     Ok(native_coord_from_radians(phi, theta))
 }
@@ -436,15 +436,16 @@ fn qsc_inverse_omega(u: f64, v: f64) -> f64 {
 
     let ratio = 15.0 * v / u;
     let ratio_rad = ratio * DEG_TO_RAD;
+    let rrs = libm::sin(ratio_rad);
 
-    let cos_r = ratio_rad.cos();
-    let denom = cos_r - 1.0 / 2.0_f64.sqrt();
+    let cos_r = libm::cos(ratio_rad);
+    let denom = cos_r - 1.0 / libm::sqrt(2.0_f64);
 
     if denom.abs() < 1e-10 {
-        return ratio_rad.sin() * 10.0;
+        return rrs * 10.0;
     }
 
-    ratio_rad.sin() / denom
+    rrs / denom
 }
 
 #[cfg(test)]

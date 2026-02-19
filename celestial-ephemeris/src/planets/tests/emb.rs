@@ -30,7 +30,7 @@ fn vsop2013_vs_reference() {
         let dx = pos[0] - x_exp;
         let dy = pos[1] - y_exp;
         let dz = pos[2] - z_exp;
-        let error_au = (dx * dx + dy * dy + dz * dz).sqrt();
+        let error_au = libm::sqrt(dx * dx + dy * dy + dz * dz);
         let error_km = error_au * AU_KM;
 
         assert!(
@@ -55,7 +55,7 @@ fn vsop2013_j2000() {
     let dx = pos[0] - expected.0;
     let dy = pos[1] - expected.1;
     let dz = pos[2] - expected.2;
-    let error_km = (dx * dx + dy * dy + dz * dz).sqrt() * AU_KM;
+    let error_km = libm::sqrt(dx * dx + dy * dy + dz * dz) * AU_KM;
     assert!(
         error_km < 75.0,
         "Error {:.0} km exceeds 75 km threshold",

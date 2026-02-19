@@ -1112,7 +1112,7 @@ mod tests {
     }
 
     #[test]
-    fn comprehensive_workflow_test() {
+    fn workflow_test() {
         let test_data: Vec<i16> = (0..400).collect();
         let fits_data = create_image_fits(16, &[20, 20], &test_data);
         let cursor = Cursor::new(fits_data);

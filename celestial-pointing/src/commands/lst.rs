@@ -1,13 +1,17 @@
-use celestial_core::Angle;
+use super::{Command, CommandOutput};
 use crate::error::{Error, Result};
 use crate::session::Session;
-use super::{Command, CommandOutput};
+use celestial_core::Angle;
 
 pub struct Lst;
 
 impl Command for Lst {
-    fn name(&self) -> &str { "LST" }
-    fn description(&self) -> &str { "Set or show local sidereal time" }
+    fn name(&self) -> &str {
+        "LST"
+    }
+    fn description(&self) -> &str {
+        "Set or show local sidereal time"
+    }
 
     fn execute(&self, session: &mut Session, args: &[&str]) -> Result<CommandOutput> {
         if args.is_empty() {
@@ -32,8 +36,8 @@ fn show_lst(session: &Session) -> Result<CommandOutput> {
 
 fn format_lst(lst: Angle) -> String {
     let h = lst.hours();
-    let hh = h.floor() as u32;
-    let mm = ((h - hh as f64) * 60.0).floor() as u32;
+    let hh = libm::floor(h) as u32;
+    let mm = libm::floor((h - hh as f64) * 60.0) as u32;
     let ss = (h - hh as f64) * 3600.0 - mm as f64 * 60.0;
     format!("LST = {:02}h {:02}m {:06.3}s", hh, mm, ss)
 }
@@ -49,17 +53,23 @@ fn parse_lst_args(args: &[&str]) -> Result<Angle> {
 }
 
 fn parse_decimal_hours(s: &str) -> Result<Angle> {
-    let hours: f64 = s.parse().map_err(|_| {
-        Error::Parse(format!("invalid LST value: {}", s))
-    })?;
+    let hours: f64 = s
+        .parse()
+        .map_err(|_| Error::Parse(format!("invalid LST value: {}", s)))?;
     validate_hours(hours)?;
     Ok(Angle::from_hours(hours))
 }
 
 fn parse_hms(h: &str, m: &str, s: &str) -> Result<Angle> {
-    let hh: f64 = h.parse().map_err(|_| Error::Parse(format!("invalid hours: {}", h)))?;
-    let mm: f64 = m.parse().map_err(|_| Error::Parse(format!("invalid minutes: {}", m)))?;
-    let ss: f64 = s.parse().map_err(|_| Error::Parse(format!("invalid seconds: {}", s)))?;
+    let hh: f64 = h
+        .parse()
+        .map_err(|_| Error::Parse(format!("invalid hours: {}", h)))?;
+    let mm: f64 = m
+        .parse()
+        .map_err(|_| Error::Parse(format!("invalid minutes: {}", m)))?;
+    let ss: f64 = s
+        .parse()
+        .map_err(|_| Error::Parse(format!("invalid seconds: {}", s)))?;
     let hours = hh + mm / 60.0 + ss / 3600.0;
     validate_hours(hours)?;
     Ok(Angle::from_hours(hours))
@@ -67,9 +77,10 @@ fn parse_hms(h: &str, m: &str, s: &str) -> Result<Angle> {
 
 fn validate_hours(hours: f64) -> Result<()> {
     if !(0.0..24.0).contains(&hours) {
-        return Err(Error::Parse(
-            format!("LST must be in range [0, 24), got {}", hours),
-        ));
+        return Err(Error::Parse(format!(
+            "LST must be in range [0, 24), got {}",
+            hours
+        )));
     }
     Ok(())
 }

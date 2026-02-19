@@ -127,7 +127,9 @@ mod tests {
         assert_eq!(TDB::new(0, 0).to_julian_date().to_f64(), UNIX_EPOCH_JD);
         assert_eq!(TDB::j2000().to_julian_date().to_f64(), J2000_JD);
         assert_eq!(
-            tdb_from_calendar(2000, 1, 1, 12, 0, 0.0).to_julian_date().to_f64(),
+            tdb_from_calendar(2000, 1, 1, 12, 0, 0.0)
+                .to_julian_date()
+                .to_f64(),
             J2000_JD
         );
     }
@@ -170,7 +172,10 @@ mod tests {
     #[test]
     fn test_tdb_string_parsing() {
         assert_eq!(
-            TDB::from_str("2000-01-01T12:00:00").unwrap().to_julian_date().to_f64(),
+            TDB::from_str("2000-01-01T12:00:00")
+                .unwrap()
+                .to_julian_date()
+                .to_f64(),
             TDB::j2000().to_julian_date().to_f64()
         );
         assert!(TDB::from_str("invalid-date").is_err());

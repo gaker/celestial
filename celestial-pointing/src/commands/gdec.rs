@@ -9,8 +9,12 @@ use super::{Command, CommandOutput};
 pub struct Gdec;
 
 impl Command for Gdec {
-    fn name(&self) -> &str { "GDEC" }
-    fn description(&self) -> &str { "Residuals vs declination" }
+    fn name(&self) -> &str {
+        "GDEC"
+    }
+    fn description(&self) -> &str {
+        "Residuals vs declination"
+    }
 
     fn execute(&self, session: &mut Session, args: &[&str]) -> Result<CommandOutput> {
         require_fit(session)?;
@@ -18,12 +22,8 @@ impl Command for Gdec {
         if residuals.is_empty() {
             return Ok(CommandOutput::Text("No active observations".to_string()));
         }
-        let dx_vs_dec: Vec<(f64, f64)> = residuals.iter()
-            .map(|r| (r.dec_deg, r.dx))
-            .collect();
-        let dd_vs_dec: Vec<(f64, f64)> = residuals.iter()
-            .map(|r| (r.dec_deg, r.dd))
-            .collect();
+        let dx_vs_dec: Vec<(f64, f64)> = residuals.iter().map(|r| (r.dec_deg, r.dx)).collect();
+        let dd_vs_dec: Vec<(f64, f64)> = residuals.iter().map(|r| (r.dec_deg, r.dd)).collect();
         if let Some(path) = args.first() {
             write_svg(&dx_vs_dec, &dd_vs_dec, Path::new(path))
         } else {
@@ -32,15 +32,18 @@ impl Command for Gdec {
     }
 }
 
-fn terminal_output(
-    dx_vs_dec: &[(f64, f64)],
-    dd_vs_dec: &[(f64, f64)],
-) -> Result<CommandOutput> {
+fn terminal_output(dx_vs_dec: &[(f64, f64)], dd_vs_dec: &[(f64, f64)]) -> Result<CommandOutput> {
     let dx_plot = crate::plot::terminal::xy_plot_terminal(
-        dx_vs_dec, "dX vs Declination", "Dec (deg)", "dX (arcsec)",
+        dx_vs_dec,
+        "dX vs Declination",
+        "Dec (deg)",
+        "dX (arcsec)",
     );
     let dd_plot = crate::plot::terminal::xy_plot_terminal(
-        dd_vs_dec, "dDec vs Declination", "Dec (deg)", "dDec (arcsec)",
+        dd_vs_dec,
+        "dDec vs Declination",
+        "Dec (deg)",
+        "dDec (arcsec)",
     );
     Ok(CommandOutput::Text(format!("{dx_plot}\n{dd_plot}")))
 }
@@ -50,22 +53,40 @@ fn write_svg(
     dd_vs_dec: &[(f64, f64)],
     path: &Path,
 ) -> Result<CommandOutput> {
-    let stem = path.file_stem().unwrap_or_default().to_str().unwrap_or("plot");
-    let ext = path.extension().unwrap_or_default().to_str().unwrap_or("svg");
+    let stem = path
+        .file_stem()
+        .unwrap_or_default()
+        .to_str()
+        .unwrap_or("plot");
+    let ext = path
+        .extension()
+        .unwrap_or_default()
+        .to_str()
+        .unwrap_or("svg");
     let parent = path.parent().unwrap_or(Path::new("."));
     let dx_path = parent.join(format!("{stem}_dx.{ext}"));
     let dd_path = parent.join(format!("{stem}_dd.{ext}"));
     crate::plot::svg::scatter_svg(
-        dx_vs_dec, &dx_path, "dX vs Declination", "Dec (deg)", "dX (arcsec)",
+        dx_vs_dec,
+        &dx_path,
+        "dX vs Declination",
+        "Dec (deg)",
+        "dX (arcsec)",
     )
     .map_err(svg_err)?;
     crate::plot::svg::scatter_svg(
-        dd_vs_dec, &dd_path, "dDec vs Declination", "Dec (deg)", "dDec (arcsec)",
+        dd_vs_dec,
+        &dd_path,
+        "dDec vs Declination",
+        "Dec (deg)",
+        "dDec (arcsec)",
     )
     .map_err(svg_err)?;
-    Ok(CommandOutput::Text(
-        format!("Written to {} and {}", dx_path.display(), dd_path.display()),
-    ))
+    Ok(CommandOutput::Text(format!(
+        "Written to {} and {}",
+        dx_path.display(),
+        dd_path.display()
+    )))
 }
 
 fn svg_err(e: Box<dyn std::error::Error>) -> crate::error::Error {
@@ -132,12 +153,17 @@ mod tests {
     fn terminal_shows_both_dx_and_ddec() {
         let mut session = session_with_fit();
         session.observations.push(make_obs(0.0, 100.0, 45.0, 45.01));
-        session.observations.push(make_obs(0.0, -50.0, 30.0, 30.005));
+        session
+            .observations
+            .push(make_obs(0.0, -50.0, 30.0, 30.005));
         let result = Gdec.execute(&mut session, &[]).unwrap();
         match result {
             CommandOutput::Text(s) => {
                 assert!(s.contains("dX vs Declination"), "missing dX vs Declination");
-                assert!(s.contains("dDec vs Declination"), "missing dDec vs Declination");
+                assert!(
+                    s.contains("dDec vs Declination"),
+                    "missing dDec vs Declination"
+                );
                 assert!(s.contains("Dec (deg)"), "missing Dec (deg) label");
             }
             _ => panic!("expected Text output"),
@@ -148,7 +174,9 @@ mod tests {
     fn svg_writes_two_files() {
         let mut session = session_with_fit();
         session.observations.push(make_obs(0.0, 100.0, 45.0, 45.01));
-        session.observations.push(make_obs(0.0, -50.0, 30.0, 30.005));
+        session
+            .observations
+            .push(make_obs(0.0, -50.0, 30.0, 30.005));
         let dir = std::env::temp_dir();
         let path = dir.join("gdec_test.svg");
         let path_str = path.to_str().unwrap();

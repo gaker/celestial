@@ -181,9 +181,11 @@ impl ToTDB for TT {
     ) -> TimeResult<TDB> {
         let tt_jd = self.to_julian_date();
 
-        let ut1_fraction = (tt_jd.to_f64().fract() * SECONDS_PER_DAY_F64 + ut1_offset_seconds)
+        let tt_f64 = tt_jd.to_f64();
+        let ut1_fraction = ((tt_f64 - libm::trunc(tt_f64)) * SECONDS_PER_DAY_F64
+            + ut1_offset_seconds)
             / SECONDS_PER_DAY_F64;
-        let ut1_fraction = ut1_fraction - ut1_fraction.floor();
+        let ut1_fraction = ut1_fraction - libm::floor(ut1_fraction);
 
         let dtr = compute_tdb_tt_offset(&tt_jd, ut1_fraction, location)?;
         self.to_tdb_with_offset(dtr)
@@ -264,10 +266,11 @@ impl ToTTFromTDB for TDB {
     ) -> TimeResult<TT> {
         let tdb_jd = self.to_julian_date();
 
-        let ut1_fraction_approx = (tdb_jd.to_f64().fract() * SECONDS_PER_DAY_F64
+        let tdb_f64 = tdb_jd.to_f64();
+        let ut1_fraction_approx = ((tdb_f64 - libm::trunc(tdb_f64)) * SECONDS_PER_DAY_F64
             + ut1_offset_seconds)
             / SECONDS_PER_DAY_F64;
-        let ut1_fraction_approx = ut1_fraction_approx - ut1_fraction_approx.floor();
+        let ut1_fraction_approx = ut1_fraction_approx - libm::floor(ut1_fraction_approx);
 
         let dtr_approx = compute_tdb_tt_offset(&tdb_jd, ut1_fraction_approx, location)?;
 
@@ -275,9 +278,11 @@ impl ToTTFromTDB for TDB {
         let tt_jd_approx = tt_approx.to_julian_date();
 
         let tt_jd_approx_f64 = tt_jd_approx.jd1() + tt_jd_approx.jd2();
-        let ut1_fraction = (tt_jd_approx_f64.fract() * SECONDS_PER_DAY_F64 + ut1_offset_seconds)
+        let ut1_fraction = ((tt_jd_approx_f64 - libm::trunc(tt_jd_approx_f64))
+            * SECONDS_PER_DAY_F64
+            + ut1_offset_seconds)
             / SECONDS_PER_DAY_F64;
-        let ut1_fraction = ut1_fraction - ut1_fraction.floor();
+        let ut1_fraction = ut1_fraction - libm::floor(ut1_fraction);
 
         let dtr_refined = compute_tdb_tt_offset(&tt_jd_approx, ut1_fraction, location)?;
 
@@ -285,10 +290,11 @@ impl ToTTFromTDB for TDB {
         let tt_jd_refined = tt_refined.to_julian_date();
 
         let tt_jd_refined_f64 = tt_jd_refined.jd1() + tt_jd_refined.jd2();
-        let ut1_fraction_final = (tt_jd_refined_f64.fract() * SECONDS_PER_DAY_F64
+        let ut1_fraction_final = ((tt_jd_refined_f64 - libm::trunc(tt_jd_refined_f64))
+            * SECONDS_PER_DAY_F64
             + ut1_offset_seconds)
             / SECONDS_PER_DAY_F64;
-        let ut1_fraction_final = ut1_fraction_final - ut1_fraction_final.floor();
+        let ut1_fraction_final = ut1_fraction_final - libm::floor(ut1_fraction_final);
 
         let dtr_final = compute_tdb_tt_offset(&tt_jd_refined, ut1_fraction_final, location)?;
 
@@ -345,54 +351,54 @@ fn calculate_tdb_tt_difference(date1: f64, date2: f64, ut: f64, elong: f64, u: f
 
     let els = fmod(50.07744430 + 44046398.47038 * w, 360.0) * DEG_TO_RAD;
 
-    let wt = 0.00029e-10 * u * (tsol + elsun - els).sin()
-        + 0.00100e-10 * u * (tsol - 2.0 * emsun).sin()
-        + 0.00133e-10 * u * (tsol - d).sin()
-        + 0.00133e-10 * u * (tsol + elsun - elj).sin()
-        - 0.00229e-10 * u * (tsol + 2.0 * elsun + emsun).sin()
-        - 0.02200e-10 * v * (elsun + emsun).cos()
-        + 0.05312e-10 * u * (tsol - emsun).sin()
-        - 0.13677e-10 * u * (tsol + 2.0 * elsun).sin()
-        - 1.31840e-10 * v * elsun.cos()
-        + 3.17679e-10 * u * tsol.sin();
+    let wt = 0.00029e-10 * u * libm::sin(tsol + elsun - els)
+        + 0.00100e-10 * u * libm::sin(tsol - 2.0 * emsun)
+        + 0.00133e-10 * u * libm::sin(tsol - d)
+        + 0.00133e-10 * u * libm::sin(tsol + elsun - elj)
+        - 0.00229e-10 * u * libm::sin(tsol + 2.0 * elsun + emsun)
+        - 0.02200e-10 * v * libm::cos(elsun + emsun)
+        + 0.05312e-10 * u * libm::sin(tsol - emsun)
+        - 0.13677e-10 * u * libm::sin(tsol + 2.0 * elsun)
+        - 1.31840e-10 * v * libm::cos(elsun)
+        + 3.17679e-10 * u * libm::sin(tsol);
 
     let mut w0 = 0.0;
     for j in (0..474).rev() {
-        w0 += FAIRHD[j][0] * (FAIRHD[j][1] * t + FAIRHD[j][2]).sin();
+        w0 += FAIRHD[j][0] * libm::sin(FAIRHD[j][1] * t + FAIRHD[j][2]);
     }
 
     let mut w1 = 0.0;
     for j in (474..679).rev() {
-        w1 += FAIRHD[j][0] * (FAIRHD[j][1] * t + FAIRHD[j][2]).sin();
+        w1 += FAIRHD[j][0] * libm::sin(FAIRHD[j][1] * t + FAIRHD[j][2]);
     }
 
     let mut w2 = 0.0;
     for j in (679..764).rev() {
         if FAIRHD[j][0] != 0.0 {
-            w2 += FAIRHD[j][0] * (FAIRHD[j][1] * t + FAIRHD[j][2]).sin();
+            w2 += FAIRHD[j][0] * libm::sin(FAIRHD[j][1] * t + FAIRHD[j][2]);
         }
     }
 
     let mut w3 = 0.0;
     for j in (764..784).rev() {
         if FAIRHD[j][0] != 0.0 {
-            w3 += FAIRHD[j][0] * (FAIRHD[j][1] * t + FAIRHD[j][2]).sin();
+            w3 += FAIRHD[j][0] * libm::sin(FAIRHD[j][1] * t + FAIRHD[j][2]);
         }
     }
 
     let mut w4 = 0.0;
     for j in (784..787).rev() {
         if FAIRHD[j][0] != 0.0 {
-            w4 += FAIRHD[j][0] * (FAIRHD[j][1] * t + FAIRHD[j][2]).sin();
+            w4 += FAIRHD[j][0] * libm::sin(FAIRHD[j][1] * t + FAIRHD[j][2]);
         }
     }
 
     let wf = t * (t * (t * (t * w4 + w3) + w2) + w1) + w0;
 
-    let wj = 0.00065e-6 * (6069.776754 * t + 4.021194).sin()
-        + 0.00033e-6 * (213.299095 * t + 5.543132).sin()
-        - 0.00196e-6 * (6208.294251 * t + 5.696701).sin()
-        - 0.00173e-6 * (74.781599 * t + 2.435900).sin()
+    let wj = 0.00065e-6 * libm::sin(6069.776754 * t + 4.021194)
+        + 0.00033e-6 * libm::sin(213.299095 * t + 5.543132)
+        - 0.00196e-6 * libm::sin(6208.294251 * t + 5.696701)
+        - 0.00173e-6 * libm::sin(74.781599 * t + 2.435900)
         + 0.03638e-6 * t * t;
 
     wt + wf + wj

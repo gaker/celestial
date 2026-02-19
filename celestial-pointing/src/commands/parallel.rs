@@ -1,13 +1,17 @@
+use super::{Command, CommandOutput};
 use crate::error::{Error, Result};
 use crate::session::Session;
-use super::{Command, CommandOutput};
 
 pub struct Parallel;
 pub struct Chain;
 
 impl Command for Parallel {
-    fn name(&self) -> &str { "PARALLEL" }
-    fn description(&self) -> &str { "Apply terms in parallel" }
+    fn name(&self) -> &str {
+        "PARALLEL"
+    }
+    fn description(&self) -> &str {
+        "Apply terms in parallel"
+    }
 
     fn execute(&self, session: &mut Session, args: &[&str]) -> Result<CommandOutput> {
         if args.is_empty() {
@@ -16,7 +20,8 @@ impl Command for Parallel {
         if args[0].eq_ignore_ascii_case("ALL") {
             session.model.set_all_parallel();
             return Ok(CommandOutput::Text(format!(
-                "All {} terms set to parallel", session.model.term_count()
+                "All {} terms set to parallel",
+                session.model.term_count()
             )));
         }
         let mut set = Vec::new();
@@ -33,8 +38,12 @@ impl Command for Parallel {
 }
 
 impl Command for Chain {
-    fn name(&self) -> &str { "CHAIN" }
-    fn description(&self) -> &str { "Apply terms sequentially (chained)" }
+    fn name(&self) -> &str {
+        "CHAIN"
+    }
+    fn description(&self) -> &str {
+        "Apply terms sequentially (chained)"
+    }
 
     fn execute(&self, session: &mut Session, args: &[&str]) -> Result<CommandOutput> {
         if args.is_empty() {
@@ -43,7 +52,8 @@ impl Command for Chain {
         if args[0].eq_ignore_ascii_case("ALL") {
             session.model.set_all_chained();
             return Ok(CommandOutput::Text(format!(
-                "All {} terms set to chained", session.model.term_count()
+                "All {} terms set to chained",
+                session.model.term_count()
             )));
         }
         let mut set = Vec::new();

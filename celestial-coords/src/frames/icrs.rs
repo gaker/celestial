@@ -94,7 +94,7 @@ impl ICRSPosition {
     }
 
     pub fn from_unit_vector(unit: Vector3) -> CoordResult<Self> {
-        let r = (unit.x.powi(2) + unit.y.powi(2) + unit.z.powi(2)).sqrt();
+        let r = libm::sqrt(unit.x.powi(2) + unit.y.powi(2) + unit.z.powi(2));
 
         if r == 0.0 {
             return Err(CoordError::invalid_coordinate("Zero vector"));
@@ -105,14 +105,18 @@ impl ICRSPosition {
         let z = unit.z / r;
 
         let d2 = x * x + y * y;
-        let ra = if d2 == 0.0 { 0.0 } else { y.atan2(x) };
-        let dec = if z == 0.0 { 0.0 } else { z.atan2(d2.sqrt()) };
+        let ra = if d2 == 0.0 { 0.0 } else { libm::atan2(y, x) };
+        let dec = if z == 0.0 {
+            0.0
+        } else {
+            libm::atan2(z, libm::sqrt(d2))
+        };
 
         Self::new(Angle::from_radians(ra), Angle::from_radians(dec))
     }
 
     pub fn from_position_vector(pos: Vector3) -> CoordResult<Self> {
-        let distance_au = (pos.x.powi(2) + pos.y.powi(2) + pos.z.powi(2)).sqrt();
+        let distance_au = libm::sqrt(pos.x.powi(2) + pos.y.powi(2) + pos.z.powi(2));
 
         if distance_au == 0.0 {
             return Err(CoordError::invalid_coordinate("Zero position vector"));

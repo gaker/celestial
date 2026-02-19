@@ -5,7 +5,7 @@ use rustyline::error::ReadlineError;
 use rustyline::highlight::Highlighter;
 use rustyline::hint::Hinter;
 use rustyline::validate::Validator;
-use rustyline::{Helper, Editor};
+use rustyline::{Editor, Helper};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -24,18 +24,21 @@ impl PointingHelper {
     fn new() -> Self {
         Self {
             commands: [
-                "APPLY", "CORRECT", "INDAT", "INMOD", "OUTMOD", "USE",
-                "LOSE", "FIT", "CLIST", "SLIST", "SHOW", "RESET", "MASK",
-                "UNMASK", "MVET", "OUTL", "FIX", "UNFIX", "PARALLEL",
-                "CHAIN", "ADJUST", "FAUTO", "OPTIMAL", "LST", "PREDICT",
-                "GSCAT", "GDIST", "GMAP", "GHA", "GDEC", "GHYST",
-                "HELP", "QUIT",
-            ].iter().map(|s| s.to_string()).collect(),
+                "APPLY", "CORRECT", "INDAT", "INMOD", "OUTMOD", "USE", "LOSE", "FIT", "CLIST",
+                "SLIST", "SHOW", "RESET", "MASK", "UNMASK", "MVET", "OUTL", "FIX", "UNFIX",
+                "PARALLEL", "CHAIN", "ADJUST", "FAUTO", "OPTIMAL", "LST", "PREDICT", "GSCAT",
+                "GDIST", "GMAP", "GHA", "GDEC", "GHYST", "HELP", "QUIT",
+            ]
+            .iter()
+            .map(|s| s.to_string())
+            .collect(),
             terms: [
-                "IH", "ID", "CH", "NP", "MA", "ME", "TF", "TX", "DAF", "FO",
-                "HCES", "HCEC", "DCES", "DCEC",
-                "IA", "IE", "CA", "NPAE", "AN", "AW",
-            ].iter().map(|s| s.to_string()).collect(),
+                "IH", "ID", "CH", "NP", "MA", "ME", "TF", "TX", "DAF", "FO", "HCES", "HCEC",
+                "DCES", "DCEC", "IA", "IE", "CA", "NPAE", "AN", "AW",
+            ]
+            .iter()
+            .map(|s| s.to_string())
+            .collect(),
         }
     }
 }
@@ -50,7 +53,11 @@ fn split_path_prefix(partial: &str) -> (&Path, &str) {
     }
     match (path.parent(), path.file_name()) {
         (Some(p), Some(f)) => {
-            let dir = if p.as_os_str().is_empty() { Path::new(".") } else { p };
+            let dir = if p.as_os_str().is_empty() {
+                Path::new(".")
+            } else {
+                p
+            };
             (dir, f.to_str().unwrap_or(""))
         }
         _ => (Path::new("."), partial),
@@ -82,7 +89,11 @@ fn build_path_pair(entry: &fs::DirEntry, prefix: &str, base: &str) -> Option<Pai
     if !name.starts_with(prefix) {
         return None;
     }
-    let suffix = if entry.path().is_dir() { std::path::MAIN_SEPARATOR_STR } else { "" };
+    let suffix = if entry.path().is_dir() {
+        std::path::MAIN_SEPARATOR_STR
+    } else {
+        ""
+    };
     Some(Pair {
         display: format!("{}{}", name, suffix),
         replacement: format!("{}{}{}", base, name, suffix),
@@ -104,24 +115,52 @@ impl Completer for PointingHelper {
         if words.is_empty() || (words.len() == 1 && !up_to.ends_with(' ')) {
             let prefix = words.first().map_or("", |s| *s).to_uppercase();
             let start = up_to.rfind(char::is_whitespace).map_or(0, |i| i + 1);
-            let matches: Vec<Pair> = self.commands.iter()
+            let matches: Vec<Pair> = self
+                .commands
+                .iter()
                 .filter(|c| c.starts_with(&prefix))
-                .map(|c| Pair { display: c.clone(), replacement: c.clone() })
+                .map(|c| Pair {
+                    display: c.clone(),
+                    replacement: c.clone(),
+                })
                 .collect();
             Ok((start, matches))
         } else {
             let cmd = words[0].to_uppercase();
-            if matches!(cmd.as_str(), "INDAT" | "INMOD" | "OUTMOD" | "GSCAT" | "GDIST" | "GMAP" | "GHA" | "GDEC" | "GHYST") {
-                let partial = if up_to.ends_with(' ') { "" } else { words.last().copied().unwrap_or("") };
+            if matches!(
+                cmd.as_str(),
+                "INDAT"
+                    | "INMOD"
+                    | "OUTMOD"
+                    | "GSCAT"
+                    | "GDIST"
+                    | "GMAP"
+                    | "GHA"
+                    | "GDEC"
+                    | "GHYST"
+            ) {
+                let partial = if up_to.ends_with(' ') {
+                    ""
+                } else {
+                    words.last().copied().unwrap_or("")
+                };
                 let start = up_to.rfind(char::is_whitespace).map_or(0, |i| i + 1);
                 let matches = complete_path(partial);
                 Ok((start, matches))
-            } else if matches!(cmd.as_str(), "USE" | "LOSE" | "FIX" | "UNFIX" | "PARALLEL" | "CHAIN") {
+            } else if matches!(
+                cmd.as_str(),
+                "USE" | "LOSE" | "FIX" | "UNFIX" | "PARALLEL" | "CHAIN"
+            ) {
                 let prefix = words.last().map_or("", |s| *s).to_uppercase();
                 let start = up_to.rfind(char::is_whitespace).map_or(0, |i| i + 1);
-                let matches: Vec<Pair> = self.terms.iter()
+                let matches: Vec<Pair> = self
+                    .terms
+                    .iter()
                     .filter(|t| t.starts_with(&prefix))
-                    .map(|t| Pair { display: t.clone(), replacement: t.clone() })
+                    .map(|t| Pair {
+                        display: t.clone(),
+                        replacement: t.clone(),
+                    })
                     .collect();
                 Ok((start, matches))
             } else {
@@ -143,17 +182,14 @@ fn main() {
     println!("Type HELP for commands, Ctrl-D to exit\n");
 
     let helper = PointingHelper::new();
-    let mut rl = match Editor::with_config(
-        rustyline::Config::builder()
-            .auto_add_history(true)
-            .build(),
-    ) {
-        Ok(rl) => rl,
-        Err(e) => {
-            eprintln!("Failed to initialize editor: {}", e);
-            return;
-        }
-    };
+    let mut rl =
+        match Editor::with_config(rustyline::Config::builder().auto_add_history(true).build()) {
+            Ok(rl) => rl,
+            Err(e) => {
+                eprintln!("Failed to initialize editor: {}", e);
+                return;
+            }
+        };
     rl.set_helper(Some(helper));
 
     let history = history_path();
@@ -211,7 +247,10 @@ fn print_fit(fit: &commands::FitDisplay) {
     for (i, name) in fit.term_names.iter().enumerate() {
         println!(
             "{:3}  {:>6}    {:>12.2}  {:>9.3}",
-            i + 1, name, fit.coefficients[i], fit.sigma[i],
+            i + 1,
+            name,
+            fit.coefficients[i],
+            fit.sigma[i],
         );
     }
     println!("\nSky RMS = {:.2}\"\n", fit.sky_rms);
@@ -221,7 +260,8 @@ fn print_table(headers: &[String], rows: &[Vec<String>]) {
     let widths: Vec<usize> = (0..headers.len())
         .map(|i| {
             let hw = headers[i].len();
-            let rw = rows.iter()
+            let rw = rows
+                .iter()
                 .map(|r| r.get(i).map_or(0, |s| s.len()))
                 .max()
                 .unwrap_or(0);

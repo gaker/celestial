@@ -157,12 +157,12 @@ impl Angle {
     /// use celestial_core::Angle;
     ///
     /// let angle = Angle::from_degrees(180.0);
-    /// assert!((angle.radians() - std::f64::consts::PI).abs() < 1e-10);
+    /// assert!((angle.radians() - celestial_core::constants::PI).abs() < 1e-10);
     /// ```
     #[inline]
     pub fn from_degrees(deg: f64) -> Self {
         Self {
-            rad: deg.to_radians(),
+            rad: deg * crate::constants::DEG_TO_RAD,
         }
     }
 
@@ -185,7 +185,7 @@ impl Angle {
     #[inline]
     pub fn from_hours(h: f64) -> Self {
         Self {
-            rad: (h * 15.0).to_radians(),
+            rad: h * 15.0 * crate::constants::DEG_TO_RAD,
         }
     }
 
@@ -210,7 +210,7 @@ impl Angle {
     #[inline]
     pub fn from_arcseconds(arcsec: f64) -> Self {
         Self {
-            rad: (arcsec / 3600.0).to_radians(),
+            rad: arcsec * crate::constants::ARCSEC_TO_RAD,
         }
     }
 
@@ -234,7 +234,7 @@ impl Angle {
     #[inline]
     pub fn from_arcminutes(arcmin: f64) -> Self {
         Self {
-            rad: (arcmin / 60.0).to_radians(),
+            rad: arcmin * crate::constants::ARCMIN_TO_RAD,
         }
     }
 
@@ -249,7 +249,7 @@ impl Angle {
     /// Returns the angle in degrees.
     #[inline]
     pub fn degrees(self) -> f64 {
-        self.rad.to_degrees()
+        self.rad * crate::constants::RAD_TO_DEG
     }
 
     /// Returns the angle in hours.
@@ -275,13 +275,13 @@ impl Angle {
     /// Returns the sine of the angle.
     #[inline]
     pub fn sin(self) -> f64 {
-        self.rad.sin()
+        libm::sin(self.rad)
     }
 
     /// Returns the cosine of the angle.
     #[inline]
     pub fn cos(self) -> f64 {
-        self.rad.cos()
+        libm::cos(self.rad)
     }
 
     /// Returns both sine and cosine of the angle.
@@ -304,13 +304,13 @@ impl Angle {
     /// ```
     #[inline]
     pub fn sin_cos(self) -> (f64, f64) {
-        self.rad.sin_cos()
+        libm::sincos(self.rad)
     }
 
     /// Returns the tangent of the angle.
     #[inline]
     pub fn tan(self) -> f64 {
-        self.rad.tan()
+        libm::tan(self.rad)
     }
 
     /// Returns the absolute value of the angle.

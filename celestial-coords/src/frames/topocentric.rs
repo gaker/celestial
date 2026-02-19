@@ -3,6 +3,8 @@ use celestial_core::constants::{HALF_PI, TWOPI};
 use celestial_core::{Angle, Location};
 use celestial_time::TT;
 
+const EARTH_RADIUS_AU: f64 = 4.2635e-5; // 6378.137 km
+
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
@@ -108,8 +110,8 @@ impl TopocentricPosition {
         if zenith.degrees() >= 90.0 {
             return 40.0;
         }
-        let cos_z = zenith.cos();
-        let term = cos_z + 0.025 * (-11.0 * cos_z).exp();
+        let cos_z = libm::cos(zenith.radians());
+        let term = cos_z + 0.025 * libm::exp(-11.0 * cos_z);
         1.0 / term
     }
 
@@ -134,7 +136,7 @@ impl TopocentricPosition {
         }
         let h_term = 244.0 / (165.0 + 47.0 * h.abs().powf(1.1));
         let sin_arg = h + h_term;
-        1.0 / sin_arg.to_radians().sin()
+        1.0 / libm::sin(sin_arg * celestial_core::constants::DEG_TO_RAD)
     }
 
     pub fn air_mass_kasten_young(&self) -> f64 {
@@ -142,7 +144,7 @@ impl TopocentricPosition {
         if zenith_deg >= 90.0 {
             return 38.0;
         }
-        let cos_z = self.zenith_angle().cos();
+        let cos_z = libm::cos(self.zenith_angle().radians());
         let term = (96.07995 - zenith_deg).powf(-1.6364);
         1.0 / (cos_z + 0.50572 * term)
     }
@@ -159,7 +161,7 @@ impl TopocentricPosition {
 
         // Apply refraction formula: dZ = A tan(Z) + B tan³(Z)
         let z_obs = self.zenith_angle().radians();
-        let tan_z = z_obs.tan();
+        let tan_z = libm::tan(z_obs);
         let refraction_rad = refa * tan_z + refb * tan_z.powi(3);
 
         Angle::from_radians(refraction_rad)
@@ -277,15 +279,13 @@ impl TopocentricPosition {
     pub fn diurnal_parallax(&self) -> Option<Angle> {
         self.distance.map(|d| {
             // Earth's equatorial radius in AU
-            const EARTH_RADIUS_AU: f64 = 4.2635e-5; // 6378.137 km
-
             let distance_au = d.au();
             let zenith_angle = self.zenith_angle();
 
             // Parallax formula: p = arcsin((a/r) × sin(z))
             let ratio = EARTH_RADIUS_AU / distance_au;
             let parallax_rad = if ratio < 1.0 {
-                (ratio * zenith_angle.sin()).asin()
+                libm::asin(ratio * zenith_angle.sin())
             } else {
                 // Object inside Earth - return maximum parallax
                 HALF_PI
@@ -297,12 +297,11 @@ impl TopocentricPosition {
 
     pub fn horizontal_parallax(&self) -> Option<Angle> {
         self.distance.map(|d| {
-            const EARTH_RADIUS_AU: f64 = 4.2635e-5;
             let distance_au = d.au();
             let ratio = EARTH_RADIUS_AU / distance_au;
 
             if ratio < 1.0 {
-                Angle::from_radians(ratio.asin())
+                Angle::from_radians(libm::asin(ratio))
             } else {
                 Angle::from_radians(HALF_PI)
             }
@@ -385,7 +384,7 @@ impl TopocentricPosition {
         let numerator = sin_ha;
         let denominator = cos_dec * sin_lat - sin_dec * cos_lat * cos_ha;
 
-        Angle::from_radians(numerator.atan2(denominator))
+        Angle::from_radians(libm::atan2(numerator, denominator))
     }
 
     pub fn to_hour_angle(&self) -> CoordResult<HourAnglePosition> {
@@ -394,9 +393,9 @@ impl TopocentricPosition {
         let (sin_lat, cos_lat) = self.observer.latitude_angle().sin_cos();
 
         let sin_dec = sin_el * sin_lat + cos_el * cos_lat * cos_az;
-        let dec = sin_dec.asin();
+        let dec = libm::asin(sin_dec);
 
-        let cos_dec = dec.cos();
+        let cos_dec = libm::cos(dec);
 
         let cos_ha = if cos_dec.abs() < 1e-10 {
             0.0
@@ -410,7 +409,7 @@ impl TopocentricPosition {
             -sin_az * cos_el / cos_dec
         };
 
-        let ha = sin_ha.atan2(cos_ha);
+        let ha = libm::atan2(sin_ha, cos_ha);
 
         let mut ha_pos = HourAnglePosition::new(
             Angle::from_radians(ha),
@@ -500,9 +499,9 @@ impl HourAnglePosition {
         let z = cos_ha * cos_dec * cos_lat + sin_dec * sin_lat; // Z component
 
         // Step 3: Convert to spherical coordinates
-        let r = (x * x + y * y).sqrt(); // Horizontal distance
+        let r = libm::sqrt(x * x + y * y); // Horizontal distance
 
-        let raw_azimuth = if r != 0.0 { y.atan2(x) } else { 0.0 }; // Raw azimuth angle
+        let raw_azimuth = if r != 0.0 { libm::atan2(y, x) } else { 0.0 }; // Raw azimuth angle
 
         let azimuth = if raw_azimuth < 0.0 {
             // Normalize to [0, 2π]
@@ -511,7 +510,7 @@ impl HourAnglePosition {
             raw_azimuth
         };
 
-        let elevation = z.atan2(r); // Elevation angle
+        let elevation = libm::atan2(z, r); // Elevation angle
 
         let mut topo = TopocentricPosition::new(
             Angle::from_radians(azimuth),
@@ -1414,8 +1413,6 @@ mod tests {
         let observer = test_observer();
         let epoch = TT::j2000();
 
-        const EARTH_RADIUS_AU: f64 = 4.2635e-5;
-
         // Moon at known distance and elevation
         let distance_au = 0.00257; // Moon's distance
         let elevation_deg = 30.0;
@@ -1434,7 +1431,7 @@ mod tests {
         // Calculate expected parallax
         let ratio = EARTH_RADIUS_AU / distance_au;
         let zenith_rad = zenith_deg.to_radians();
-        let expected_parallax_rad = (ratio * zenith_rad.sin()).asin();
+        let expected_parallax_rad = libm::asin(ratio * libm::sin(zenith_rad));
 
         // Get calculated parallax
         let calculated_parallax = moon_pos.diurnal_parallax().unwrap();

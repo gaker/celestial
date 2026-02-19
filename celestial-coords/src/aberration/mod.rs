@@ -73,7 +73,7 @@ fn accumulate_terms(t: f64, t2: f64, coefs: &[[f64; 3]], xyz: &mut f64, xyzd: &m
     for &[a, b, c] in coefs {
         let ct = c * t;
         let p = b + ct;
-        let (sin_p, cos_p) = p.sin_cos();
+        let (sin_p, cos_p) = libm::sincos(p);
 
         match power {
             0 => {
@@ -250,7 +250,7 @@ pub fn apply_aberration(
     );
 
     let v2 = v.x * v.x + v.y * v.y + v.z * v.z;
-    let bm1 = (1.0 - v2).sqrt();
+    let bm1 = libm::sqrt(1.0 - v2);
 
     let pdv = direction.dot(&v);
     let w1 = 1.0 + pdv / (1.0 + bm1);
@@ -293,7 +293,7 @@ mod tests {
         let p_ab = apply_aberration(p, state.barycentric_velocity, s);
 
         let disp_sq = (p_ab.x - p.x).powi(2) + (p_ab.y - p.y).powi(2) + (p_ab.z - p.z).powi(2);
-        let aberr_arcsec = disp_sq.sqrt() * 206264.806247;
+        let aberr_arcsec = libm::sqrt(disp_sq) * 206264.806247;
 
         assert!(
             aberr_arcsec < 25.0,
@@ -319,10 +319,11 @@ mod tests {
             let aberrated = apply_aberration(dir, state.barycentric_velocity, sun_dist);
             let recovered = remove_aberration(aberrated, state.barycentric_velocity, sun_dist);
 
-            let diff = ((dir.x - recovered.x).powi(2)
-                + (dir.y - recovered.y).powi(2)
-                + (dir.z - recovered.z).powi(2))
-            .sqrt();
+            let diff = libm::sqrt(
+                (dir.x - recovered.x).powi(2)
+                    + (dir.y - recovered.y).powi(2)
+                    + (dir.z - recovered.z).powi(2),
+            );
 
             // Iterative inverse gives ~1e-13 precision, not machine epsilon
             assert!(diff < 1e-12, "Aberration roundtrip error: {:.2e}", diff);
@@ -338,10 +339,11 @@ mod tests {
         let aberrated = apply_aberration(original, velocity, sun_dist);
         let recovered = remove_aberration(aberrated, velocity, sun_dist);
 
-        let diff = ((original.x - recovered.x).powi(2)
-            + (original.y - recovered.y).powi(2)
-            + (original.z - recovered.z).powi(2))
-        .sqrt();
+        let diff = libm::sqrt(
+            (original.x - recovered.x).powi(2)
+                + (original.y - recovered.y).powi(2)
+                + (original.z - recovered.z).powi(2),
+        );
 
         // Iterative inverse gives ~1e-13 precision, not machine epsilon
         assert!(

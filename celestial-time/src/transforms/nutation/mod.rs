@@ -11,7 +11,10 @@ pub struct NutationResult {
 }
 
 impl NutationResult {
-    pub fn new(core_result: celestial_core::nutation::NutationResult, model: NutationModel) -> Self {
+    pub fn new(
+        core_result: celestial_core::nutation::NutationResult,
+        model: NutationModel,
+    ) -> Self {
         Self { core_result, model }
     }
 

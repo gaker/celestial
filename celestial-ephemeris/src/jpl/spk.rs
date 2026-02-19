@@ -117,7 +117,7 @@ impl SpkFile {
     fn find_record_index(&self, meta: &Type2Metadata, jd_tdb: f64) -> usize {
         let epoch_seconds = jd_to_seconds_from_j2000(jd_tdb);
         let seconds_from_init = epoch_seconds - meta.init;
-        let record_index = (seconds_from_init / meta.intlen).floor() as usize;
+        let record_index = libm::floor(seconds_from_init / meta.intlen) as usize;
         record_index.min(meta.n_records - 1)
     }
 
@@ -404,7 +404,7 @@ mod tests {
         assert!(result.is_ok(), "Should compute position");
 
         let pos = result.unwrap();
-        let dist = (pos[0].powi(2) + pos[1].powi(2) + pos[2].powi(2)).sqrt();
+        let dist = libm::sqrt(pos[0].powi(2) + pos[1].powi(2) + pos[2].powi(2));
         // Earth-Moon barycenter should be ~1 AU from SSB (in km)
         let dist_au = dist / 149597870.7;
         assert!(
@@ -432,11 +432,11 @@ mod tests {
         let (pos, vel) = result.unwrap();
 
         // Check position is reasonable
-        let dist = (pos[0].powi(2) + pos[1].powi(2) + pos[2].powi(2)).sqrt();
+        let dist = libm::sqrt(pos[0].powi(2) + pos[1].powi(2) + pos[2].powi(2));
         assert!(dist > 1e8, "Position magnitude should be > 100 million km");
 
         // Check velocity is reasonable (Earth orbital velocity ~30 km/s)
-        let vel_mag = (vel[0].powi(2) + vel[1].powi(2) + vel[2].powi(2)).sqrt();
+        let vel_mag = libm::sqrt(vel[0].powi(2) + vel[1].powi(2) + vel[2].powi(2));
         assert!(
             vel_mag > 20.0 && vel_mag < 40.0,
             "Velocity should be ~30 km/s, got {} km/s",
@@ -494,10 +494,11 @@ mod tests {
             let pos = result.unwrap();
             if let Some(prev) = prev_pos {
                 // Positions should be different at different epochs
-                let diff = ((pos[0] - prev[0]).powi(2)
-                    + (pos[1] - prev[1]).powi(2)
-                    + (pos[2] - prev[2]).powi(2))
-                .sqrt();
+                let diff = libm::sqrt(
+                    (pos[0] - prev[0]).powi(2)
+                        + (pos[1] - prev[1]).powi(2)
+                        + (pos[2] - prev[2]).powi(2),
+                );
                 assert!(
                     diff > 1e6,
                     "Positions should differ significantly between epochs"
