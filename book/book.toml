@@ -1,0 +1,8 @@
+[book]
+title = "Celestial"
+authors = ["Greg Aker"]
+language = "en"
+
+[output.html.playground]
+editable = false
+runnable = false
