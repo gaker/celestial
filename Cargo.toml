@@ -29,7 +29,7 @@ celestial-images = { version = "0.1.1-alpha.2", path = "celestial-images" }
 celestial-pointing = { version = "0.1.1-alpha.2", path = "celestial-pointing" }
 celestial-wcs = { version = "0.1.1-alpha.2", path = "celestial-wcs" }
 
-celestial-eop-data = { version = "0.1", path = "../celestial-eop-data" }
+celestial-eop-data = { version = "0.1"}
 
 # External dependencies
 anyhow = "1.0"
