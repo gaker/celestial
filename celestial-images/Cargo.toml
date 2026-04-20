@@ -15,7 +15,6 @@ celestial-time.workspace = true
 celestial-wcs.workspace = true
 byteorder.workspace = true
 libm.workspace = true
-crc32fast.workspace = true
 flate2.workspace = true
 lz4_flex.workspace = true
 memmap2.workspace = true

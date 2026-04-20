@@ -1,5 +1,4 @@
-use crate::core::ImageError;
-use crate::core::{BitPix, Result};
+use crate::core::{BitPix, Result, ImageError};
 use crate::debayer::{debayer_bilinear_u16, debayer_bilinear_u8, BayerPattern};
 use crate::fits::compression::CompressionAlgorithm;
 use crate::fits::data::array::DataArray;
@@ -65,8 +64,6 @@ impl ImageFormat {
     }
 
     pub fn detect<R: Read + Seek>(reader: &mut R) -> Result<Self> {
-        use crate::core::ImageError;
-
         let mut magic_bytes = [0u8; 16];
         reader.read_exact(&mut magic_bytes)?;
         reader.seek(std::io::SeekFrom::Start(0))?;
@@ -228,6 +225,17 @@ impl PixelData {
         }
     }
 
+    pub fn to_f32(&self) -> Vec<f32> {
+        match self {
+            Self::U8(v) => v.iter().map(|&x| x as f32).collect(),
+            Self::U16(v) => v.iter().map(|&x| x as f32).collect(),
+            Self::I16(v) => v.iter().map(|&x| x as f32).collect(),
+            Self::I32(v) => v.iter().map(|&x| x as f32).collect(),
+            Self::F32(v) => v.clone(),
+            Self::F64(v) => v.iter().map(|&x| x as f32).collect(),
+        }
+    }
+
     /// Convert to f32, normalizing integer types to 0.0-1.0 range.
     pub fn to_f32_normalized(&self) -> Vec<f32> {
         match self {
@@ -240,6 +248,20 @@ impl PixelData {
                 .collect(),
             Self::F32(v) => v.clone(),
             Self::F64(v) => v.iter().map(|&x| x as f32).collect(),
+        }
+    }
+
+    pub fn to_f64_normalized(&self) -> Vec<f64> {
+        match self {
+            Self::U8(v) => v.iter().map(|&x| x as f64 / 255.0).collect(),
+            Self::U16(v) => v.iter().map(|&x| x as f64 / 65535.0).collect(),
+            Self::I16(v) => v.iter().map(|&x| (x as f64 + 32768.0) / 65535.0).collect(),
+            Self::I32(v) => v
+                .iter()
+                .map(|&x| (x as f64 + 2147483648.0) / 4294967295.0)
+                .collect(),
+            Self::F32(v) => v.iter().map(|&x| x as f64).collect(),
+            Self::F64(v) => v.clone(),
         }
     }
 
@@ -1152,8 +1174,6 @@ where
 
     /// Write to the format determined by file extension.
     pub fn write_to<P: AsRef<Path>>(&self, path: P) -> Result<()> {
-        use crate::core::ImageError;
-
         let path_ref = path.as_ref();
         let ext = path_ref.extension().and_then(|e| e.to_str()).unwrap_or("");
 
@@ -1283,21 +1303,19 @@ impl ImageWriter {
         match self.format {
             ImageFormat::Fits => {
                 let mut writer = crate::fits::FitsWriter::create(&self.path)
-                    .map_err(crate::core::ImageError::Fits)?;
+                    .map_err(ImageError::Fits)?;
 
                 writer
                     .write_primary_image(data, &info.dimensions, keywords)
-                    .map_err(crate::core::ImageError::Fits)?;
+                    .map_err(ImageError::Fits)?;
 
                 Ok(())
             }
             ImageFormat::Xisf => {
-                use crate::core::ImageError;
                 Err(ImageError::UnsupportedFormat)
             }
             #[cfg(feature = "standard-formats")]
             ImageFormat::Png | ImageFormat::Tiff => {
-                use crate::core::ImageError;
                 Err(ImageError::UnsupportedFormat)
             }
         }

@@ -179,6 +179,11 @@ impl Wcs {
     }
 
     #[inline]
+    pub fn distortion(&self) -> Option<&DistortionModel> {
+        self.distortion.as_ref()
+    }
+
+    #[inline]
     pub fn rotation(&self) -> &SphericalRotation {
         &self.rotation
     }
