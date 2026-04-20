@@ -132,8 +132,8 @@ fn apply_proper_motion(star: &StarRecord, epoch_jd: JulianDate) -> (f64, f64) {
 
     let dt_years = (epoch_jd - JulianDate::new(J2016_JD, 0.0)).to_f64() / 365.25;
 
-    let dec_obs = star.dec + star.pmdec * dt_years / MAS_PER_DEGREE;
     let cos_dec = libm::cos(star.dec * celestial_core::constants::PI / 180.0);
+    let dec_obs = star.dec + star.pmdec * dt_years / MAS_PER_DEGREE;
     let ra_obs = star.ra + star.pmra * dt_years / MAS_PER_DEGREE / cos_dec;
 
     (ra_obs, dec_obs)
