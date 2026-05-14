@@ -1,0 +1,50 @@
+[package]
+name = "celestial-solver"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Astronomical Plate Solving"
+keywords = ["astronomy", "astrometry", "plate-solving", "GAIA", "fits"]
+categories = ["science"]
+
+[dependencies]
+celestial-core.workspace = true
+celestial-time = { workspace = true, features = ["serde"] }
+celestial-coords.workspace = true
+celestial-catalog.workspace = true
+celestial-wcs.workspace = true
+celestial-images = { workspace = true, features = ["standard-formats"] }
+
+libm.workspace = true
+log.workspace = true
+memmap2.workspace = true
+
+# CLI and pipeline dependencies
+chrono.workspace = true
+clap.workspace = true
+env_logger.workspace = true
+flate2.workspace = true
+csv.workspace = true
+rayon.workspace = true
+indicatif.workspace = true
+thiserror.workspace = true
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+toml.workspace = true
+
+nalgebra.workspace = true
+ndarray.workspace = true
+ndarray-npy.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[features]
+default = []
+
+[[bin]]
+name = "image-solver"
+path = "src/bin/solve/main.rs"
