@@ -16,10 +16,10 @@ pub enum SpkError {
 impl std::fmt::Display for SpkError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            SpkError::Io(msg) => write!(f, "IO error: {}", msg),
-            SpkError::InvalidFormat(msg) => write!(f, "Invalid SPK format: {}", msg),
-            SpkError::InvalidData(msg) => write!(f, "Invalid SPK data: {}", msg),
-            SpkError::SegmentNotFound {
+            Self::Io(msg) => write!(f, "IO error: {}", msg),
+            Self::InvalidFormat(msg) => write!(f, "Invalid SPK format: {}", msg),
+            Self::InvalidData(msg) => write!(f, "Invalid SPK data: {}", msg),
+            Self::SegmentNotFound {
                 body,
                 center,
                 epoch,
@@ -30,7 +30,7 @@ impl std::fmt::Display for SpkError {
                     body, center, epoch
                 )
             }
-            SpkError::UnsupportedType(t) => write!(f, "Unsupported SPK type: {}", t),
+            Self::UnsupportedType(t) => write!(f, "Unsupported SPK type: {}", t),
         }
     }
 }

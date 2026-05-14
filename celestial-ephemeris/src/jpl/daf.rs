@@ -25,16 +25,16 @@ impl Endian {
     pub fn read_f64(&self, bytes: &[u8]) -> f64 {
         let arr: [u8; 8] = bytes[..8].try_into().unwrap();
         match self {
-            Endian::Little => f64::from_le_bytes(arr),
-            Endian::Big => f64::from_be_bytes(arr),
+            Self::Little => f64::from_le_bytes(arr),
+            Self::Big => f64::from_be_bytes(arr),
         }
     }
 
     pub fn read_i32(&self, bytes: &[u8]) -> i32 {
         let arr: [u8; 4] = bytes[..4].try_into().unwrap();
         match self {
-            Endian::Little => i32::from_le_bytes(arr),
-            Endian::Big => i32::from_be_bytes(arr),
+            Self::Little => i32::from_le_bytes(arr),
+            Self::Big => i32::from_be_bytes(arr),
         }
     }
 }
