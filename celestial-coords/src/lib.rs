@@ -6,6 +6,7 @@ pub mod errors;
 pub mod frames;
 pub mod lighttime;
 pub mod lunar;
+pub mod proper_motion;
 pub mod solar;
 pub mod transforms;
 

@@ -1,13 +1,13 @@
 use super::{GAST, GMST, LAST, LMST};
 
 impl From<LMST> for GMST {
-    fn from(lmst: LMST) -> GMST {
+    fn from(lmst: LMST) -> Self {
         lmst.to_gmst()
     }
 }
 
 impl From<LAST> for GAST {
-    fn from(last: LAST) -> GAST {
+    fn from(last: LAST) -> Self {
         last.to_gast()
     }
 }

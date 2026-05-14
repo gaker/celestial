@@ -93,18 +93,18 @@ impl From<f64> for JulianDate {
     }
 }
 
-impl Add<JulianDate> for JulianDate {
+impl Add<Self> for JulianDate {
     type Output = Self;
 
-    fn add(self, other: JulianDate) -> Self::Output {
+    fn add(self, other: Self) -> Self::Output {
         Self::new(self.jd1 + other.jd1, self.jd2 + other.jd2)
     }
 }
 
-impl Sub<JulianDate> for JulianDate {
+impl Sub<Self> for JulianDate {
     type Output = Self;
 
-    fn sub(self, other: JulianDate) -> Self::Output {
+    fn sub(self, other: Self) -> Self::Output {
         Self::new(self.jd1 - other.jd1, self.jd2 - other.jd2)
     }
 }

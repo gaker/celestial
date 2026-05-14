@@ -39,11 +39,11 @@ pub enum TimeError {
 impl std::fmt::Display for TimeError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            TimeError::InvalidDate => write!(f, "Invalid date"),
-            TimeError::ConversionError(msg) => write!(f, "Conversion error: {}", msg),
-            TimeError::ParseError(msg) => write!(f, "Parse error: {}", msg),
-            TimeError::CalculationError(msg) => write!(f, "Calculation error: {}", msg),
-            TimeError::InvalidEpoch(msg) => write!(f, "Invalid epoch: {}", msg),
+            Self::InvalidDate => write!(f, "Invalid date"),
+            Self::ConversionError(msg) => write!(f, "Conversion error: {}", msg),
+            Self::ParseError(msg) => write!(f, "Parse error: {}", msg),
+            Self::CalculationError(msg) => write!(f, "Calculation error: {}", msg),
+            Self::InvalidEpoch(msg) => write!(f, "Invalid epoch: {}", msg),
         }
     }
 }
@@ -52,6 +52,6 @@ impl std::error::Error for TimeError {}
 
 impl From<celestial_core::AstroError> for TimeError {
     fn from(err: celestial_core::AstroError) -> Self {
-        TimeError::CalculationError(err.to_string())
+        Self::CalculationError(err.to_string())
     }
 }

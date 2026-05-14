@@ -3,19 +3,17 @@ pub mod data;
 pub mod errors;
 pub mod hdu;
 pub mod header;
-pub mod image;
 pub mod io;
 pub mod util;
 pub mod wcs;
 
 pub use compression::{CompressionAlgorithm, CompressionParams};
-pub use data::array::TableValue;
+pub use data::TableValue;
 pub use errors::{FitsError, Result};
 pub use hdu::{
     AsciiTableHdu, AsciiTableRowIterator, BinaryTableHdu, BinaryTableRowIterator, Hdu, ImageHdu,
     PrimaryHdu,
 };
-pub use image::{FitsImage, ImageKind};
 pub use io::{FitsFile, FitsReader, FitsWriter};
 pub use wcs::WcsInfo;
 

@@ -1,6 +1,6 @@
 use crate::core::ByteOrder;
 use crate::fits::compression::{compress_tile, CompressionAlgorithm, CompressionParams};
-use crate::fits::data::array::DataArray;
+use crate::fits::data::DataArray;
 use crate::fits::header::{Header, Keyword, KeywordValue};
 use crate::fits::util::checksum;
 use crate::fits::Result;
@@ -98,16 +98,32 @@ impl FitsWriter {
     ) -> Header {
         let mut header = Header::new();
 
-        header.add_keyword(Keyword::logical("SIMPLE", true));
-        header.add_keyword(Keyword::integer("BITPIX", T::BITPIX.value() as i64));
-        header.add_keyword(Keyword::integer("NAXIS", dimensions.len() as i64));
+        header.add_keyword(
+            Keyword::logical("SIMPLE", true).with_comment("file does conform to FITS standard"),
+        );
+        header.add_keyword(
+            Keyword::integer("BITPIX", T::BITPIX.value() as i64)
+                .with_comment("number of bits per data pixel"),
+        );
+        header.add_keyword(
+            Keyword::integer("NAXIS", dimensions.len() as i64).with_comment("number of data axes"),
+        );
 
         for (i, &dim) in dimensions.iter().enumerate() {
             let axis_keyword = format!("NAXIS{}", i + 1);
-            header.add_keyword(Keyword::integer(axis_keyword, dim as i64));
+            let comment = format!("length of data axis {}", i + 1);
+            header.add_keyword(Keyword::integer(axis_keyword, dim as i64).with_comment(&comment));
         }
 
-        header.add_keyword(Keyword::logical("EXTEND", false));
+        header.add_keyword(
+            Keyword::logical("EXTEND", true).with_comment("FITS dataset may contain extensions"),
+        );
+        header.add_keyword(Keyword::comment(
+            "FITS (Flexible Image Transport System) format is defined in 'Astronomy",
+        ));
+        header.add_keyword(Keyword::comment(
+            "and Astrophysics', volume 376, page 359; bibcode: 2001A&A...376..359H",
+        ));
         self.add_keywords(&mut header, keywords);
 
         header

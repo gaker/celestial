@@ -275,14 +275,14 @@ mod tests {
     fn test_next_calendar_day() {
         assert!(next_calendar_day(2000, 13, 15).is_err());
 
-        let cases: &[(i32, i32, i32, (i32, i32, i32))] = &[
+        let cases = [
             (2000, 2, 28, (2000, 2, 29)),
             (1999, 2, 28, (1999, 3, 1)),
             (2000, 4, 30, (2000, 5, 1)),
             (2000, 12, 31, (2001, 1, 1)),
         ];
 
-        for &(y, m, d, expected) in cases {
+        for (y, m, d, expected) in cases {
             assert_eq!(next_calendar_day(y, m, d).unwrap(), expected);
         }
     }

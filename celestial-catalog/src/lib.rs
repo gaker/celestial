@@ -43,3 +43,5 @@
 //!   and querying catalogs from the command line.
 
 pub mod query;
+
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");

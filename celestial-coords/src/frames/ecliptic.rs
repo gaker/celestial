@@ -315,6 +315,13 @@ mod tests {
     use super::*;
     use crate::Distance;
 
+    // ERFA reference values, pasted verbatim from the C library output for
+    // direct comparison. Clippy flags the trailing digits beyond f64 precision
+    // as "excessive precision", but these are the literal byte-for-byte ERFA
+    // outputs — we want them in the source so a future change is obviously a
+    // regression against ERFA, not a precision-tweak. The f64 parser rounds the
+    // trailing digits identically each time, so assert_eq! is stable.
+    #[allow(clippy::excessive_precision)]
     mod erfa_reference {
         use super::*;
 

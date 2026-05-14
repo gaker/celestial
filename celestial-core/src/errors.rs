@@ -40,7 +40,7 @@ use thiserror::Error;
 ///
 /// Used with [`AstroError::MathError`] to distinguish between different
 /// numerical failure modes.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub enum MathErrorKind {
     /// Result exceeds representable range (too large).
     Overflow,

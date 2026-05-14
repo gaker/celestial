@@ -7,46 +7,50 @@ use core::ops::*;
 
 /// Angle + Angle → Angle
 impl Add for Angle {
-    type Output = Angle;
+    type Output = Self;
     #[inline]
     fn add(self, rhs: Self) -> Self {
-        Angle::from_radians(self.radians() + rhs.radians())
+        Self::from_radians(self.radians() + rhs.radians())
     }
 }
 
 /// Angle - Angle → Angle
 impl Sub for Angle {
-    type Output = Angle;
+    type Output = Self;
+
     #[inline]
     fn sub(self, rhs: Self) -> Self {
-        Angle::from_radians(self.radians() - rhs.radians())
+        Self::from_radians(self.radians() - rhs.radians())
     }
 }
 
 /// Angle * scalar → Angle
 impl Mul<f64> for Angle {
-    type Output = Angle;
+    type Output = Self;
+
     #[inline]
     fn mul(self, k: f64) -> Self {
-        Angle::from_radians(self.radians() * k)
+        Self::from_radians(self.radians() * k)
     }
 }
 
 /// Angle / scalar → Angle
 impl Div<f64> for Angle {
-    type Output = Angle;
+    type Output = Self;
+
     #[inline]
     fn div(self, k: f64) -> Self {
-        Angle::from_radians(self.radians() / k)
+        Self::from_radians(self.radians() / k)
     }
 }
 
 /// -Angle → Angle
 impl Neg for Angle {
-    type Output = Angle;
+    type Output = Self;
+    
     #[inline]
     fn neg(self) -> Self {
-        Angle::from_radians(-self.radians())
+        Self::from_radians(-self.radians())
     }
 }
 

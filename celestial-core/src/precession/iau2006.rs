@@ -251,7 +251,10 @@ mod tests {
     use crate::test_helpers::assert_ulp_le;
 
     #[test]
+    #[allow(clippy::default_constructed_unit_structs)]
     fn test_new_and_default() {
+        // Same pattern as iau2000: explicitly testing the Default impl,
+        // which is the whole point of the test.
         let p1 = PrecessionIAU2006::new();
         let p2 = PrecessionIAU2006::default();
         let r1 = p1.compute(J2000_JD, 0.0).unwrap();

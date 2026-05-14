@@ -29,37 +29,43 @@ celestial-images = "0.1"
 
 ## Example
 
-```rust
-use celestial_images::{FitsFile, BitPix};
+Read, inspect, and write images through the unified [`formats`](src/formats/) API. Format
+is detected from the file extension — FITS and XISF work out of the box, PNG/TIFF behind
+the `standard-formats` feature.
 
-// Open a FITS file and read the primary HDU
-let mut fits = FitsFile::open("m31.fits")?;
-let primary = fits.primary_hdu()?;
+```rust,ignore
+use celestial_images::formats::{AstroImage, Image};
 
-// Access header keywords
-let object = primary.header().get_string("OBJECT")?;
-let exposure = primary.header().get_f64("EXPTIME")?;
-println!("{}: {:.1}s exposure", object, exposure);
+// Open any supported format — FITS, XISF, (PNG/TIFF with `standard-formats`)
+let img = Image::open("m31.fits")?;
 
-// Read image data as f32
-let (header, data) = fits.primary_hdu_with_data::<f32>()?;
-let width = header.get_i64("NAXIS1")? as usize;
-let height = header.get_i64("NAXIS2")? as usize;
-println!("Image: {}x{} pixels", width, height);
+let object = img.get_keyword("OBJECT").and_then(|k| k.value.as_ref());
+let exposure = img.get_keyword("EXPTIME").and_then(|k| k.value.as_ref());
+println!("{:?}: {:?}s exposure", object, exposure);
+println!("{}x{}, {} channel(s)", img.width(), img.height(), img.channels());
+
+// Build and write a new image with fluent metadata setters
+let pixels: Vec<f32> = vec![0.0; 1024 * 1024];
+AstroImage::new(&pixels, [1024, 1024])
+    .object("M31")
+    .telescope("Planewave CDK14")
+    .filter("Ha")
+    .exposure(300.0)
+    .temperature(-10.0)
+    .gain(1.0)
+    .binning(1, 1)
+    .date_obs("2026-04-21T20:00:00")
+    .write_to("m31_ha.fits")?;       // dispatches on extension
 ```
+
+For lower-level access (HDU iteration, binary tables, raw compression), the `fits` and
+`xisf` modules expose the format-specific types directly.
 
 ## Features
 
 - **`parallel`** (default) — Enables parallel processing via rayon
 - **`simd`** — SIMD acceleration for image operations via wide
 - **`standard-formats`** — PNG/TIFF export support
-
-## Design Notes
-
-- **Memory-mapped I/O**: Large files use memory mapping for efficient random access without loading entire files into RAM.
-- **Strict FITS compliance**: 2880-byte block alignment is validated. Non-compliant files produce errors, not silent corruption.
-- **Type-safe data access**: BitPix enum and DataArray trait prevent accidental type mismatches when reading image data.
-- **Streaming headers**: HDU headers are parsed on demand and cached, avoiding upfront parsing of multi-extension files.
 
 ## License
 

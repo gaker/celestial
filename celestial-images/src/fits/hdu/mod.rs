@@ -11,7 +11,7 @@ pub use primary::PrimaryHdu;
 pub use random_groups::RandomGroupsHdu;
 
 use crate::core::{BitPix, ByteOrder};
-use crate::fits::data::array::DataArray;
+use crate::fits::data::DataArray;
 use crate::fits::header::Header;
 use crate::fits::io::reader::HduInfo;
 use crate::fits::{FitsError, Result};
@@ -248,47 +248,47 @@ pub enum Hdu {
 impl Hdu {
     pub fn hdu_type(&self) -> HduType {
         match self {
-            Hdu::Primary(_) => HduType::Primary,
-            Hdu::Image(_) => HduType::Image,
-            Hdu::AsciiTable(_) => HduType::AsciiTable,
-            Hdu::BinaryTable(_) => HduType::BinaryTable,
-            Hdu::RandomGroups(_) => HduType::RandomGroups,
+            Self::Primary(_) => HduType::Primary,
+            Self::Image(_) => HduType::Image,
+            Self::AsciiTable(_) => HduType::AsciiTable,
+            Self::BinaryTable(_) => HduType::BinaryTable,
+            Self::RandomGroups(_) => HduType::RandomGroups,
         }
     }
 
     pub fn header(&self) -> &Header {
         match self {
-            Hdu::Primary(hdu) => hdu.header(),
-            Hdu::Image(hdu) => hdu.header(),
-            Hdu::AsciiTable(hdu) => hdu.header(),
-            Hdu::BinaryTable(hdu) => hdu.header(),
-            Hdu::RandomGroups(hdu) => hdu.header(),
+            Self::Primary(hdu) => hdu.header(),
+            Self::Image(hdu) => hdu.header(),
+            Self::AsciiTable(hdu) => hdu.header(),
+            Self::BinaryTable(hdu) => hdu.header(),
+            Self::RandomGroups(hdu) => hdu.header(),
         }
     }
 
     pub fn info(&self) -> &HduInfo {
         match self {
-            Hdu::Primary(hdu) => hdu.info(),
-            Hdu::Image(hdu) => hdu.info(),
-            Hdu::AsciiTable(hdu) => hdu.info(),
-            Hdu::BinaryTable(hdu) => hdu.info(),
-            Hdu::RandomGroups(hdu) => hdu.info(),
+            Self::Primary(hdu) => hdu.info(),
+            Self::Image(hdu) => hdu.info(),
+            Self::AsciiTable(hdu) => hdu.info(),
+            Self::BinaryTable(hdu) => hdu.info(),
+            Self::RandomGroups(hdu) => hdu.info(),
         }
     }
 
     pub fn logical_type(&self) -> LogicalHduType {
         match self {
-            Hdu::Primary(_) => LogicalHduType::Image,
-            Hdu::Image(_) => LogicalHduType::Image,
-            Hdu::AsciiTable(_) => LogicalHduType::AsciiTable,
-            Hdu::BinaryTable(hdu) => {
+            Self::Primary(_) => LogicalHduType::Image,
+            Self::Image(_) => LogicalHduType::Image,
+            Self::AsciiTable(_) => LogicalHduType::AsciiTable,
+            Self::BinaryTable(hdu) => {
                 if hdu.is_compressed_image() {
                     LogicalHduType::CompressedImage
                 } else {
                     LogicalHduType::BinaryTable
                 }
             }
-            Hdu::RandomGroups(_) => LogicalHduType::Image,
+            Self::RandomGroups(_) => LogicalHduType::Image,
         }
     }
 }

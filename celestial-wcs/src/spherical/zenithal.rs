@@ -1376,9 +1376,8 @@ mod tests {
         let native = NativeCoord::new(Angle::from_degrees(0.0), Angle::from_degrees(-89.9));
         let result = project_air(native, theta_b);
         // Should still work but produce large r_theta
-        if result.is_err() {
+        if let Err(err) = result {
             // Might hit singularity check first
-            let err = result.unwrap_err();
             assert!(err.to_string().contains("singularity") || err.to_string().contains("AIR"));
         }
     }

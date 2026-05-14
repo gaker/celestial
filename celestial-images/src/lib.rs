@@ -13,7 +13,7 @@ pub use fits::{
     AsciiTableHdu, AsciiTableRowIterator, BinaryTableHdu, BinaryTableRowIterator, FitsError,
     FitsFile, FitsReader, FitsWriter, Hdu, ImageHdu, PrimaryHdu, TableValue,
 };
-pub use formats::{AstroImage, Image, ImageFormat, ImageInfo, ImageKind, ImageWriter, PixelData};
+pub use formats::{AstroImage, Image, ImageFormat, ImageKind, PixelData};
 pub use ser::{SerError, SerFile, SerHeader, SerReader, SerWriter};
 pub use stretch::{Stretch, StfParams};
 pub use xisf::{XisfError, XisfFile};

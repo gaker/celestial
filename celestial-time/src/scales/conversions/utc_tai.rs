@@ -544,11 +544,11 @@ mod tests {
         // julian_to_calendar: Kahan summation else branch (|frac_2| > |sum|)
         let (y, m, d, frac) = julian_to_calendar(2451544.6, 0.2).unwrap();
         assert!(y > 0 && (1..=12).contains(&m) && (1..=31).contains(&d));
-        assert!(frac >= 0.0 && frac <= 1.0);
+        assert!((0.0..=1.0).contains(&frac));
 
         // julian_to_calendar: near-1.0 fraction correction
         let (y, m, d, frac) = julian_to_calendar(2451544.75, 0.75).unwrap();
         assert!(y > 0 && (1..=12).contains(&m) && (1..=31).contains(&d));
-        assert!(frac >= 0.0 && frac <= 1.0);
+        assert!((0.0..=1.0).contains(&frac));
     }
 }

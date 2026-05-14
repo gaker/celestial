@@ -1,6 +1,6 @@
 use super::BinaryTableHdu;
 use crate::core::ByteOrder;
-use crate::fits::data::array::{DataArray, DataValue, TableValue};
+use crate::fits::data::{DataArray, DataValue, TableValue};
 use crate::fits::hdu::ColumnInfo;
 use crate::fits::{FitsError, Result};
 use std::io::{Read, Seek, SeekFrom};
@@ -241,18 +241,13 @@ impl BinaryTableHdu {
     }
 
     pub(super) fn get_row_size(&self) -> Result<usize> {
-        let column_count = self.column_count()?;
-        let mut row_size = 0;
-
-        for i in 0..column_count {
-            let info = self.column_info(i)?;
-            let (data_type, width) = self.parse_binary_format(&info.format)?;
-            let element_size = self.get_element_size(&data_type)?;
-            row_size += width * element_size;
-        }
-
-        let padding = (8 - (row_size % 8)) % 8;
-        Ok(row_size + padding)
+        self.header
+            .get_keyword_value("NAXIS1")
+            .and_then(|v| v.as_integer())
+            .map(|n| n as usize)
+            .ok_or_else(|| FitsError::KeywordNotFound {
+                keyword: "NAXIS1".to_string(),
+            })
     }
 
     pub fn read_column_with_nulls<T, R>(
@@ -858,7 +853,7 @@ mod tests {
         assert_eq!(params.width, 1);
         assert_eq!(params.bytes_per_element, 4);
         assert_eq!(params.column_offset, 0);
-        assert_eq!(params.row_size, 24);
+        assert_eq!(params.row_size, 20);
     }
 
     #[test]
@@ -906,15 +901,24 @@ mod tests {
     }
 
     #[test]
-    fn get_row_size_with_padding() {
+    fn get_row_size_reads_naxis1() {
         let header = create_test_header();
         let info = create_test_hdu_info();
         let hdu = BinaryTableHdu::new(header, info);
 
-        let result = hdu.get_row_size();
-        assert!(result.is_ok());
+        assert_eq!(hdu.get_row_size().unwrap(), 20);
+    }
 
-        assert_eq!(result.unwrap(), 24);
+    #[test]
+    fn get_row_size_errors_when_naxis1_missing() {
+        let mut header = Header::new();
+        header.add_keyword(Keyword::integer("TFIELDS", 1));
+        header.add_keyword(Keyword::string("TFORM1", "1J"));
+        let info = create_test_hdu_info();
+        let hdu = BinaryTableHdu::new(header, info);
+
+        let err = hdu.get_row_size().unwrap_err();
+        assert!(matches!(err, FitsError::KeywordNotFound { .. }));
     }
 
     #[test]
@@ -973,17 +977,18 @@ mod tests {
         header.add_keyword(Keyword::string("XTENSION", "BINTABLE"));
         header.add_keyword(Keyword::integer("TFIELDS", 1));
         header.add_keyword(Keyword::string("TFORM1", "1J"));
+        header.add_keyword(Keyword::integer("NAXIS1", 4));
         header.add_keyword(Keyword::integer("NAXIS2", 1));
         let info = HduInfo {
             index: 1,
             header_start: 0,
             header_size: 0,
             data_start: 0,
-            data_size: 8,
+            data_size: 4,
         };
         let hdu = BinaryTableHdu::new(header, info);
 
-        let data = vec![0x00, 0x00, 0x00, 0x2A, 0x00, 0x00, 0x00, 0x00];
+        let data = vec![0x00, 0x00, 0x00, 0x2A];
         let mut cursor = Cursor::new(data);
 
         let result = hdu.get_row(&mut cursor, 0);
@@ -1000,19 +1005,20 @@ mod tests {
         header.add_keyword(Keyword::integer("TFIELDS", 1));
         header.add_keyword(Keyword::string("TFORM1", "1J"));
         header.add_keyword(Keyword::string("TTYPE1", "VALUES"));
+        header.add_keyword(Keyword::integer("NAXIS1", 4));
         header.add_keyword(Keyword::integer("NAXIS2", 2));
         let info = HduInfo {
             index: 1,
             header_start: 0,
             header_size: 0,
             data_start: 0,
-            data_size: 16,
+            data_size: 8,
         };
         let hdu = BinaryTableHdu::new(header, info);
 
         let data = vec![
-            0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00,
-            0x00, 0x00,
+            0x00, 0x00, 0x00, 0x01,
+            0x00, 0x00, 0x00, 0x02,
         ];
         let mut cursor = Cursor::new(data);
 

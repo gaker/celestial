@@ -1610,9 +1610,8 @@ mod tests {
     fn hcompress_hinv_2x2() {
         let mut data = vec![10i64, 2, 3, 1];
         hcomp_hinv(&mut data, 2, 2);
-        // After inverse transform, should reconstruct original-ish values
-        // This tests the 2x2 reconstruction logic
-        assert!(data.iter().all(|&v| v != 0 || v == 0)); // Just verify it runs
+        // Verifies the 2x2 inverse runs without panicking and preserves length.
+        assert_eq!(data.len(), 4);
     }
 
     #[test]

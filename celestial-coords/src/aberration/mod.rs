@@ -2,8 +2,8 @@ mod coefficients;
 
 use crate::{CoordError, CoordResult};
 use celestial_core::{
-    constants::{DAYS_PER_JULIAN_YEAR, J2000_JD, SPEED_OF_LIGHT_AU_PER_DAY},
-    Vector3,
+    constants::{DAYS_PER_JULIAN_YEAR, J2000_JD, SPEED_OF_LIGHT_AU_PER_DAY, TWOPI},
+    Angle, Vector3,
 };
 use celestial_time::TT;
 use coefficients::Coefficients;
@@ -266,6 +266,42 @@ pub fn apply_aberration(
     Vector3::new(p2.x / r, p2.y / r, p2.z / r)
 }
 
+pub fn apply_annual_aberration(ra: Angle, dec: Angle, tt: &TT) -> (Angle, Angle) {
+    annual_shift(ra, dec, tt, true)
+}
+
+pub fn remove_annual_aberration(ra: Angle, dec: Angle, tt: &TT) -> (Angle, Angle) {
+    annual_shift(ra, dec, tt, false)
+}
+
+fn annual_shift(ra: Angle, dec: Angle, tt: &TT, apply: bool) -> (Angle, Angle) {
+    let Ok(state) = compute_earth_state(tt) else {
+        return (ra, dec);
+    };
+    let sun_distance_au = state.heliocentric_position.magnitude();
+    let direction = ra_dec_to_unit(ra, dec);
+    let corrected = if apply {
+        apply_aberration(direction, state.barycentric_velocity, sun_distance_au)
+    } else {
+        remove_aberration(direction, state.barycentric_velocity, sun_distance_au)
+    };
+    unit_to_ra_dec(corrected)
+}
+
+fn ra_dec_to_unit(ra: Angle, dec: Angle) -> Vector3 {
+    let (sin_ra, cos_ra) = libm::sincos(ra.radians());
+    let (sin_dec, cos_dec) = libm::sincos(dec.radians());
+    Vector3::new(cos_dec * cos_ra, cos_dec * sin_ra, sin_dec)
+}
+
+fn unit_to_ra_dec(v: Vector3) -> (Angle, Angle) {
+    let mag = v.magnitude();
+    let ra = libm::atan2(v.y, v.x);
+    let dec = libm::asin(v.z / mag);
+    let ra_wrapped = if ra < 0.0 { ra + TWOPI } else { ra };
+    (Angle::from_radians(ra_wrapped), Angle::from_radians(dec))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -350,6 +386,55 @@ mod tests {
             diff < 1e-12,
             "Aberration inverse should be within iterative precision: {:.2e}",
             diff
+        );
+    }
+
+    fn spring_equinox_tt() -> TT {
+        TT::from_julian_date(celestial_time::JulianDate::from_f64(2460389.5))
+    }
+
+    fn arcsec_diff(a: Angle, b: Angle) -> f64 {
+        (a - b).wrapped().arcseconds().abs()
+    }
+
+    #[test]
+    fn annual_aberration_shift_is_on_order_of_twenty_arcsec() {
+        let tt = spring_equinox_tt();
+        let ra = Angle::from_hours(0.0);
+        let dec = Angle::from_degrees(0.0);
+        let (ra2, dec2) = apply_annual_aberration(ra, dec, &tt);
+        let shift = arcsec_diff(ra, ra2) + arcsec_diff(dec, dec2);
+        assert!(
+            shift > 5.0 && shift < 45.0,
+            "expected annual aberration ~20 arcsec, got {}",
+            shift
+        );
+    }
+
+    #[test]
+    fn annual_aberration_apply_and_remove_are_inverses() {
+        let tt = spring_equinox_tt();
+        let ra = Angle::from_hours(12.0);
+        let dec = Angle::from_degrees(30.0);
+        let (ra2, dec2) = apply_annual_aberration(ra, dec, &tt);
+        let (ra3, dec3) = remove_annual_aberration(ra2, dec2, &tt);
+        assert!(arcsec_diff(ra, ra3) < 0.01, "ra drift {}", arcsec_diff(ra, ra3));
+        assert!(arcsec_diff(dec, dec3) < 0.01, "dec drift {}", arcsec_diff(dec, dec3));
+    }
+
+    #[test]
+    fn annual_aberration_varies_by_sky_position() {
+        let tt = spring_equinox_tt();
+        let dec = Angle::from_degrees(0.0);
+        let (ra_a, dec_a) = apply_annual_aberration(Angle::from_hours(0.0), dec, &tt);
+        let (ra_b, dec_b) = apply_annual_aberration(Angle::from_hours(12.0), dec, &tt);
+        let shift_a = arcsec_diff(Angle::from_hours(0.0), ra_a) + arcsec_diff(dec, dec_a);
+        let shift_b = arcsec_diff(Angle::from_hours(12.0), ra_b) + arcsec_diff(dec, dec_b);
+        assert!(
+            (shift_a - shift_b).abs() > 0.0,
+            "shift should depend on sky position; got a={} b={}",
+            shift_a,
+            shift_b
         );
     }
 }

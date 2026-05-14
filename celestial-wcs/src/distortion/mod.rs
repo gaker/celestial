@@ -50,11 +50,11 @@ impl Distortion for DistortionModel {
 
 impl Distortion for SipDistortion {
     fn apply(&self, x: f64, y: f64) -> (f64, f64) {
-        SipDistortion::apply(self, x, y)
+        Self::apply(self, x, y)
     }
 
     fn apply_inverse(&self, x: f64, y: f64) -> WcsResult<(f64, f64)> {
-        SipDistortion::apply_inverse(self, x, y)
+        Self::apply_inverse(self, x, y)
     }
 
     fn operates_on_pixels(&self) -> bool {
@@ -64,11 +64,11 @@ impl Distortion for SipDistortion {
 
 impl Distortion for TpvDistortion {
     fn apply(&self, x: f64, y: f64) -> (f64, f64) {
-        TpvDistortion::apply(self, x, y)
+        Self::apply(self, x, y)
     }
 
     fn apply_inverse(&self, x: f64, y: f64) -> WcsResult<(f64, f64)> {
-        TpvDistortion::apply_inverse(self, x, y)
+        Self::apply_inverse(self, x, y)
     }
 
     fn operates_on_pixels(&self) -> bool {
@@ -78,11 +78,11 @@ impl Distortion for TpvDistortion {
 
 impl Distortion for TnxDistortion {
     fn apply(&self, x: f64, y: f64) -> (f64, f64) {
-        TnxDistortion::apply(self, x, y)
+        Self::apply(self, x, y)
     }
 
     fn apply_inverse(&self, x: f64, y: f64) -> WcsResult<(f64, f64)> {
-        TnxDistortion::apply_inverse(self, x, y)
+        Self::apply_inverse(self, x, y)
     }
 
     fn operates_on_pixels(&self) -> bool {

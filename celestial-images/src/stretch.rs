@@ -33,7 +33,7 @@ impl Stretch for Image {
         let stretched = apply_per_channel_f64(&data, channels, |ch| {
             apply_stf(ch, params)
         });
-        let mut img = Image::new(PixelData::F64(stretched), self.dimensions.clone());
+        let mut img = Self::new(PixelData::F64(stretched), self.dimensions.clone());
         img.keywords = self.keywords.clone();
         Ok(img)
     }
@@ -45,7 +45,7 @@ impl Stretch for Image {
         }
         let channels = self.channels();
         apply_per_channel_f32_mut(&mut data, channels, mad_normalize);
-        let mut img = Image::new(PixelData::F32(data), self.dimensions.clone());
+        let mut img = Self::new(PixelData::F32(data), self.dimensions.clone());
         img.keywords = self.keywords.clone();
         Ok(img)
     }
@@ -53,7 +53,7 @@ impl Stretch for Image {
     fn to_u8(&self) -> Result<Image> {
         let data = self.pixels.to_f64_normalized();
         let bytes = stf_to_u8(&data);
-        let mut img = Image::new(PixelData::U8(bytes), self.dimensions.clone());
+        let mut img = Self::new(PixelData::U8(bytes), self.dimensions.clone());
         img.keywords = self.keywords.clone();
         Ok(img)
     }
@@ -236,7 +236,7 @@ mod tests {
         let mut image = vec![0.0f32; 100];
         image[0] = 1e10;
         mad_normalize(&mut image);
-        assert!(image.iter().all(|&v| v >= -5.0 && v <= 100.0));
+        assert!(image.iter().all(|&v| (-5.0..=100.0).contains(&v)));
     }
 
     #[test]
@@ -319,7 +319,7 @@ mod tests {
         let result = apply_stf(&image, &StfParams::default());
         for (i, &v) in result.iter().enumerate() {
             assert!(
-                v >= 0.0 && v <= 1.0,
+                (0.0..=1.0).contains(&v),
                 "pixel {} out of range: {}",
                 i,
                 v
@@ -403,7 +403,7 @@ mod tests {
         let pixels = result.pixels.as_f64().unwrap();
         assert_eq!(pixels.len(), 300);
         for &v in pixels {
-            assert!(v >= 0.0 && v <= 1.0, "out of range: {v}");
+            assert!((0.0..=1.0).contains(&v), "out of range: {v}");
         }
     }
 

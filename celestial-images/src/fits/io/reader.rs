@@ -61,7 +61,7 @@ impl FitsFile<FitsReader> {
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Self> {
         let file = File::open(path)?;
         let reader = FitsReader::new(file);
-        let mut fits = FitsFile {
+        let mut fits = Self {
             reader,
             hdus: Vec::new(),
             current_hdu: 0,
@@ -75,7 +75,7 @@ impl FitsFile<FitsReader> {
 
 impl<R: Read + Seek> FitsFile<R> {
     pub fn new(reader: R) -> Result<Self> {
-        let mut fits = FitsFile {
+        let mut fits = Self {
             reader,
             hdus: Vec::new(),
             current_hdu: 0,
@@ -236,7 +236,7 @@ impl<R: Read + Seek> FitsFile<R> {
 
     pub fn primary_hdu_with_data<T>(&mut self) -> Result<(crate::fits::hdu::PrimaryHdu, Vec<T>)>
     where
-        T: crate::fits::data::array::DataArray,
+        T: crate::fits::data::DataArray,
     {
         let primary = self.primary_hdu()?;
         match primary {
@@ -250,7 +250,7 @@ impl<R: Read + Seek> FitsFile<R> {
 
     pub fn read_hdu_with_data<T>(&mut self, index: usize) -> Result<(Hdu, Vec<T>)>
     where
-        T: crate::fits::data::array::DataArray,
+        T: crate::fits::data::DataArray,
     {
         let hdu = self.read_hdu(index)?;
         let data = match &hdu {

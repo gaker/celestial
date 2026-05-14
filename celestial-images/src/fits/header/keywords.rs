@@ -809,7 +809,7 @@ mod tests {
     #[test]
     fn keyword_builder_from_image() {
         use crate::core::BitPix;
-        let mut builder = KeywordBuilder::from_image(&[1024, 768], BitPix::I16);
+        let mut builder = KeywordBuilder::from_image([1024, 768], BitPix::I16);
         builder.object("M31");
         builder.exposure(300.0);
         builder.filter("Ha");
@@ -836,7 +836,7 @@ mod tests {
     #[test]
     fn keyword_builder_into_vec() {
         use crate::core::BitPix;
-        let builder = KeywordBuilder::from_image(&[100, 100], BitPix::F32);
+        let builder = KeywordBuilder::from_image([100, 100], BitPix::F32);
         let keywords: Vec<Keyword> = builder.into();
         assert!(!keywords.is_empty());
     }
@@ -845,7 +845,7 @@ mod tests {
     fn keyword_builder_date_from_utc() {
         use crate::core::BitPix;
         let utc = celestial_time::UTC::j2000();
-        let mut builder = KeywordBuilder::from_image(&[100, 100], BitPix::F32);
+        let mut builder = KeywordBuilder::from_image([100, 100], BitPix::F32);
         builder.date_from_utc(&utc);
         let keywords = builder.build();
 

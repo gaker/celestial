@@ -58,14 +58,13 @@ pub(crate) fn query_disc_nest(nside: u64, ra_deg: f64, dec_deg: f64, radius_deg:
     let dec_min = (dec_deg - radius_deg - pixel_size_deg).max(-90.0);
     let dec_max = (dec_deg + radius_deg + pixel_size_deg).min(90.0);
 
-    // Step through declination
-    let mut dec = dec_min;
-    while dec <= dec_max {
-        // RA range expands near poles due to convergence
+    let dec_steps = ((dec_max - dec_min) / step).ceil() as usize + 1;
+    for i in 0..dec_steps {
+        let dec = (dec_min + i as f64 * step).min(dec_max);
+
         let cos_dec = libm::cos(dec * PI / 180.0).max(0.01);
         let ra_step = step / cos_dec;
 
-        // For very high declinations, we need full RA coverage
         let ra_range = if libm::fabs(dec) > 89.0 {
             360.0
         } else {
@@ -74,24 +73,18 @@ pub(crate) fn query_disc_nest(nside: u64, ra_deg: f64, dec_deg: f64, radius_deg:
 
         let ra_min = ra_deg - ra_range / 2.0;
         let ra_max = ra_deg + ra_range / 2.0;
+        let ra_steps = ((ra_max - ra_min) / ra_step).ceil() as usize + 1;
 
-        let mut ra = ra_min;
-        while ra <= ra_max {
-            // Normalize RA to [0, 360)
+        for j in 0..ra_steps {
+            let ra = (ra_min + j as f64 * ra_step).min(ra_max);
             let ra_norm = ((ra % 360.0) + 360.0) % 360.0;
 
-            // Check if this point is actually within the search radius
             let dist = angular_separation_deg(ra_deg, dec_deg, ra_norm, dec);
             if dist <= radius_deg + pixel_size_deg {
-                // Include margin for pixel extent
                 let pixel = ang2pix_nest(order, ra_norm, dec);
                 pixels.insert(pixel);
             }
-
-            ra += ra_step;
         }
-
-        dec += step;
     }
 
     pixels.into_iter().collect()

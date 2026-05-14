@@ -347,7 +347,7 @@ impl<R: Read + Seek> XisfFile<R> {
 
     pub fn read_image_data_typed<T>(&mut self, index: usize) -> Result<Vec<T>>
     where
-        T: crate::fits::data::array::DataArray,
+        T: crate::fits::data::DataArray,
     {
         let raw_bytes = self.read_image_data_raw(index)?;
         let byte_order = crate::core::ByteOrder::LittleEndian;
@@ -546,7 +546,7 @@ mod tests {
             assert_eq!(image_info.geometry, vec![1920, 1080, 3]);
             assert!(matches!(image_info.sample_format, SampleFormat::UInt16));
             assert_eq!(image_info.bounds, (0.0, 65535.0));
-            assert!(matches!(image_info.color_space, ColorSpace::RGB));
+            assert!(matches!(image_info.color_space, ColorSpace::Rgb));
             assert_eq!(image_info.location.offset, 1024);
             assert_eq!(image_info.location.size, 12441600);
         }
@@ -1066,7 +1066,7 @@ mod tests {
             geometry: vec![2, 2, 3],
             sample_format: SampleFormat::UInt8,
             bounds: (0.0, 255.0),
-            color_space: ColorSpace::RGB,
+            color_space: ColorSpace::Rgb,
             pixel_storage: PixelStorage::Normal,
             location: DataLocation {
                 offset: 0,
@@ -1099,7 +1099,7 @@ mod tests {
             geometry: vec![2, 1, 3],
             sample_format: SampleFormat::UInt16,
             bounds: (0.0, 65535.0),
-            color_space: ColorSpace::RGB,
+            color_space: ColorSpace::Rgb,
             pixel_storage: PixelStorage::Normal,
             location: DataLocation {
                 offset: 0,

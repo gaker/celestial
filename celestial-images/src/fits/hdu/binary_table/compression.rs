@@ -231,6 +231,7 @@ mod tests {
         header.add_keyword(Keyword::integer("TFIELDS", 1));
         header.add_keyword(Keyword::string("TTYPE1", "COMPRESSED_DATA"));
         header.add_keyword(Keyword::string("TFORM1", "1PB"));
+        header.add_keyword(Keyword::integer("NAXIS1", 8));
         header.add_keyword(Keyword::integer("NAXIS2", 10));
         header
     }
@@ -479,5 +480,128 @@ mod tests {
 
         let result = hdu.read_tile_data(&mut cursor, 0);
         assert!(result.is_err());
+    }
+
+    fn gzip_compress(data: &[u8]) -> Vec<u8> {
+        use flate2::write::GzEncoder;
+        use flate2::Compression;
+        use std::io::Write;
+        let mut enc = GzEncoder::new(Vec::new(), Compression::default());
+        enc.write_all(data).unwrap();
+        enc.finish().unwrap()
+    }
+
+    fn hdu_with_layout(
+        tform: &str,
+        rows: i64,
+        naxis1: i64,
+        data_start: u64,
+        data_size: usize,
+    ) -> (BinaryTableHdu, HduInfo) {
+        let mut header = create_compressed_header();
+        header.add_keyword(Keyword::string("TFORM1", tform));
+        header.add_keyword(Keyword::integer("NAXIS2", rows));
+        header.add_keyword(Keyword::integer("NAXIS1", naxis1));
+        header.add_keyword(Keyword::integer("ZNAXIS1", 4));
+        header.add_keyword(Keyword::integer("ZNAXIS2", 2));
+        header.add_keyword(Keyword::integer("ZBITPIX", 8));
+        let info = HduInfo {
+            index: 1,
+            header_start: 0,
+            header_size: 0,
+            data_start,
+            data_size,
+        };
+        let hdu = BinaryTableHdu::new(header, info.clone());
+        (hdu, info)
+    }
+
+    #[test]
+    fn read_fixed_length_tile_data_returns_column_slice() {
+        // TFORM1="8B" — width=8, element_size=1, row_size = 8 (already aligned).
+        let (hdu, _) = hdu_with_layout("8B", 1, 8, 0, 8);
+
+        let mut cursor = Cursor::new(vec![0xAA, 0xBB, 0xCC, 0xDD, 0x11, 0x22, 0x33, 0x44]);
+        let tile = hdu.read_tile_data(&mut cursor, 0).unwrap();
+        assert_eq!(tile, vec![0xAA, 0xBB, 0xCC, 0xDD, 0x11, 0x22, 0x33, 0x44]);
+    }
+
+    #[test]
+    fn read_fixed_length_tile_data_picks_correct_row() {
+        // Two rows of 8 bytes each; tile_index=1 should skip the first row.
+        let (hdu, _) = hdu_with_layout("8B", 2, 8, 0, 16);
+
+        let bytes: Vec<u8> = (0..16).collect();
+        let mut cursor = Cursor::new(bytes);
+        let tile = hdu.read_tile_data(&mut cursor, 1).unwrap();
+        assert_eq!(tile, (8u8..16).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn read_variable_length_tile_data_p_descriptor() {
+        // Single row, "1PB" → 8-byte descriptor (u32 count + u32 offset), heap at offset 8.
+        let (hdu, _) = hdu_with_layout("1PB", 1, 8, 0, 100);
+
+        // Descriptor: 3 elements at heap offset 2
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&3u32.to_be_bytes()); // count
+        bytes.extend_from_slice(&2u32.to_be_bytes()); // heap offset
+        // Heap starts at data_start + (rows * row_size) = 0 + 1*8 = 8
+        // Heap contents, with target data at heap_offset 2.
+        bytes.extend_from_slice(&[0xFF, 0xFF, 0xDE, 0xAD, 0xBE]); // 2 pad + 3 payload
+        let mut cursor = Cursor::new(bytes);
+
+        let tile = hdu.read_tile_data(&mut cursor, 0).unwrap();
+        assert_eq!(tile, vec![0xDE, 0xAD, 0xBE]);
+    }
+
+    #[test]
+    fn read_variable_length_tile_data_q_descriptor() {
+        // Single row, "1QB" → 16-byte descriptor (u64 count + u64 offset), heap at offset 16.
+        let (hdu, _) = hdu_with_layout("1QB", 1, 16, 0, 100);
+
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&4u64.to_be_bytes()); // count
+        bytes.extend_from_slice(&0u64.to_be_bytes()); // heap offset 0 → straight to heap
+        // Heap starts at 0 + 1*16 = 16
+        bytes.extend_from_slice(&[0xAA, 0xBB, 0xCC, 0xDD]);
+        let mut cursor = Cursor::new(bytes);
+
+        let tile = hdu.read_tile_data(&mut cursor, 0).unwrap();
+        assert_eq!(tile, vec![0xAA, 0xBB, 0xCC, 0xDD]);
+    }
+
+    #[test]
+    fn read_variable_length_tile_data_zero_count_returns_empty() {
+        let (hdu, _) = hdu_with_layout("1PB", 1, 8, 0, 8);
+
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&0u32.to_be_bytes()); // count = 0
+        bytes.extend_from_slice(&0u32.to_be_bytes()); // offset
+        let mut cursor = Cursor::new(bytes);
+
+        let tile = hdu.read_tile_data(&mut cursor, 0).unwrap();
+        assert!(tile.is_empty());
+    }
+
+    #[test]
+    fn decompress_image_tile_success_path_with_gzip() {
+        // ZNAXIS1=4, ZNAXIS2=2, ZBITPIX=8 → expected decompressed tile is 8 bytes.
+        let plaintext: Vec<u8> = (0u8..8).collect();
+        let compressed = gzip_compress(&plaintext);
+
+        // Single row, "1PB" variable-length; descriptor at offset 0, heap after row.
+        let row_size = 8; // P descriptor
+        let (hdu, _) = hdu_with_layout("1PB", 1, row_size as i64, 0, 1000);
+
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&(compressed.len() as u32).to_be_bytes()); // count
+        bytes.extend_from_slice(&0u32.to_be_bytes()); // heap offset 0
+        // Heap starts at data_start + row_size = 0 + 8 = 8
+        bytes.extend_from_slice(&compressed);
+        let mut cursor = Cursor::new(bytes);
+
+        let result = hdu.decompress_image_tile(&mut cursor, 0).unwrap();
+        assert_eq!(result, plaintext);
     }
 }

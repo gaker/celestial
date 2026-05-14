@@ -98,8 +98,8 @@ impl HeaderCard {
         Ok(card_str)
     }
 
-    fn create_empty_card(raw_data: [u8; CARD_SIZE]) -> HeaderCard {
-        HeaderCard {
+    fn create_empty_card(raw_data: [u8; CARD_SIZE]) -> Self {
+        Self {
             keyword: String::new(),
             value: None,
             comment: None,
@@ -112,7 +112,7 @@ impl HeaderCard {
         Ok(keyword_part.trim().to_string())
     }
 
-    fn parse_value_and_comment(card_str: &str, card: &mut HeaderCard) {
+    fn parse_value_and_comment(card_str: &str, card: &mut Self) {
         if card_str.len() >= 10 && &card_str[8..10] == "= " {
             Self::parse_keyword_value_pair(&card_str[10..], card);
         } else if card_str.len() >= 9 {
@@ -120,7 +120,7 @@ impl HeaderCard {
         }
     }
 
-    fn parse_keyword_value_pair(value_comment_part: &str, card: &mut HeaderCard) {
+    fn parse_keyword_value_pair(value_comment_part: &str, card: &mut Self) {
         if let Some(comment_pos) = value_comment_part.find(" / ") {
             Self::parse_value_with_comment(value_comment_part, comment_pos, card);
         } else {
@@ -131,7 +131,7 @@ impl HeaderCard {
     fn parse_value_with_comment(
         value_comment_part: &str,
         comment_pos: usize,
-        card: &mut HeaderCard,
+        card: &mut Self,
     ) {
         let value_part = value_comment_part[..comment_pos].trim();
         let comment_part = value_comment_part[comment_pos + 3..].trim();
@@ -144,14 +144,14 @@ impl HeaderCard {
         }
     }
 
-    fn parse_value_only(value_comment_part: &str, card: &mut HeaderCard) {
+    fn parse_value_only(value_comment_part: &str, card: &mut Self) {
         let value_part = value_comment_part.trim();
         if !value_part.is_empty() {
             card.value = Some(value_part.to_string());
         }
     }
 
-    fn parse_comment_only(rest_of_card: &str, card: &mut HeaderCard) {
+    fn parse_comment_only(rest_of_card: &str, card: &mut Self) {
         let comment_part = rest_of_card.trim();
         if !comment_part.is_empty() {
             card.comment = Some(comment_part.to_string());

@@ -65,11 +65,11 @@ impl RiceCompressible for i16 {
     }
 
     fn from_signed(val: i32) -> Self {
-        val as i16
+        val as Self
     }
 
     fn compute_difference(next_pix: i32, last_pix: i32) -> i32 {
-        let diff = (next_pix as i16).wrapping_sub(last_pix as i16);
+        let diff = (next_pix as Self).wrapping_sub(last_pix as Self);
         diff as i32
     }
 }
@@ -88,7 +88,7 @@ impl RiceCompressible for u8 {
     fn decompress(compressed: &[u8], output_len: usize, block_size: usize) -> Result<Vec<Self>> {
         let signed_result: Vec<i8> =
             decompress::decompress_rice(compressed, output_len, block_size)?;
-        Ok(signed_result.into_iter().map(|x| x as u8).collect())
+        Ok(signed_result.into_iter().map(|x| x as Self).collect())
     }
 
     fn as_signed(self) -> i32 {
@@ -96,7 +96,7 @@ impl RiceCompressible for u8 {
     }
 
     fn from_signed(val: i32) -> Self {
-        val as u8
+        val as Self
     }
 
     fn compute_difference(next_pix: i32, last_pix: i32) -> i32 {
@@ -119,7 +119,7 @@ impl RiceCompressible for u16 {
     fn decompress(compressed: &[u8], output_len: usize, block_size: usize) -> Result<Vec<Self>> {
         let signed_result: Vec<i16> =
             decompress::decompress_rice(compressed, output_len, block_size)?;
-        Ok(signed_result.into_iter().map(|x| x as u16).collect())
+        Ok(signed_result.into_iter().map(|x| x as Self).collect())
     }
 
     fn as_signed(self) -> i32 {
@@ -127,7 +127,7 @@ impl RiceCompressible for u16 {
     }
 
     fn from_signed(val: i32) -> Self {
-        val as u16
+        val as Self
     }
 
     fn compute_difference(next_pix: i32, last_pix: i32) -> i32 {
@@ -155,11 +155,11 @@ impl RiceCompressible for i8 {
     }
 
     fn from_signed(val: i32) -> Self {
-        val as i8
+        val as Self
     }
 
     fn compute_difference(next_pix: i32, last_pix: i32) -> i32 {
-        let diff = (next_pix as i8).wrapping_sub(last_pix as i8);
+        let diff = (next_pix as Self).wrapping_sub(last_pix as Self);
         diff as i32
     }
 }

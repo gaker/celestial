@@ -607,10 +607,10 @@ impl std::ops::Mul for RotationMatrix3 {
     }
 }
 
-impl std::ops::Mul<&RotationMatrix3> for RotationMatrix3 {
-    type Output = RotationMatrix3;
+impl std::ops::Mul<&Self> for RotationMatrix3 {
+    type Output = Self;
 
-    fn mul(self, rhs: &RotationMatrix3) -> RotationMatrix3 {
+    fn mul(self, rhs: &Self) -> Self {
         self.multiply(rhs)
     }
 }
@@ -780,7 +780,12 @@ mod tests {
         assert!(dec.is_finite());
     }
 
+    // Exercises all four Mul overload variants for RotationMatrix3.
+    // clippy::op_ref flags the &b and &a forms as redundant; the lint is wrong
+    // here because the *whole point* is to verify each operator-overload arm
+    // produces the same result.
     #[test]
+    #[allow(clippy::op_ref)]
     fn test_mul_matrix_matrix() {
         let mut a = RotationMatrix3::identity();
         a.rotate_x(0.1);
@@ -806,7 +811,10 @@ mod tests {
         assert_eq!(m[(0, 1)], 0.5);
     }
 
+    // Same rationale as test_mul_matrix_matrix: deliberately exercising both
+    // m * v and &m * v paths.
     #[test]
+    #[allow(clippy::op_ref)]
     fn test_mul_matrix_vector() {
         use crate::Vector3;
         let m = RotationMatrix3::identity();

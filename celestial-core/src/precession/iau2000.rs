@@ -208,7 +208,11 @@ mod tests {
     use crate::test_helpers::assert_ulp_le;
 
     #[test]
+    #[allow(clippy::default_constructed_unit_structs)]
     fn test_new_and_default() {
+        // The test verifies that ::new() and ::default() yield equivalent results.
+        // Clippy would have us call `PrecessionIAU2000` directly, but that defeats
+        // the point: we need to exercise the Default impl explicitly.
         let p1 = PrecessionIAU2000::new();
         let p2 = PrecessionIAU2000::default();
         let r1 = p1.compute(0.0).unwrap();

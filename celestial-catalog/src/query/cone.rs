@@ -7,7 +7,8 @@
 //! Proper motion can be propagated from the catalog epoch (J2016.0) to an
 //! arbitrary observation epoch before matching.
 
-use celestial_time::JulianDate;
+use celestial_coords::proper_motion;
+use celestial_time::{JulianDate, TT};
 
 use super::catalog::{Catalog, StarRecord};
 use super::healpix::{angular_separation_deg, query_disc_nest};
@@ -128,15 +129,9 @@ pub fn cone_search(catalog: &Catalog, params: &ConeSearchParams) -> Vec<ConeSear
 
 /// Linearly propagate a star's position from J2016.0 to `epoch_jd`.
 fn apply_proper_motion(star: &StarRecord, epoch_jd: JulianDate) -> (f64, f64) {
-    const MAS_PER_DEGREE: f64 = 3_600_000.0;
-
-    let dt_years = (epoch_jd - JulianDate::new(J2016_JD, 0.0)).to_f64() / 365.25;
-
-    let cos_dec = libm::cos(star.dec * celestial_core::constants::PI / 180.0);
-    let dec_obs = star.dec + star.pmdec * dt_years / MAS_PER_DEGREE;
-    let ra_obs = star.ra + star.pmra * dt_years / MAS_PER_DEGREE / cos_dec;
-
-    (ra_obs, dec_obs)
+    let from = TT::from_julian_date(JulianDate::new(J2016_JD, 0.0));
+    let to = TT::from_julian_date(epoch_jd);
+    proper_motion::propagate_degrees(star.ra, star.dec, star.pmra, star.pmdec, from, to)
 }
 
 #[cfg(test)]

@@ -1,6 +1,6 @@
 use super::{ColumnInfo, HduTrait, HduType};
 use crate::core::ByteOrder;
-use crate::fits::data::array::{DataArray, DataValue, TableValue};
+use crate::fits::data::{DataArray, DataValue, TableValue};
 use crate::fits::header::Header;
 use crate::fits::io::reader::HduInfo;
 use crate::fits::{FitsError, Result};

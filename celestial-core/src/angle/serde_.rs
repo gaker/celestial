@@ -10,6 +10,6 @@ impl Serialize for Angle {
 impl<'de> Deserialize<'de> for Angle {
     fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
         let r = f64::deserialize(d)?;
-        Ok(Angle::from_radians(r))
+        Ok(Self::from_radians(r))
     }
 }
