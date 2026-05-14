@@ -26,7 +26,7 @@ impl PointingHelper {
             commands: [
                 "APPLY", "CORRECT", "INDAT", "INMOD", "OUTMOD", "USE", "LOSE", "FIT", "CLIST",
                 "SLIST", "SHOW", "RESET", "MASK", "UNMASK", "MVET", "OUTL", "FIX", "UNFIX",
-                "PARALLEL", "CHAIN", "ADJUST", "FAUTO", "OPTIMAL", "LST", "PREDICT", "GSCAT",
+                "PARAL", "CHAIN", "ADJUST", "FAUTO", "LST", "PREDICT", "GSCAT",
                 "GDIST", "GMAP", "GHA", "GDEC", "GHYST", "HELP", "QUIT",
             ]
             .iter()
@@ -149,7 +149,7 @@ impl Completer for PointingHelper {
                 Ok((start, matches))
             } else if matches!(
                 cmd.as_str(),
-                "USE" | "LOSE" | "FIX" | "UNFIX" | "PARALLEL" | "CHAIN"
+                "USE" | "LOSE" | "FIX" | "UNFIX" | "PARAL" | "CHAIN"
             ) {
                 let prefix = words.last().map_or("", |s| *s).to_uppercase();
                 let start = up_to.rfind(char::is_whitespace).map_or(0, |i| i + 1);
@@ -243,17 +243,60 @@ fn print_output(output: CommandOutput) {
 }
 
 fn print_fit(fit: &commands::FitDisplay) {
-    println!("\n       coeff          value      sigma\n");
+    let show_parallel = fit.parallel.iter().any(|p| *p);
+    let show_fixed = fit.fixed.iter().any(|f| *f);
+    let prefix = match (show_parallel, show_fixed) {
+        (false, false) => "",
+        (true, false) => " P",
+        (false, true) => " F",
+        (true, true) => " P F",
+    };
+    println!(
+        "\n   {}     coeff      change          value      sigma\n",
+        prefix
+    );
     for (i, name) in fit.term_names.iter().enumerate() {
-        println!(
-            "{:3}  {:>6}    {:>12.2}  {:>9.3}",
-            i + 1,
-            name,
-            fit.coefficients[i],
-            fit.sigma[i],
-        );
+        let par = *fit.parallel.get(i).unwrap_or(&false);
+        let fix = *fit.fixed.get(i).unwrap_or(&false);
+        let mut flags = String::new();
+        if show_parallel {
+            flags.push(if par { '&' } else { ' ' });
+        }
+        if show_fixed {
+            if show_parallel {
+                flags.push(' ');
+            }
+            flags.push(if fix { '=' } else { ' ' });
+        }
+        let lead = if flags.is_empty() {
+            format!("{:3}", i + 1)
+        } else {
+            format!("{:3}  {}", i + 1, flags)
+        };
+        if fix {
+            println!(
+                "{}  {:>6}              {:>12.2}",
+                lead, name, fit.coefficients[i],
+            );
+        } else {
+            println!(
+                "{}  {:>6}  {:>+10.3}  {:>12.2}  {:>9.3}",
+                lead,
+                name,
+                fit.change[i],
+                fit.coefficients[i],
+                fit.sigma[i],
+            );
+        }
     }
-    println!("\nSky RMS = {:.2}\"\n", fit.sky_rms);
+    println!("\nSky RMS = {:.2}\"", fit.sky_rms);
+    if fit.popn_sd > 0.0 {
+        println!("Popn SD = {:.2}\"", fit.popn_sd);
+    }
+    if let Some(note) = &fit.note {
+        println!("{}", note);
+    }
+    println!();
 }
 
 fn print_table(headers: &[String], rows: &[Vec<String>]) {

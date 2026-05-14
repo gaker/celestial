@@ -4,6 +4,7 @@ pub mod clist;
 pub mod correct;
 pub mod fauto;
 pub mod fit;
+pub mod fittol;
 pub mod fix;
 pub mod gdec;
 pub mod gdist;
@@ -18,7 +19,6 @@ pub mod lose;
 pub mod lst;
 pub mod mask;
 pub mod mvet;
-pub mod optimal;
 pub mod outl;
 pub mod outmod;
 pub mod parallel;
@@ -31,6 +31,7 @@ pub mod use_term;
 use crate::error::Result;
 use crate::session::Session;
 
+#[derive(Debug, Clone)]
 pub enum CommandOutput {
     Text(String),
     Table {
@@ -41,11 +42,17 @@ pub enum CommandOutput {
     None,
 }
 
+#[derive(Debug, Clone)]
 pub struct FitDisplay {
     pub term_names: Vec<String>,
     pub coefficients: Vec<f64>,
+    pub change: Vec<f64>,
     pub sigma: Vec<f64>,
+    pub fixed: Vec<bool>,
+    pub parallel: Vec<bool>,
     pub sky_rms: f64,
+    pub popn_sd: f64,
+    pub note: Option<String>,
 }
 
 pub trait Command {
@@ -69,6 +76,7 @@ pub fn dispatch(session: &mut Session, input: &str) -> Result<CommandOutput> {
         "CORRECT" => correct::Correct.execute(session, args),
         "FAUTO" => fauto::Fauto.execute(session, args),
         "FIT" => fit::Fit.execute(session, args),
+        "FITTOL" => fittol::Fittol.execute(session, args),
         "FIX" => fix::Fix.execute(session, args),
         "GDEC" => gdec::Gdec.execute(session, args),
         "GDIST" => gdist::Gdist.execute(session, args),
@@ -83,10 +91,9 @@ pub fn dispatch(session: &mut Session, input: &str) -> Result<CommandOutput> {
         "LST" => lst::Lst.execute(session, args),
         "MASK" => mask::Mask.execute(session, args),
         "MVET" => mvet::Mvet.execute(session, args),
-        "OPTIMAL" => optimal::Optimal.execute(session, args),
         "OUTL" => outl::Outl.execute(session, args),
         "OUTMOD" => outmod::Outmod.execute(session, args),
-        "PARALLEL" => parallel::Parallel.execute(session, args),
+        "PARAL" => parallel::Parallel.execute(session, args),
         "PREDICT" => predict::Predict.execute(session, args),
         "QUIT" => Ok(CommandOutput::Text("Use Ctrl-D to exit".to_string())),
         "RESET" => reset::Reset.execute(session, args),

@@ -1,3 +1,19 @@
+//! Parser for TPOINT-style INDAT observation files.
+//!
+//! The parser is format-aware but frame-agnostic: it reads angles and times
+//! as written, without validating what reference frame they represent. The
+//! full input-coordinate contract — what frame `cat_RA`/`cat_Dec` must be
+//! in, what state `tel_RA`/`tel_Dec` must be in (refraction removed, pier
+//! encoded), and what corrections must NOT be applied — is documented in
+//! the book: `book/src/pointing/indat-format.md`.
+//!
+//! In short: catalog coords must be apparent-of-date (IAU 2006A NPB
+//! applied, no aberration or light deflection), telescope coords must have
+//! refraction removed and pier side encoded into the declination magnitude,
+//! and LST must be apparent sidereal time. Feeding J2000 coordinates
+//! straight through produces a fit that converges but whose coefficients
+//! are wrong by hundreds of arcseconds.
+
 use crate::error::{Error, Result};
 use crate::observation::{
     decode_pier_side, IndatFile, IndatOption, MountType, Observation, PierSide, SiteParams,
@@ -5,6 +21,15 @@ use crate::observation::{
 use celestial_core::Angle;
 use celestial_time::JulianDate;
 
+/// Parses an INDAT file's contents into an [`IndatFile`].
+///
+/// The input is TPOINT-compatible: header comment lines, options prefixed
+/// with `:`, a site-and-date line, then one observation per line. The
+/// per-line format is defined by `parse_observation_line`.
+///
+/// The caller is responsible for delivering the contents in the expected
+/// reference frame. See the `indat-format.md` book page for the full
+/// input-coordinate contract.
 pub fn parse_indat(content: &str) -> Result<IndatFile> {
     let mut header_lines = Vec::new();
     let mut options = Vec::new();

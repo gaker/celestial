@@ -39,11 +39,10 @@ fn command_help(cmd: &str) -> String {
         "OUTL" => "OUTL <sigma> [M]\n  Find outliers (M to mask)".into(),
         "FIX" => "FIX <term> [term...] | FIX ALL\n  Fix terms at current values during fit".into(),
         "UNFIX" => "UNFIX <term> [term...] | UNFIX ALL\n  Allow fixed terms to be fitted".into(),
-        "PARALLEL" => "PARALLEL <term> [term...] | PARALLEL ALL\n  Apply terms in parallel (default)".into(),
+        "PARAL" => "PARAL <term> [term...] | PARAL ALL\n  Apply terms in parallel (default)".into(),
         "CHAIN" => "CHAIN <term> [term...] | CHAIN ALL\n  Apply terms sequentially (rigorous)".into(),
         "ADJUST" => "ADJUST T|S\n  T = telescope to star (default)\n  S = star to telescope".into(),
-        "FAUTO" => "FAUTO <order> [H|D]\n  Add harmonics up to Nth order\n  H = HA only, D = Dec only".into(),
-        "OPTIMAL" => "OPTIMAL [max_terms] [bic_threshold]\n  Auto-build optimal model using BIC selection\n  Defaults: max 30 terms, threshold -6.0".into(),
+        "FAUTO" => "FAUTO [max_terms] [bic_threshold]\n  Automatic modeling: pair-aware BIC search over harmonics and physical terms\n  Defaults: max 30 terms, threshold -6.0".into(),
         "LST" => "LST [h m s | decimal_hours | CLEAR]\n  Show/set local sidereal time".into(),
         "CORRECT" => "CORRECT <ra> <dec>\n  Compute actual sky position from encoder reading\n  Args: h m s d m s  OR  decimal_hours decimal_degrees".into(),
         "PREDICT" => "PREDICT <ra> <dec>\n  Show per-term correction breakdown\n  Args: h m s d m s  OR  decimal_hours decimal_degrees".into(),
@@ -82,12 +81,11 @@ Commands:
 
   FIX <terms>        Fix terms during fit
   UNFIX <terms>      Unfix terms
-  PARALLEL <terms>   Apply terms in parallel
+  PARAL <terms>      Apply terms in parallel
   CHAIN <terms>      Apply terms sequentially
   ADJUST T|S         Set model direction
 
-  FAUTO <n>          Add harmonics to nth order
-  OPTIMAL            Auto-build optimal model
+  FAUTO              Automatic modeling (BIC + pairs + triples)
   LST [time|CLEAR]   Set/show local sidereal time
 
   CORRECT <ra> <dec> Actual sky position from encoders
@@ -106,4 +104,90 @@ Commands:
 
 Type HELP <command> for details."
         .to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn run_help(args: &[&str]) -> String {
+        let mut session = Session::new();
+        match Help.execute(&mut session, args).unwrap() {
+            CommandOutput::Text(s) => s,
+            other => panic!("expected Text, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn metadata() {
+        assert_eq!(Help.name(), "HELP");
+        assert_eq!(Help.description(), "Show available commands");
+    }
+
+    #[test]
+    fn no_args_returns_general_help() {
+        let body = run_help(&[]);
+        assert!(body.starts_with("Commands:"));
+        assert!(body.contains("Type HELP <command> for details."));
+        assert!(body.contains("APPLY"));
+        assert!(body.contains("FAUTO"));
+    }
+
+    // Every command listed in dispatch() should have a matching help entry.
+    // If a new command is added without a help entry, this test catches it.
+    #[test]
+    fn every_known_command_has_a_help_entry() {
+        let commands = [
+            "APPLY", "INDAT", "INMOD", "OUTMOD", "USE", "LOSE", "FIT", "CLIST", "RESET",
+            "SLIST", "MASK", "UNMASK", "MVET", "OUTL", "FIX", "UNFIX", "PARAL", "CHAIN",
+            "ADJUST", "FAUTO", "LST", "CORRECT", "PREDICT", "GSCAT", "GDIST", "GMAP",
+            "GHA", "GDEC", "GHYST", "SHOW", "HELP", "QUIT",
+        ];
+        for cmd in commands {
+            let body = run_help(&[cmd]);
+            assert!(
+                !body.starts_with("Unknown command:"),
+                "command {} missing help entry",
+                cmd,
+            );
+            assert!(
+                body.contains(cmd),
+                "help body for {} should mention the command name: {}",
+                cmd,
+                body,
+            );
+        }
+    }
+
+    #[test]
+    fn command_lookup_is_case_insensitive() {
+        for token in ["apply", "Apply", "APPLY", "aPpLy"] {
+            let body = run_help(&[token]);
+            assert!(body.starts_with("APPLY"), "token {:?} → {}", token, body);
+        }
+    }
+
+    #[test]
+    fn unknown_command_reports_with_original_casing() {
+        let body = run_help(&["bogus"]);
+        assert_eq!(body, "Unknown command: bogus");
+    }
+
+    #[test]
+    fn extra_args_are_ignored() {
+        let body = run_help(&["FIT", "MORE", "STUFF"]);
+        assert!(body.starts_with("FIT"));
+        assert!(!body.contains("MORE"));
+    }
+
+    #[test]
+    fn session_is_not_mutated() {
+        let mut session = Session::new();
+        session.model.add_term("IH").unwrap();
+        let term_count_before = session.model.term_count();
+        Help.execute(&mut session, &[]).unwrap();
+        Help.execute(&mut session, &["FIT"]).unwrap();
+        Help.execute(&mut session, &["bogus"]).unwrap();
+        assert_eq!(session.model.term_count(), term_count_before);
+    }
 }

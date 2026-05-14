@@ -153,6 +153,29 @@ mod tests {
         }
     }
 
+    // PREDICT's Command: line goes through target_to_command. With IH=-100 and
+    // target RA=12.5h, the commanded RA should be west of the target by 100" of
+    // arc (RA = LST - HA, cmd_HA = target_HA + apply.dh = target_HA + 100).
+    // 100" of arc / 15 = 6.67s of time, so cmd_RA ≈ 12h 29m 53.33s.
+    #[test]
+    fn predict_command_line_sign() {
+        let mut session = Session::new();
+        session.lst_override = Some(Angle::from_hours(14.0));
+        session.model.add_term("IH").unwrap();
+        session.model.set_coefficients(&[-100.0]).unwrap();
+        let result = Predict.execute(&mut session, &["12.5", "45.0"]).unwrap();
+        let text = match result {
+            CommandOutput::Text(s) => s,
+            _ => panic!("expected Text"),
+        };
+        let cmd_line = text.lines().find(|l| l.starts_with("Command:")).unwrap();
+        assert!(
+            cmd_line.contains("12h 29m 53"),
+            "Command line wrong: {} — sign convention regression",
+            cmd_line,
+        );
+    }
+
     #[test]
     fn total_matches_sum() {
         let mut session = Session::new();

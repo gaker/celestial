@@ -11,6 +11,7 @@ impl Command for Apply {
     fn name(&self) -> &str {
         "APPLY"
     }
+    
     fn description(&self) -> &str {
         "Compute commanded position for target"
     }
@@ -139,6 +140,38 @@ mod tests {
             }
             _ => panic!("expected Text output"),
         }
+    }
+
+    // APPLY computes the encoder command for a desired true-sky target via
+    // cmd_HA = target_HA + apply(target).dh.
+    // With IH=-100 the fit residual convention says apply.dh = +100, so the
+    // commanded HA is 100" east of the target HA. Since RA = LST - HA, the
+    // commanded RA is 100" west of the target RA — ΔRA = -100/15 ≈ -6.67s.
+    #[test]
+    fn apply_with_ih_yields_expected_sign() {
+        let mut session = Session::new();
+        session.lst_override = Some(Angle::from_hours(14.0));
+        session.model.add_term("IH").unwrap();
+        session.model.set_coefficients(&[-100.0]).unwrap();
+        let args = vec!["12.5", "45.0"];
+        let result = Apply.execute(&mut session, &args).unwrap();
+        let text = match result {
+            CommandOutput::Text(s) => s,
+            _ => panic!("expected Text"),
+        };
+        let dra_line = text.lines().find(|l| l.contains("\u{0394}RA:")).unwrap();
+        let dra_seconds: f64 = dra_line
+            .split_whitespace()
+            .last()
+            .unwrap()
+            .trim_end_matches('s')
+            .parse()
+            .unwrap();
+        assert!(
+            (dra_seconds - (-100.0 / 15.0)).abs() < 0.01,
+            "\u{0394}RA expected -6.67s, got {}s — sign convention regression",
+            dra_seconds,
+        );
     }
 
     #[test]

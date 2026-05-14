@@ -57,9 +57,8 @@ fn terminal_output(points: &[(f64, f64)]) -> Result<CommandOutput> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::observation::{Observation, PierSide};
-    use crate::solver::FitResult;
-    use celestial_core::Angle;
+    use crate::observation::Observation;
+    use crate::test_support::{FitResultBuilder, ObsBuilder};
 
     fn make_obs(
         cmd_ha_arcsec: f64,
@@ -67,29 +66,26 @@ mod tests {
         cat_dec_deg: f64,
         obs_dec_deg: f64,
     ) -> Observation {
-        Observation {
-            catalog_ra: Angle::from_hours(0.0),
-            catalog_dec: Angle::from_degrees(cat_dec_deg),
-            observed_ra: Angle::from_hours(0.0),
-            observed_dec: Angle::from_degrees(obs_dec_deg),
-            lst: Angle::from_hours(0.0),
-            commanded_ha: Angle::from_arcseconds(cmd_ha_arcsec),
-            actual_ha: Angle::from_arcseconds(act_ha_arcsec),
-            pier_side: PierSide::East,
-            masked: false,
-        }
+        ObsBuilder::new()
+            .commanded_ha_arcsec(cmd_ha_arcsec)
+            .actual_ha_arcsec(act_ha_arcsec)
+            .catalog_dec_deg(cat_dec_deg)
+            .observed_dec_deg(obs_dec_deg)
+            .build()
     }
 
     fn session_with_fit() -> Session {
         let mut session = Session::new();
         session.model.add_term("IH").unwrap();
         session.model.set_coefficients(&[0.0]).unwrap();
-        session.last_fit = Some(FitResult {
-            coefficients: vec![0.0],
-            sigma: vec![0.1],
-            sky_rms: 1.0,
-            term_names: vec!["IH".to_string()],
-        });
+        session.last_fit = Some(
+            FitResultBuilder::new()
+                .coefficients(vec![0.0])
+                .sky_rms(1.0)
+                .popn_sd(1.0)
+                .term_names(["IH"])
+                .build(),
+        );
         session
     }
 

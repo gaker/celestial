@@ -15,7 +15,7 @@ pub struct ObsResidual {
 pub fn compute_residuals(session: &Session) -> Vec<ObsResidual> {
     let lat = session.latitude();
     session
-        .observations
+        .prepared_observations()
         .iter()
         .enumerate()
         .filter(|(_, obs)| !obs.masked)
@@ -64,6 +64,7 @@ pub fn require_fit(session: &Session) -> crate::error::Result<()> {
 mod tests {
     use super::*;
     use crate::observation::{Observation, PierSide};
+    use crate::test_support::ObsBuilder;
     use celestial_core::Angle;
 
     fn make_obs(
@@ -74,17 +75,14 @@ mod tests {
         pier: PierSide,
         masked: bool,
     ) -> Observation {
-        Observation {
-            catalog_ra: Angle::from_hours(0.0),
-            catalog_dec: Angle::from_degrees(cat_dec_deg),
-            observed_ra: Angle::from_hours(0.0),
-            observed_dec: Angle::from_degrees(obs_dec_deg),
-            lst: Angle::from_hours(0.0),
-            commanded_ha: Angle::from_arcseconds(cmd_ha_arcsec),
-            actual_ha: Angle::from_arcseconds(act_ha_arcsec),
-            pier_side: pier,
-            masked,
-        }
+        ObsBuilder::new()
+            .commanded_ha_arcsec(cmd_ha_arcsec)
+            .actual_ha_arcsec(act_ha_arcsec)
+            .catalog_dec_deg(cat_dec_deg)
+            .observed_dec_deg(obs_dec_deg)
+            .pier(pier)
+            .masked(masked)
+            .build()
     }
 
     #[test]
@@ -181,12 +179,14 @@ mod tests {
     #[test]
     fn require_fit_with_fit() {
         let mut session = Session::new();
-        session.last_fit = Some(crate::solver::FitResult {
-            coefficients: vec![1.0],
-            sigma: vec![0.1],
-            sky_rms: 5.0,
-            term_names: vec!["IH".to_string()],
-        });
+        session.last_fit = Some(
+            crate::test_support::FitResultBuilder::new()
+                .coefficients(vec![1.0])
+                .sky_rms(5.0)
+                .popn_sd(5.0)
+                .term_names(["IH"])
+                .build(),
+        );
         assert!(require_fit(&session).is_ok());
     }
 

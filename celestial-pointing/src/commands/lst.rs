@@ -9,6 +9,7 @@ impl Command for Lst {
     fn name(&self) -> &str {
         "LST"
     }
+
     fn description(&self) -> &str {
         "Set or show local sidereal time"
     }
@@ -89,76 +90,150 @@ fn validate_hours(hours: f64) -> Result<()> {
 mod tests {
     use super::*;
 
-    #[test]
-    fn show_when_no_lst_set() {
-        let mut session = Session::new();
-        let result = Lst.execute(&mut session, &[]).unwrap();
-        match result {
-            CommandOutput::Text(s) => assert_eq!(s, "No LST set"),
-            _ => panic!("expected Text output"),
+    fn run(session: &mut Session, args: &[&str]) -> Result<String> {
+        Lst.execute(session, args).map(|out| match out {
+            CommandOutput::Text(s) => s,
+            other => panic!("expected Text, got {:?}", other),
+        })
+    }
+
+    fn parse_msg(err: &Error) -> &str {
+        match err {
+            Error::Parse(m) => m,
+            other => panic!("expected Parse, got {:?}", other),
         }
     }
 
     #[test]
-    fn set_decimal_hours() {
-        let mut session = Session::new();
-        Lst.execute(&mut session, &["14.5"]).unwrap();
-        let lst = session.current_lst().unwrap();
-        assert_eq!(lst.hours(), 14.5);
+    fn metadata() {
+        assert_eq!(Lst.name(), "LST");
+        assert_eq!(Lst.description(), "Set or show local sidereal time");
     }
 
     #[test]
-    fn set_hms() {
-        let mut session = Session::new();
-        Lst.execute(&mut session, &["14", "30", "00"]).unwrap();
-        let lst = session.current_lst().unwrap();
-        assert_eq!(lst.hours(), 14.5);
+    fn no_args_with_no_override_reports_no_lst() {
+        let mut s = Session::new();
+        assert_eq!(run(&mut s, &[]).unwrap(), "No LST set");
     }
 
     #[test]
-    fn show_after_set() {
-        let mut session = Session::new();
-        Lst.execute(&mut session, &["14", "30", "00"]).unwrap();
-        let result = Lst.execute(&mut session, &[]).unwrap();
-        match result {
-            CommandOutput::Text(s) => assert!(s.starts_with("LST = 14h 30m")),
-            _ => panic!("expected Text output"),
+    fn no_args_with_override_shows_current_value() {
+        let mut s = Session::new();
+        s.lst_override = Some(Angle::from_hours(14.5));
+        let body = run(&mut s, &[]).unwrap();
+        assert_eq!(body, "LST = 14h 30m 00.000s");
+    }
+
+    #[test]
+    fn clear_resets_override_case_insensitive() {
+        for token in ["CLEAR", "clear", "Clear"] {
+            let mut s = Session::new();
+            s.lst_override = Some(Angle::from_hours(10.0));
+            let body = run(&mut s, &[token]).unwrap();
+            assert_eq!(body, "LST override cleared");
+            assert!(s.lst_override.is_none());
         }
     }
 
     #[test]
-    fn clear_override() {
-        let mut session = Session::new();
-        Lst.execute(&mut session, &["14.5"]).unwrap();
-        Lst.execute(&mut session, &["CLEAR"]).unwrap();
-        assert!(session.lst_override.is_none());
-        assert!(session.current_lst().is_err());
+    fn clear_with_no_prior_override_still_succeeds() {
+        let mut s = Session::new();
+        let body = run(&mut s, &["CLEAR"]).unwrap();
+        assert_eq!(body, "LST override cleared");
+        assert!(s.lst_override.is_none());
     }
 
     #[test]
-    fn clear_case_insensitive() {
-        let mut session = Session::new();
-        Lst.execute(&mut session, &["14.5"]).unwrap();
-        Lst.execute(&mut session, &["clear"]).unwrap();
-        assert!(session.lst_override.is_none());
+    fn decimal_hours_sets_override() {
+        let mut s = Session::new();
+        let body = run(&mut s, &["14.5"]).unwrap();
+        assert_eq!(body, "LST = 14h 30m 00.000s");
+        let lst = s.lst_override.unwrap();
+        assert!((lst.hours() - 14.5).abs() < 1e-12);
     }
 
     #[test]
-    fn reject_out_of_range() {
-        let mut session = Session::new();
-        assert!(Lst.execute(&mut session, &["25.0"]).is_err());
-        assert!(Lst.execute(&mut session, &["-1.0"]).is_err());
+    fn hms_sets_override() {
+        let mut s = Session::new();
+        let body = run(&mut s, &["14", "30", "15.5"]).unwrap();
+        assert_eq!(body, "LST = 14h 30m 15.500s");
     }
 
     #[test]
-    fn reject_invalid_input() {
-        let mut session = Session::new();
-        assert!(Lst.execute(&mut session, &["abc"]).is_err());
+    fn zero_is_a_valid_lst() {
+        let mut s = Session::new();
+        let body = run(&mut s, &["0"]).unwrap();
+        assert_eq!(body, "LST = 00h 00m 00.000s");
     }
 
     #[test]
-    fn reject_wrong_arg_count() {
-        let mut session = Session::new();
-        assert!(Lst.execute(&mut session, &["14", "30"]).is_err());
+    fn exactly_24_is_rejected() {
+        let mut s = Session::new();
+        let err = run(&mut s, &["24"]).unwrap_err();
+        assert!(parse_msg(&err).contains("LST must be in range"));
+    }
+
+    #[test]
+    fn negative_is_rejected() {
+        let mut s = Session::new();
+        let err = run(&mut s, &["-0.5"]).unwrap_err();
+        assert!(parse_msg(&err).contains("LST must be in range"));
+    }
+
+    #[test]
+    fn hms_above_24_rejected() {
+        let mut s = Session::new();
+        let err = run(&mut s, &["23", "59", "61"]).unwrap_err();
+        assert!(parse_msg(&err).contains("LST must be in range"));
+    }
+
+    #[test]
+    fn unparseable_decimal_errors() {
+        let mut s = Session::new();
+        let err = run(&mut s, &["banana"]).unwrap_err();
+        assert!(parse_msg(&err).contains("invalid LST value"));
+    }
+
+    #[test]
+    fn unparseable_hms_pieces_error_with_specific_field() {
+        let mut s = Session::new();
+        let err = run(&mut s, &["bad", "30", "0"]).unwrap_err();
+        assert!(parse_msg(&err).contains("invalid hours"));
+
+        let err = run(&mut s, &["14", "bad", "0"]).unwrap_err();
+        assert!(parse_msg(&err).contains("invalid minutes"));
+
+        let err = run(&mut s, &["14", "30", "bad"]).unwrap_err();
+        assert!(parse_msg(&err).contains("invalid seconds"));
+    }
+
+    #[test]
+    fn wrong_arg_count_errors() {
+        let mut s = Session::new();
+        for args in [vec!["14", "30"], vec!["14", "30", "0", "extra"]] {
+            let err = run(&mut s, &args).unwrap_err();
+            assert!(
+                parse_msg(&err).contains("decimal hours"),
+                "args {:?}: {}",
+                args,
+                parse_msg(&err),
+            );
+        }
+    }
+
+    #[test]
+    fn failed_parse_does_not_overwrite_existing_override() {
+        let mut s = Session::new();
+        s.lst_override = Some(Angle::from_hours(12.0));
+        let _ = run(&mut s, &["banana"]).unwrap_err();
+        assert!((s.lst_override.unwrap().hours() - 12.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn format_lst_rounds_seconds_consistently() {
+        let s1 = format_lst(Angle::from_hours(0.0));
+        assert_eq!(s1, "LST = 00h 00m 00.000s");
+        let s2 = format_lst(Angle::from_hours(23.999999));
+        assert!(s2.starts_with("LST = 23h 59m"), "got {}", s2);
     }
 }

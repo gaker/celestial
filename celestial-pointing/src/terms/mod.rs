@@ -37,6 +37,15 @@ pub fn create_term(name: &str) -> Result<Box<dyn Term>> {
         "ME" => Ok(Box::new(equatorial::ME)),
         "TF" => Ok(Box::new(equatorial::TF)),
         "TX" => Ok(Box::new(equatorial::TX)),
+        name if name.starts_with("TX") && name.len() > 2 => {
+            let n: u8 = name[2..]
+                .parse()
+                .map_err(|_| Error::UnknownTerm(name.to_string()))?;
+            if n == 0 {
+                return Err(Error::UnknownTerm(name.to_string()));
+            }
+            Ok(Box::new(equatorial::TXN::new(n)))
+        }
         "DAF" => Ok(Box::new(equatorial::DAF)),
         "FO" => Ok(Box::new(equatorial::FO)),
         "HCES" => Ok(Box::new(equatorial::HCES)),

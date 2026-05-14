@@ -11,6 +11,7 @@ impl Command for Correct {
     fn name(&self) -> &str {
         "CORRECT"
     }
+    
     fn description(&self) -> &str {
         "Compute actual sky position from encoder reading"
     }
@@ -150,5 +151,36 @@ mod tests {
         let args = vec!["12.5", "45.0"];
         let result = Correct.execute(&mut session, &args);
         assert!(result.is_ok());
+    }
+
+    // CORRECT applies the model in the "encoder -> true sky" direction.
+    // With IH=-100, apply.dh = +100 (encoder is 100" east of true in HA),
+    // so the true sky HA is encoder_HA - 100, meaning true RA = encoder RA + 100"
+    // (since RA = LST - HA). In seconds of time that is +100/15 ≈ +6.67s.
+    #[test]
+    fn correct_with_ih_yields_expected_sign() {
+        let mut session = Session::new();
+        session.lst_override = Some(Angle::from_hours(14.0));
+        session.model.add_term("IH").unwrap();
+        session.model.set_coefficients(&[-100.0]).unwrap();
+        let args = vec!["12.5", "45.0"];
+        let result = Correct.execute(&mut session, &args).unwrap();
+        let text = match result {
+            CommandOutput::Text(s) => s,
+            _ => panic!("expected Text"),
+        };
+        let dra_line = text.lines().find(|l| l.contains("\u{0394}RA:")).unwrap();
+        let dra_seconds: f64 = dra_line
+            .split_whitespace()
+            .last()
+            .unwrap()
+            .trim_end_matches('s')
+            .parse()
+            .unwrap();
+        assert!(
+            (dra_seconds - 100.0 / 15.0).abs() < 0.01,
+            "\u{0394}RA expected +6.67s, got {}s — sign convention regression",
+            dra_seconds,
+        );
     }
 }

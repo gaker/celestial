@@ -18,10 +18,13 @@ impl PointingModel {
 
     pub fn add_term(&mut self, name: &str) -> Result<()> {
         let term = create_term(name)?;
+        if self.terms.iter().any(|t| t.name() == term.name()) {
+            return Ok(());
+        }
         self.terms.push(term);
         self.coefficients.push(0.0);
         self.fixed.push(false);
-        self.parallel.push(true);
+        self.parallel.push(false);
         Ok(())
     }
 
@@ -99,6 +102,10 @@ impl PointingModel {
 
     pub fn is_parallel(&self, idx: usize) -> bool {
         self.parallel.get(idx).copied().unwrap_or(true)
+    }
+
+    pub fn parallel_flags(&self) -> &[bool] {
+        &self.parallel
     }
 
     pub fn zero_coefficients(&mut self) {
@@ -191,8 +198,8 @@ impl PointingModel {
         let ha = lst - ra;
         let (dh, dd) =
             self.apply_equatorial(ha.radians(), dec.radians(), lat.radians(), pier.sign());
-        let cmd_ha = ha - Angle::from_arcseconds(dh);
-        let cmd_dec = dec - Angle::from_arcseconds(dd);
+        let cmd_ha = ha + Angle::from_arcseconds(dh);
+        let cmd_dec = dec + Angle::from_arcseconds(dd);
         let cmd_ra = lst - cmd_ha;
         (cmd_ra, cmd_dec)
     }
@@ -212,8 +219,8 @@ impl PointingModel {
             lat.radians(),
             pier.sign(),
         );
-        let true_ha = ha + Angle::from_arcseconds(dh);
-        let true_dec = dec_encoder + Angle::from_arcseconds(dd);
+        let true_ha = ha - Angle::from_arcseconds(dh);
+        let true_dec = dec_encoder - Angle::from_arcseconds(dd);
         let true_ra = lst - true_ha;
         (true_ra, true_dec)
     }
@@ -317,5 +324,101 @@ mod tests {
         let mut model = PointingModel::new();
         let result = model.add_term("ZZZZ");
         assert!(result.is_err());
+    }
+
+    // Sign conventions anchored to the fit residual definition:
+    //   apply_equatorial(true_pos) = encoder − true_pos       (the model predicts the residual)
+    // Therefore:
+    //   target_to_command:  encoder_cmd = target + apply(target)
+    //   command_to_target:  true_pos    = encoder − apply(encoder)
+    // TPOINT manual section 7.2 equivalents:
+    //   "ADD corrections to encoder to get true sky"     ⇒ correction_manual = −apply
+    //   "SUBTRACT corrections from target to command"    ⇒ command = target + apply
+    //
+    // The tests below are the *only* place this convention is locked down. If you
+    // change the residual sign in `build_residuals` or flip any per-term Jacobian
+    // sign, expect at least one of these to fail.
+
+    #[test]
+    fn target_to_command_matches_residual_convention() {
+        let mut model = PointingModel::new();
+        model.add_term("IH").unwrap();
+        model.set_coefficients(&[-100.0]).unwrap();
+        let lst = Angle::from_hours(6.0);
+        let lat = Angle::from_degrees(39.0);
+        let target_ra = Angle::from_hours(6.0);
+        let target_dec = Angle::from_degrees(30.0);
+        let ha = lst - target_ra;
+        let (dh, _) = model.apply_equatorial(
+            ha.radians(),
+            target_dec.radians(),
+            lat.radians(),
+            PierSide::East.sign(),
+        );
+        assert!((dh - 100.0).abs() < 1e-9, "apply.dh = {} for IH=-100", dh);
+        let (cmd_ra, _) = model.target_to_command(target_ra, target_dec, lst, lat, PierSide::East);
+        let cmd_ha = lst - cmd_ra;
+        let actual_offset = (cmd_ha - ha).arcseconds();
+        assert!(
+            (actual_offset - dh).abs() < 1e-6,
+            "target_to_command should produce cmd_ha = ha + apply.dh; offset={}, expected {}",
+            actual_offset,
+            dh,
+        );
+    }
+
+    #[test]
+    fn command_to_target_matches_residual_convention() {
+        let mut model = PointingModel::new();
+        model.add_term("IH").unwrap();
+        model.set_coefficients(&[-100.0]).unwrap();
+        let lst = Angle::from_hours(6.0);
+        let lat = Angle::from_degrees(39.0);
+        let target_ra = Angle::from_hours(6.0);
+        let target_dec = Angle::from_degrees(30.0);
+        let ha = lst - target_ra;
+        let (dh, _) = model.apply_equatorial(
+            ha.radians(),
+            target_dec.radians(),
+            lat.radians(),
+            PierSide::East.sign(),
+        );
+        assert!((dh - 100.0).abs() < 1e-9, "apply.dh = {} for IH=-100", dh);
+        let encoder_ra = lst - (ha + Angle::from_arcseconds(dh));
+        let encoder_dec = target_dec;
+        let (true_ra, true_dec) =
+            model.command_to_target(encoder_ra, encoder_dec, lst, lat, PierSide::East);
+        let dra = (true_ra - target_ra).arcseconds();
+        let ddec = (true_dec - target_dec).arcseconds();
+        assert!(
+            dra.abs() < 1e-6 && ddec.abs() < 1e-6,
+            "command_to_target failed: dra={}, ddec={}",
+            dra,
+            ddec,
+        );
+    }
+
+    #[test]
+    fn target_command_target_roundtrip() {
+        let mut model = PointingModel::new();
+        model.add_term("IH").unwrap();
+        model.add_term("ID").unwrap();
+        model.set_coefficients(&[-100.0, 50.0]).unwrap();
+        let lst = Angle::from_hours(6.0);
+        let lat = Angle::from_degrees(39.0);
+        let target_ra = Angle::from_hours(6.0);
+        let target_dec = Angle::from_degrees(30.0);
+        let (cmd_ra, cmd_dec) =
+            model.target_to_command(target_ra, target_dec, lst, lat, PierSide::East);
+        let (back_ra, back_dec) =
+            model.command_to_target(cmd_ra, cmd_dec, lst, lat, PierSide::East);
+        let dra = (back_ra - target_ra).arcseconds();
+        let ddec = (back_dec - target_dec).arcseconds();
+        assert!(
+            dra.abs() < 1e-6 && ddec.abs() < 1e-6,
+            "round-trip failed: dra={}, ddec={}",
+            dra,
+            ddec,
+        );
     }
 }

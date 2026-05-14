@@ -15,6 +15,20 @@ pub struct HCEC;
 pub struct DCES;
 pub struct DCEC;
 
+pub struct TXN {
+    pub n: u8,
+    name: String,
+}
+
+impl TXN {
+    pub fn new(n: u8) -> Self {
+        Self {
+            n,
+            name: format!("TX{}", n),
+        }
+    }
+}
+
 impl Term for IH {
     fn name(&self) -> &str {
         "IH"
@@ -140,8 +154,8 @@ impl Term for TF {
         "Tube flexure (sin zeta)"
     }
     fn jacobian_equatorial(&self, h: f64, dec: f64, lat: f64, _pier: f64) -> (f64, f64) {
-        let dh = libm::cos(lat) * libm::sin(h) / libm::cos(dec);
-        let dd = libm::cos(lat) * libm::cos(h) * libm::sin(dec) - libm::sin(lat) * libm::cos(dec);
+        let dh = -libm::cos(lat) * libm::sin(h) / libm::cos(dec);
+        let dd = -(libm::cos(lat) * libm::cos(h) * libm::sin(dec) - libm::sin(lat) * libm::cos(dec));
         (dh, dd)
     }
     fn jacobian_altaz(&self, _az: f64, _el: f64, _lat: f64) -> (f64, f64) {
@@ -171,6 +185,36 @@ impl Term for TX {
         let dd_tf =
             libm::cos(lat) * libm::cos(h) * libm::sin(dec) - libm::sin(lat) * libm::cos(dec);
         (dh_tf / sin_a, dd_tf / sin_a)
+    }
+    fn jacobian_altaz(&self, _az: f64, _el: f64, _lat: f64) -> (f64, f64) {
+        (0.0, 0.0)
+    }
+    fn applicable_mounts(&self) -> MountTypeFlags {
+        MountTypeFlags::EQUATORIAL
+    }
+}
+
+impl Term for TXN {
+    fn name(&self) -> &str {
+        &self.name
+    }
+    fn description(&self) -> &str {
+        "Tube flexure (tan^n zeta)"
+    }
+    fn jacobian_equatorial(&self, h: f64, dec: f64, lat: f64, _pier: f64) -> (f64, f64) {
+        let sin_alt =
+            libm::sin(lat) * libm::sin(dec) + libm::cos(lat) * libm::cos(dec) * libm::cos(h);
+        let cos_z = sin_alt;
+        if cos_z.abs() < 1e-10 {
+            return (0.0, 0.0);
+        }
+        let sin_z = libm::sqrt((1.0 - cos_z * cos_z).max(0.0));
+        let tan_z = sin_z / cos_z;
+        let scale = libm::pow(tan_z, self.n as f64 - 1.0);
+        let dh_tf = libm::cos(lat) * libm::sin(h) / libm::cos(dec);
+        let dd_tf =
+            libm::cos(lat) * libm::cos(h) * libm::sin(dec) - libm::sin(lat) * libm::cos(dec);
+        (scale * dh_tf / cos_z, scale * dd_tf / cos_z)
     }
     fn jacobian_altaz(&self, _az: f64, _el: f64, _lat: f64) -> (f64, f64) {
         (0.0, 0.0)
@@ -411,6 +455,34 @@ mod tests {
         let (dh, dd) = FO.jacobian_equatorial(PI, 0.0, 0.0, 1.0);
         assert_eq!(dh, 0.0);
         assert_eq!(dd, -1.0);
+    }
+
+    #[test]
+    fn txn_n_equals_one_matches_tx() {
+        let txn = TXN::new(1);
+        let lat = 0.5;
+        let h = 0.3;
+        let dec = 0.4;
+        let (dh_txn, dd_txn) = txn.jacobian_equatorial(h, dec, lat, 1.0);
+        let (dh_tx, dd_tx) = TX.jacobian_equatorial(h, dec, lat, 1.0);
+        assert!((dh_txn - dh_tx).abs() < 1e-12);
+        assert!((dd_txn - dd_tx).abs() < 1e-12);
+    }
+
+    #[test]
+    fn txn_scales_by_tan_z_power() {
+        let lat = 0.6;
+        let h = 0.5;
+        let dec = 0.3;
+        let (dh1, dd1) = TXN::new(1).jacobian_equatorial(h, dec, lat, 1.0);
+        let (dh3, dd3) = TXN::new(3).jacobian_equatorial(h, dec, lat, 1.0);
+        let sin_alt = libm::sin(lat) * libm::sin(dec) + libm::cos(lat) * libm::cos(dec) * libm::cos(h);
+        let cos_z = sin_alt;
+        let sin_z = libm::sqrt(1.0 - cos_z * cos_z);
+        let tan_z = sin_z / cos_z;
+        let scale = tan_z * tan_z;
+        assert!((dh3 - scale * dh1).abs() < 1e-10);
+        assert!((dd3 - scale * dd1).abs() < 1e-10);
     }
 
     #[test]

@@ -18,9 +18,9 @@ pub enum PierSide {
 impl PierSide {
     pub fn sign(&self) -> f64 {
         match self {
-            PierSide::East => 1.0,
-            PierSide::West => -1.0,
-            PierSide::Unknown => 1.0,
+            Self::East => 1.0,
+            Self::West => -1.0,
+            Self::Unknown => 1.0,
         }
     }
 }
@@ -65,6 +65,18 @@ pub enum IndatOption {
     RotatorCoudeRight,
 }
 
+/// Parsed contents of a TPOINT-style INDAT file.
+///
+/// Carries site parameters, option flags, mount type, the list of
+/// observations, and preserved header comment lines. The fields are
+/// populated directly from the file; the parser does not validate or
+/// transform reference frames.
+///
+/// The input-coordinate contract for `observations` — catalog coords must
+/// be apparent-of-date, telescope coords must have refraction removed and
+/// pier side encoded, LST must be apparent sidereal time — is documented
+/// in the book: `book/src/pointing/indat-format.md`. The `:NODA` option is
+/// parsed into `options` but not acted on; it's informational only.
 #[derive(Debug, Clone)]
 pub struct IndatFile {
     pub site: SiteParams,

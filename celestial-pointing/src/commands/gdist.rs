@@ -11,6 +11,7 @@ impl Command for Gdist {
     fn name(&self) -> &str {
         "GDIST"
     }
+    
     fn description(&self) -> &str {
         "Histogram of residual distribution"
     }
@@ -72,12 +73,14 @@ mod tests {
     #[test]
     fn empty_observations_returns_message() {
         let mut session = Session::new();
-        session.last_fit = Some(crate::solver::FitResult {
-            coefficients: vec![1.0],
-            sigma: vec![0.1],
-            sky_rms: 5.0,
-            term_names: vec!["IH".to_string()],
-        });
+        session.last_fit = Some(
+            crate::test_support::FitResultBuilder::new()
+                .coefficients(vec![1.0])
+                .sky_rms(5.0)
+                .popn_sd(5.0)
+                .term_names(["IH"])
+                .build(),
+        );
         let result = Gdist.execute(&mut session, &[]).unwrap();
         match result {
             CommandOutput::Text(s) => assert_eq!(s, "No active observations"),
@@ -99,29 +102,24 @@ mod tests {
     }
 
     fn build_session_with_obs() -> Session {
-        use crate::observation::{Observation, PierSide};
-        use celestial_core::Angle;
+        use crate::test_support::{FitResultBuilder, ObsBuilder};
 
         let mut session = Session::new();
-        session.last_fit = Some(crate::solver::FitResult {
-            coefficients: vec![],
-            sigma: vec![],
-            sky_rms: 5.0,
-            term_names: vec![],
-        });
+        session.last_fit = Some(
+            FitResultBuilder::new()
+                .sky_rms(5.0)
+                .popn_sd(5.0)
+                .build(),
+        );
         for i in 0..10 {
             let offset = (i as f64) * 10.0;
-            session.observations.push(Observation {
-                catalog_ra: Angle::from_hours(0.0),
-                catalog_dec: Angle::from_degrees(45.0),
-                observed_ra: Angle::from_hours(0.0),
-                observed_dec: Angle::from_degrees(45.0 + offset / 3600.0),
-                lst: Angle::from_hours(0.0),
-                commanded_ha: Angle::from_arcseconds(0.0),
-                actual_ha: Angle::from_arcseconds(offset),
-                pier_side: PierSide::East,
-                masked: false,
-            });
+            session.observations.push(
+                ObsBuilder::new()
+                    .catalog_dec_deg(45.0)
+                    .observed_dec_deg(45.0 + offset / 3600.0)
+                    .actual_ha_arcsec(offset)
+                    .build(),
+            );
         }
         session
     }
