@@ -75,7 +75,7 @@ fn format_dms(deg: f64) -> String {
 mod tests {
     use super::*;
     use crate::error::Error;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
     use std::sync::atomic::{AtomicU64, Ordering};
 
     static SEQ: AtomicU64 = AtomicU64::new(0);
@@ -88,7 +88,7 @@ mod tests {
         path
     }
 
-    fn cleanup(p: &PathBuf) {
+    fn cleanup(p: &Path) {
         let _ = std::fs::remove_file(p);
     }
 
@@ -106,7 +106,7 @@ mod tests {
         s
     }
 
-    fn run(path: &PathBuf) -> Result<String> {
+    fn run(path: &Path) -> Result<String> {
         let mut session = Session::new();
         Indat.execute(&mut session, &[path.to_str().unwrap()]).map(|out| match out {
             CommandOutput::Text(s) => s,

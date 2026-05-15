@@ -474,9 +474,9 @@ mod tests {
             .collect();
         let prepared = s.prepared_observations();
         assert_eq!(prepared.len(), 5);
-        for i in 0..5 {
+        for (i, p) in prepared.iter().enumerate().take(5) {
             assert_eq!(
-                prepared[i].observed_dec.degrees(),
+                p.observed_dec.degrees(),
                 s.observations[i].observed_dec.degrees(),
             );
         }

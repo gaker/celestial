@@ -69,11 +69,7 @@ impl FrameBuffer {
 
     pub fn with_capacity(header: &SerHeader, megabytes: usize) -> Self {
         let frame_size = header.frame_size() as usize;
-        let max_frames = if frame_size > 0 {
-            (megabytes * 1024 * 1024) / frame_size
-        } else {
-            1024
-        };
+        let max_frames = (megabytes * 1024 * 1024).checked_div(frame_size).unwrap_or(1024);
         Self::new(header, max_frames.max(1))
     }
 }

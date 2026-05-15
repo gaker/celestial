@@ -99,6 +99,6 @@ pub(super) fn extract_pairs(
             snr: best.entry.snr,
         })
         .collect();
-    pairs.sort_by(|a, b| b.votes.cmp(&a.votes));
+    pairs.sort_by_key(|p| std::cmp::Reverse(p.votes));
     pairs
 }

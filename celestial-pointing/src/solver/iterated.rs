@@ -410,8 +410,7 @@ mod tests {
         let o = obs(100.0, 30.0);
         let observations: Vec<&Observation> = vec![&o, &o, &o];
         let terms = vec![create_term("IH").unwrap()];
-        let mut opts = IterOptions::default();
-        opts.max_iter = 0;
+        let opts = IterOptions { max_iter: 0, ..IterOptions::default() };
         let result = run_iter(&observations, &terms, &[false], &[0.0], &opts);
         assert_eq!(result.iter_report.iterations, 0);
         assert!(!result.iter_report.converged);
@@ -439,8 +438,7 @@ mod tests {
         let o = obs(100.0, 30.0);
         let observations: Vec<&Observation> = vec![&o, &o, &o];
         let terms = vec![create_term("IH").unwrap()];
-        let mut opts = IterOptions::default();
-        opts.robust = true;
+        let opts = IterOptions { robust: true, ..IterOptions::default() };
         let result = run_iter(&observations, &terms, &[false], &[0.0], &opts);
         assert!((result.coefficients[0] - (-100.0)).abs() < 1.0);
     }

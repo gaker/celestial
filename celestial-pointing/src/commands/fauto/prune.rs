@@ -93,6 +93,34 @@ fn find_best_elimination(
         .min_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal))
 }
 
+pub(super) fn prune_terms(
+    observations: &[&Observation],
+    active: &mut Vec<String>,
+    latitude: f64,
+    fit_tol: f64,
+) -> Result<Vec<String>> {
+    let fit = try_fit(observations, active, latitude, fit_tol)?;
+    let base_set: std::collections::HashSet<&str> = BASE_TERMS.iter().copied().collect();
+    let to_remove: Vec<String> = active
+        .iter()
+        .enumerate()
+        .filter(|(i, name)| {
+            if base_set.contains(name.as_str()) {
+                return false;
+            }
+            let sigma = fit.sigma[*i];
+            sigma > 0.0 && (fit.coefficients[*i] / sigma).abs() < MIN_SIGNIFICANCE
+        })
+        .map(|(_, n)| n.clone())
+        .collect();
+    let mut pruned = Vec::new();
+    for name in &to_remove {
+        active.retain(|n| n != name);
+        pruned.push(name.clone());
+    }
+    Ok(pruned)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -170,32 +198,4 @@ mod tests {
         // Pinning the constant so any change is intentional.
         assert_eq!(MIN_SIGNIFICANCE, 2.0);
     }
-}
-
-pub(super) fn prune_terms(
-    observations: &[&Observation],
-    active: &mut Vec<String>,
-    latitude: f64,
-    fit_tol: f64,
-) -> Result<Vec<String>> {
-    let fit = try_fit(observations, active, latitude, fit_tol)?;
-    let base_set: std::collections::HashSet<&str> = BASE_TERMS.iter().copied().collect();
-    let to_remove: Vec<String> = active
-        .iter()
-        .enumerate()
-        .filter(|(i, name)| {
-            if base_set.contains(name.as_str()) {
-                return false;
-            }
-            let sigma = fit.sigma[*i];
-            sigma > 0.0 && (fit.coefficients[*i] / sigma).abs() < MIN_SIGNIFICANCE
-        })
-        .map(|(_, n)| n.clone())
-        .collect();
-    let mut pruned = Vec::new();
-    for name in &to_remove {
-        active.retain(|n| n != name);
-        pruned.push(name.clone());
-    }
-    Ok(pruned)
 }

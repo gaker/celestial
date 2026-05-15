@@ -25,11 +25,7 @@ pub fn histogram_terminal(values: &[f64], title: &str, label: &str) -> String {
     let mut out = format!("{title}\n\n");
     for (i, &count) in bins.iter().enumerate() {
         let edge = min_val + i as f64 * bin_width;
-        let bar_len = if max_count > 0 {
-            (count * 40) / max_count
-        } else {
-            0
-        };
+        let bar_len = (count * 40).checked_div(max_count).unwrap_or(0);
         let bar: String = "\u{2588}".repeat(bar_len);
         out.push_str(&format!("  {edge:>8.1} \u{2502}{bar}\n"));
     }

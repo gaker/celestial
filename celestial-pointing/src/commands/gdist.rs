@@ -66,7 +66,7 @@ mod tests {
     fn no_fit_returns_error() {
         let mut session = Session::new();
         let result = Gdist.execute(&mut session, &[]);
-        let err = result.err().expect("expected error");
+        let err = result.expect_err("expected error");
         assert!(err.to_string().contains("no fit"));
     }
 
