@@ -124,7 +124,7 @@ impl<R: Read + Seek> XisfFile<R> {
 
     fn parse_xml(xml: &str) -> Result<XisfHeader> {
         let mut reader = Reader::from_str(xml);
-        reader.trim_text(true);
+        reader.config_mut().trim_text(true);
 
         let mut version = String::new();
         let mut images = Vec::new();

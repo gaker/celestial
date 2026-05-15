@@ -36,8 +36,6 @@ serde_json.workspace = true
 toml.workspace = true
 
 nalgebra.workspace = true
-ndarray.workspace = true
-ndarray-npy.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

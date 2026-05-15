@@ -18,8 +18,6 @@ libm.workspace = true
 flate2.workspace = true
 lz4_flex.workspace = true
 memmap2.workspace = true
-ndarray.workspace = true
-num-traits.workspace = true
 png = { workspace = true, optional = true }
 quick-xml.workspace = true
 rayon = { workspace = true, optional = true }
@@ -31,7 +29,6 @@ wide = { workspace = true, optional = true }
 approx.workspace = true
 criterion.workspace = true
 glob.workspace = true
-proptest.workspace = true
 tempfile.workspace = true
 
 [features]

@@ -214,7 +214,7 @@ fn parse_listing(xml: &str) -> anyhow::Result<(Vec<RemoteFile>, Option<String>)>
             }
             Ok(Event::Text(e)) => {
                 buf.clear();
-                buf.push_str(&e.unescape().unwrap_or_default());
+                buf.push_str(&e.decode().unwrap_or_default());
                 if in_key {
                     cur_key.push_str(&buf);
                 } else if in_size {

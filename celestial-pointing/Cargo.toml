@@ -17,12 +17,12 @@ libm.workspace = true
 thiserror.workspace = true
 regex.workspace = true
 rayon.workspace = true
-nalgebra = "0.34"
-bitflags = "2.10"
-rustyline = "14"
-dirs = "5"
-plotters = { version = "0.3", default-features = false, features = ["svg_backend"] }
-textplots = "0.8"
+nalgebra.workspace = true
+bitflags.workspace = true
+rustyline.workspace = true
+dirs.workspace = true
+plotters = { workspace = true, features = ["svg_backend"] }
+textplots.workspace = true
 
 [[bin]]
 name = "pointing"

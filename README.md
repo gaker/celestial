@@ -55,12 +55,12 @@ celestial-images = "0.1"
 
 ### celestial-pointing
 
+Build, fit, and apply telescope pointing models using standard equatorial and harmonic terms. Interactive REPL with TPOINT-compatible workflow: load observations, fit models via least-squares, analyze residuals with plots, and export corrections.
+
 ```toml
 [dependencies]
 celestial-pointing = "0.1"
 ```
-
-Build, fit, and apply telescope pointing models using standard equatorial and harmonic terms. Interactive REPL with TPOINT-compatible workflow: load observations, fit models via least-squares, analyze residuals with plots, and export corrections.
 
 ### celestial-wcs
 
@@ -71,13 +71,31 @@ World Coordinate System (WCS) transformations for FITS images. Pixel to celestia
 celestial-wcs = "0.1"
 ```
 
+### celestial-catalog
+
+37M star HEALPix-indexed catalog (Gaia DR3 + Hipparcos). Memory-mapped reader with <10ms cone search and `forge` CLI for building catalogs from upstream sources.
+
+```toml
+[dependencies]
+celestial-catalog = "0.1"
+```
+
+### celestial-solver
+
+Plate solver: wavelet/connected-components star detection, quad-based catalog matching, WCS fitting with SIP distortion refinement.
+
+```toml
+[dependencies]
+celestial-solver = "0.1"
+```
+
 ## Development
 
 Early stage. API will change. Each crate has its own README with detailed documentation.
 
 ## Requirements
 
-Rust 1.70 or later.
+Rust 1.95 or later.
 
 ## License
 
