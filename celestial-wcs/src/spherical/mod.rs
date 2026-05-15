@@ -1,4 +1,4 @@
-use celestial_core::constants::{HALF_PI, RAD_TO_DEG};
+use celestial_core::constants::{HALF_PI, PI, RAD_TO_DEG};
 use celestial_core::utils::normalize_longitude;
 use celestial_core::Angle;
 
@@ -85,9 +85,18 @@ impl SphericalRotation {
             latpole_rad,
         )?;
 
-        let x = -cos_theta_0 * sin_phi_p;
-        let y = sin_theta_0 * cos_delta_0 - cos_theta_0 * sin_delta_0 * cos_phi_p;
-        let alpha_p = alpha_0.radians() + libm::atan2(x, y);
+        const POLE_TOL: f64 = 1e-14;
+        let alpha_p = if (delta_0_rad.abs() - HALF_PI).abs() < POLE_TOL {
+            alpha_0.radians()
+        } else if (delta_p - HALF_PI).abs() < POLE_TOL {
+            alpha_0.radians() + phi_p_rad - PI
+        } else if (delta_p + HALF_PI).abs() < POLE_TOL {
+            alpha_0.radians() - phi_p_rad
+        } else {
+            let x = -cos_theta_0 * sin_phi_p;
+            let y = sin_theta_0 * cos_delta_0 - cos_theta_0 * sin_delta_0 * cos_phi_p;
+            alpha_0.radians() + libm::atan2(x, y)
+        };
 
         let alpha_p_deg = normalize_longitude(alpha_p * RAD_TO_DEG);
         let delta_p_deg = delta_p * RAD_TO_DEG;
@@ -232,10 +241,10 @@ pub enum Projection {
     Par,
     Mol,
     Ait,
-    Cop { theta_a: f64 },
-    Coe { theta_a: f64 },
-    Cod { theta_a: f64 },
-    Coo { theta_a: f64 },
+    Cop { theta_a: f64, eta: f64 },
+    Coe { theta_a: f64, eta: f64 },
+    Cod { theta_a: f64, eta: f64 },
+    Coo { theta_a: f64, eta: f64 },
     Bon { theta_1: f64 },
     Pco,
     Tsc,
@@ -320,20 +329,20 @@ impl Projection {
         Self::Ait
     }
 
-    pub fn cop(theta_a: f64) -> Self {
-        Self::Cop { theta_a }
+    pub fn cop(theta_a: f64, eta: f64) -> Self {
+        Self::Cop { theta_a, eta }
     }
 
-    pub fn coe(theta_a: f64) -> Self {
-        Self::Coe { theta_a }
+    pub fn coe(theta_a: f64, eta: f64) -> Self {
+        Self::Coe { theta_a, eta }
     }
 
-    pub fn cod(theta_a: f64) -> Self {
-        Self::Cod { theta_a }
+    pub fn cod(theta_a: f64, eta: f64) -> Self {
+        Self::Cod { theta_a, eta }
     }
 
-    pub fn coo(theta_a: f64) -> Self {
-        Self::Coo { theta_a }
+    pub fn coo(theta_a: f64, eta: f64) -> Self {
+        Self::Coo { theta_a, eta }
     }
 
     pub fn bon(theta_1: f64) -> Self {
@@ -369,11 +378,11 @@ impl Projection {
             | Self::Air { .. } => (0.0, 90.0),
             Self::Car | Self::Mer | Self::Cea { .. } | Self::Cyp { .. } => (0.0, 0.0),
             Self::Sfl | Self::Par | Self::Mol | Self::Ait => (0.0, 0.0),
-            Self::Cop { theta_a }
-            | Self::Coe { theta_a }
-            | Self::Cod { theta_a }
-            | Self::Coo { theta_a } => (0.0, *theta_a),
-            Self::Bon { theta_1 } => (0.0, *theta_1),
+            Self::Cop { theta_a, .. }
+            | Self::Coe { theta_a, .. }
+            | Self::Cod { theta_a, .. }
+            | Self::Coo { theta_a, .. } => (0.0, *theta_a),
+            Self::Bon { .. } => (0.0, 0.0),
             Self::Pco => (0.0, 0.0),
             Self::Tsc | Self::Csc | Self::Qsc => (0.0, 0.0),
         }
@@ -398,10 +407,10 @@ impl Projection {
             Self::Par => project_par(native),
             Self::Mol => project_mol(native),
             Self::Ait => project_ait(native),
-            Self::Cop { theta_a } => project_cop(native, *theta_a),
-            Self::Coe { theta_a } => project_coe(native, *theta_a),
-            Self::Cod { theta_a } => project_cod(native, *theta_a),
-            Self::Coo { theta_a } => project_coo(native, *theta_a),
+            Self::Cop { theta_a, eta } => project_cop(native, *theta_a, *eta),
+            Self::Coe { theta_a, eta } => project_coe(native, *theta_a, *eta),
+            Self::Cod { theta_a, eta } => project_cod(native, *theta_a, *eta),
+            Self::Coo { theta_a, eta } => project_coo(native, *theta_a, *eta),
             Self::Bon { theta_1 } => project_bon(native, *theta_1),
             Self::Pco => project_pco(native),
             Self::Tsc => project_tsc(native),
@@ -429,10 +438,10 @@ impl Projection {
             Self::Par => deproject_par(inter),
             Self::Mol => deproject_mol(inter),
             Self::Ait => deproject_ait(inter),
-            Self::Cop { theta_a } => deproject_cop(inter, *theta_a),
-            Self::Coe { theta_a } => deproject_coe(inter, *theta_a),
-            Self::Cod { theta_a } => deproject_cod(inter, *theta_a),
-            Self::Coo { theta_a } => deproject_coo(inter, *theta_a),
+            Self::Cop { theta_a, eta } => deproject_cop(inter, *theta_a, *eta),
+            Self::Coe { theta_a, eta } => deproject_coe(inter, *theta_a, *eta),
+            Self::Cod { theta_a, eta } => deproject_cod(inter, *theta_a, *eta),
+            Self::Coo { theta_a, eta } => deproject_coo(inter, *theta_a, *eta),
             Self::Bon { theta_1 } => deproject_bon(inter, *theta_1),
             Self::Pco => deproject_pco(inter),
             Self::Tsc => deproject_tsc(inter),
@@ -448,95 +457,136 @@ mod tests {
     use celestial_core::assert_ulp_lt;
 
     #[test]
-    fn test_native_to_celestial_at_pole() {
-        let rot = SphericalRotation::new(
+    fn test_all_projections_map_reference_to_origin() {
+        let projections: &[Projection] = &[
+            Projection::tan(),
+            Projection::sin(),
+            Projection::arc(),
+            Projection::stg(),
+            Projection::zea(),
+            Projection::azp(2.0, 30.0),
+            Projection::szp(2.0, 45.0, 60.0),
+            Projection::zpn(vec![0.0, 1.0]),
+            Projection::air(45.0),
+            Projection::car(),
+            Projection::mer(),
+            Projection::cea_with_lambda(0.5),
+            Projection::cyp(1.0, 2.0),
+            Projection::sfl(),
+            Projection::par(),
+            Projection::mol(),
+            Projection::ait(),
+            Projection::cop(45.0, 0.0),
+            Projection::coe(45.0, 0.0),
+            Projection::cod(45.0, 0.0),
+            Projection::coo(45.0, 0.0),
+            Projection::bon(45.0),
+            Projection::pco(),
+            Projection::tsc(),
+            Projection::csc(),
+            Projection::qsc(),
+        ];
+        for proj in projections {
+            let (phi0, theta0) = proj.native_reference();
+            let native = NativeCoord::new(
+                Angle::from_degrees(phi0),
+                Angle::from_degrees(theta0),
+            );
+            let inter = proj.project(native).unwrap_or_else(|e| {
+                panic!("{:?} failed to project reference: {}", proj, e)
+            });
+            assert!(
+                inter.x_deg().abs() < 1e-10 && inter.y_deg().abs() < 1e-10,
+                "{:?} reference point did not map to origin: ({}, {})",
+                proj,
+                inter.x_deg(),
+                inter.y_deg(),
+            );
+        }
+    }
+
+    #[test]
+    fn test_spherical_rotation_known_points() {
+        // Several anchor points exercise different code paths in the spherical
+        // rotation: the native pole maps to crval, the reference (90, 0) maps
+        // to the celestial equator, and the celestial reference maps back to
+        // the native pole.
+
+        // (alpha_p, delta_p, phi_p) = (0, 90, 180): native pole stays at
+        // celestial delta = 90.
+        let rot_north = SphericalRotation::new(
             Angle::from_degrees(0.0),
             Angle::from_degrees(90.0),
             Angle::from_degrees(180.0),
         );
-        let native = NativeCoord::new(Angle::from_degrees(0.0), Angle::from_degrees(90.0));
-        let celestial = rot.native_to_celestial(native).unwrap();
+        let native_pole = NativeCoord::new(Angle::from_degrees(0.0), Angle::from_degrees(90.0));
+        let cel = rot_north.native_to_celestial(native_pole).unwrap();
+        assert_ulp_lt!(cel.delta().degrees(), 90.0, 1);
 
-        assert_ulp_lt!(celestial.delta().degrees(), 90.0, 1);
-    }
+        // (90, 0) -> celestial (90, 0) for that same rotation.
+        let cel_eq = rot_north
+            .native_to_celestial(NativeCoord::new(
+                Angle::from_degrees(90.0),
+                Angle::from_degrees(0.0),
+            ))
+            .unwrap();
+        assert!(cel_eq.delta().degrees().abs() < 1e-10);
+        assert_ulp_lt!(cel_eq.alpha().degrees(), 90.0, 1);
 
-    #[test]
-    fn test_native_to_celestial_reference_point() {
-        let rot = SphericalRotation::new(
+        // (alpha_p, delta_p, phi_p) = (180, 45, 180): native pole maps to
+        // celestial (180, 45), and the inverse takes us back.
+        let rot_oblique = SphericalRotation::new(
             Angle::from_degrees(180.0),
             Angle::from_degrees(45.0),
             Angle::from_degrees(180.0),
         );
-        let native = NativeCoord::new(Angle::from_degrees(0.0), Angle::from_degrees(90.0));
-        let celestial = rot.native_to_celestial(native).unwrap();
+        let cel_ref = rot_oblique.native_to_celestial(native_pole).unwrap();
+        assert_ulp_lt!(cel_ref.alpha().degrees(), 180.0, 1);
+        assert_ulp_lt!(cel_ref.delta().degrees(), 45.0, 1);
 
-        assert_ulp_lt!(celestial.alpha().degrees(), 180.0, 1);
-        assert_ulp_lt!(celestial.delta().degrees(), 45.0, 1);
+        let nat_back = rot_oblique
+            .celestial_to_native(CelestialCoord::new(
+                Angle::from_degrees(180.0),
+                Angle::from_degrees(45.0),
+            ))
+            .unwrap();
+        assert_ulp_lt!(nat_back.theta().degrees(), 90.0, 1);
     }
 
     #[test]
-    fn test_native_to_celestial_equator() {
-        let rot = SphericalRotation::new(
-            Angle::from_degrees(0.0),
-            Angle::from_degrees(90.0),
-            Angle::from_degrees(180.0),
-        );
-        let native = NativeCoord::new(Angle::from_degrees(90.0), Angle::from_degrees(0.0));
-        let celestial = rot.native_to_celestial(native).unwrap();
-
-        assert!(celestial.delta().degrees().abs() < 1e-10);
-        assert_ulp_lt!(celestial.alpha().degrees(), 90.0, 1);
-    }
-
-    #[test]
-    fn test_celestial_to_native_at_pole() {
-        let rot = SphericalRotation::new(
-            Angle::from_degrees(180.0),
-            Angle::from_degrees(45.0),
-            Angle::from_degrees(180.0),
-        );
-        let celestial = CelestialCoord::new(Angle::from_degrees(180.0), Angle::from_degrees(45.0));
-        let native = rot.celestial_to_native(celestial).unwrap();
-
-        assert_ulp_lt!(native.theta().degrees(), 90.0, 1);
-    }
-
-    #[test]
-    fn test_spherical_rotation_roundtrip() {
-        let rot = SphericalRotation::new(
+    fn test_spherical_rotation_roundtrip_both_directions() {
+        // Forward roundtrip starting from native space.
+        let rot_fwd = SphericalRotation::new(
             Angle::from_degrees(120.0),
             Angle::from_degrees(35.0),
             Angle::from_degrees(180.0),
         );
+        let original_nat = NativeCoord::new(Angle::from_degrees(45.0), Angle::from_degrees(60.0));
+        let cel = rot_fwd.native_to_celestial(original_nat).unwrap();
+        let recovered_nat = rot_fwd.celestial_to_native(cel).unwrap();
+        // ULP tolerance accounts for ARM vs x86 FPU differences in trig functions.
+        assert_ulp_lt!(original_nat.phi().degrees(), recovered_nat.phi().degrees(), 8);
+        assert_ulp_lt!(original_nat.theta().degrees(), recovered_nat.theta().degrees(), 8);
 
-        let original = NativeCoord::new(Angle::from_degrees(45.0), Angle::from_degrees(60.0));
-        let celestial = rot.native_to_celestial(original).unwrap();
-        let recovered = rot.celestial_to_native(celestial).unwrap();
-
-        // ULP tolerance accounts for ARM vs x86 FPU differences in trig functions
-        assert_ulp_lt!(original.phi().degrees(), recovered.phi().degrees(), 8);
-        assert_ulp_lt!(original.theta().degrees(), recovered.theta().degrees(), 8);
-    }
-
-    #[test]
-    fn test_spherical_rotation_roundtrip_reverse() {
-        let rot = SphericalRotation::new(
+        // Reverse roundtrip starting from celestial space, including negative delta_p.
+        let rot_rev = SphericalRotation::new(
             Angle::from_degrees(100.0),
             Angle::from_degrees(-25.0),
             Angle::from_degrees(180.0),
         );
-
-        let original = CelestialCoord::new(Angle::from_degrees(110.0), Angle::from_degrees(-30.0));
-        let native = rot.celestial_to_native(original).unwrap();
-        let recovered = rot.native_to_celestial(native).unwrap();
-
-        assert_ulp_lt!(original.alpha().degrees(), recovered.alpha().degrees(), 2);
-        assert_ulp_lt!(original.delta().degrees(), recovered.delta().degrees(), 3);
+        let original_cel =
+            CelestialCoord::new(Angle::from_degrees(110.0), Angle::from_degrees(-30.0));
+        let nat = rot_rev.celestial_to_native(original_cel).unwrap();
+        let recovered_cel = rot_rev.native_to_celestial(nat).unwrap();
+        assert_ulp_lt!(original_cel.alpha().degrees(), recovered_cel.alpha().degrees(), 2);
+        assert_ulp_lt!(original_cel.delta().degrees(), recovered_cel.delta().degrees(), 3);
     }
 
     #[test]
     fn test_from_crval_zenithal_at_pole() {
-        let rot = SphericalRotation::from_crval(
+        // For a zenithal projection (theta_0 = 90), the native pole maps to crval.
+        // Two crvals: an oblique pointing and the north celestial pole itself.
+        let rot_oblique = SphericalRotation::from_crval(
             Angle::from_degrees(180.0),
             Angle::from_degrees(45.0),
             Angle::from_degrees(90.0),
@@ -544,17 +594,13 @@ mod tests {
             None,
         )
         .unwrap();
-
         let native_ref = NativeCoord::new(Angle::from_degrees(0.0), Angle::from_degrees(90.0));
-        let celestial = rot.native_to_celestial(native_ref).unwrap();
+        let cel = rot_oblique.native_to_celestial(native_ref).unwrap();
+        assert_ulp_lt!(cel.alpha().degrees(), 180.0, 2);
+        assert_ulp_lt!(cel.delta().degrees(), 45.0, 2);
 
-        assert_ulp_lt!(celestial.alpha().degrees(), 180.0, 2);
-        assert_ulp_lt!(celestial.delta().degrees(), 45.0, 2);
-    }
-
-    #[test]
-    fn test_from_crval_zenithal_north_pole() {
-        let rot = SphericalRotation::from_crval(
+        // crval at the pole - the alpha is degenerate, but delta must be 90.
+        let rot_north = SphericalRotation::from_crval(
             Angle::from_degrees(0.0),
             Angle::from_degrees(90.0),
             Angle::from_degrees(90.0),
@@ -562,11 +608,8 @@ mod tests {
             None,
         )
         .unwrap();
-
-        let native_ref = NativeCoord::new(Angle::from_degrees(0.0), Angle::from_degrees(90.0));
-        let celestial = rot.native_to_celestial(native_ref).unwrap();
-
-        assert_ulp_lt!(celestial.delta().degrees(), 90.0, 2);
+        let cel_north = rot_north.native_to_celestial(native_ref).unwrap();
+        assert_ulp_lt!(cel_north.delta().degrees(), 90.0, 2);
     }
 
     #[test]
@@ -772,5 +815,76 @@ mod tests {
 
         assert_ulp_lt!(native.phi().degrees(), recovered.phi().degrees(), 5);
         assert_ulp_lt!(native.theta().degrees(), recovered.theta().degrees(), 5);
+    }
+
+    #[test]
+    fn test_from_crval_pole_crval() {
+        use crate::Projection;
+        use crate::coordinate::IntermediateCoord;
+
+        // crval at the celestial pole exercises Paper II rule 1
+        // (delta_0 = +/-90 -> alpha_p = 0).
+        let rot = SphericalRotation::from_crval(
+            Angle::from_degrees(0.0),
+            Angle::from_degrees(90.0),
+            Angle::from_degrees(90.0),
+            None,
+            None,
+        )
+        .unwrap();
+
+        assert!(
+            rot.alpha_p.abs() < 1e-12,
+            "expected alpha_p = 0 (rule 1: delta_0 = ±90°), got {}",
+            rot.alpha_p,
+        );
+
+        // Sanity check via a TAN projection offset from the pole: with
+        // intermediate (0.5, 0.5) deg the spec predicts alpha ≈ 315°,
+        // delta ≈ 89.293°.
+        let tan = Projection::tan();
+        let native = tan.deproject(IntermediateCoord::new(0.5, 0.5)).unwrap();
+        let celestial = rot.native_to_celestial(native).unwrap();
+        let alpha_norm = celestial.alpha().degrees().rem_euclid(360.0);
+        assert!(
+            (alpha_norm - 315.0).abs() < 1e-9,
+            "expected alpha ≈ 315°, got {}", celestial.alpha().degrees(),
+        );
+        assert!(
+            (celestial.delta().degrees() - 89.293).abs() < 1e-3,
+            "expected delta ≈ 89.293°, got {}", celestial.delta().degrees(),
+        );
+    }
+
+    #[test]
+    fn test_from_crval_theta0_zero_maps_fiducial_to_crval() {
+        for alpha_0_deg in [0.0, 45.0, 90.0, 180.0, 270.0, 315.0] {
+            let rot = SphericalRotation::from_crval(
+                Angle::from_degrees(alpha_0_deg),
+                Angle::from_degrees(0.0),
+                Angle::from_degrees(0.0),
+                None,
+                None,
+            )
+            .unwrap();
+
+            let native = NativeCoord::new(Angle::from_degrees(0.0), Angle::from_degrees(0.0));
+            let celestial = rot.native_to_celestial(native).unwrap();
+
+            let alpha_got = celestial.alpha().degrees();
+            let diff = ((alpha_got - alpha_0_deg + 540.0).rem_euclid(360.0)) - 180.0;
+            assert!(
+                diff.abs() < 1e-12,
+                "lon mismatch at alpha_0={}: got {}",
+                alpha_0_deg,
+                alpha_got
+            );
+            assert!(
+                celestial.delta().degrees().abs() < 1e-12,
+                "lat mismatch at alpha_0={}: got {}",
+                alpha_0_deg,
+                celestial.delta().degrees()
+            );
+        }
     }
 }

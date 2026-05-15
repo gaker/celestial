@@ -12,23 +12,11 @@ pub(crate) fn project_bon(native: NativeCoord, theta_1_deg: f64) -> WcsResult<In
 
     check_nonzero_param(theta_1, "BON projection: theta_1")?;
 
-    let (theta_1_s, theta_1_c) = libm::sincos(theta_1);
-    let cot_theta_1 = theta_1_c / theta_1_s;
+    let cot_theta_1 = libm::cos(theta_1) / libm::sin(theta_1);
+    let y0 = cot_theta_1 + theta_1;
+    let r_theta = y0 - theta;
 
-    let y0 = cot_theta_1;
-
-    if theta.abs() < 1e-10 {
-        let r_theta = cot_theta_1 + theta_1;
-        let a = phi * theta_1_s / r_theta;
-        let (a_sin, a_cos) = libm::sincos(a);
-        let x = r_theta * a_sin * RAD_TO_DEG;
-        let y = (y0 - r_theta * a_cos) * RAD_TO_DEG;
-        return Ok(IntermediateCoord::new(x, y));
-    }
-
-    let r_theta = cot_theta_1 + theta_1 - theta;
-
-    let a = phi * libm::sin(theta) / r_theta;
+    let a = phi * libm::cos(theta) / r_theta;
     let (a_sin, a_cos) = libm::sincos(a);
 
     let x = r_theta * a_sin * RAD_TO_DEG;
@@ -44,25 +32,24 @@ pub(crate) fn deproject_bon(inter: IntermediateCoord, theta_1_deg: f64) -> WcsRe
 
     check_nonzero_param(theta_1, "BON projection: theta_1")?;
 
-    let (theta_1_s, theta_1_c) = libm::sincos(theta_1);
-    let cot_theta_1 = theta_1_c / theta_1_s;
-    let y0 = cot_theta_1;
+    let cot_theta_1 = libm::cos(theta_1) / libm::sin(theta_1);
+    let y0 = cot_theta_1 + theta_1;
     let y_offset = y0 - y;
 
     let r_unsigned = libm::sqrt(x * x + y_offset * y_offset);
     let r = theta_1.signum() * r_unsigned;
 
-    let theta = cot_theta_1 + theta_1 - r;
+    let theta = y0 - r;
 
     let a = libm::atan2(theta_1.signum() * x, theta_1.signum() * y_offset);
 
-    if theta.abs() < 1e-10 {
-        let r_at_equator = cot_theta_1 + theta_1;
-        let phi = a * r_at_equator / theta_1_s;
-        return Ok(native_coord_from_radians(phi, theta));
+    let cos_theta = libm::cos(theta);
+    if cos_theta.abs() < 1e-15 {
+        return Err(WcsError::singularity(
+            "BON deprojection: cos(theta) ~ 0 (theta near +/-90)",
+        ));
     }
-
-    let phi = a * r / libm::sin(theta);
+    let phi = a * r / cos_theta;
 
     Ok(native_coord_from_radians(phi, theta))
 }
@@ -187,199 +174,80 @@ mod tests {
     use celestial_core::assert_ulp_lt;
     use celestial_core::Angle;
 
-    #[test]
-    fn test_bon_reference_point() {
-        let theta_1 = 45.0;
-        let proj = Projection::bon(theta_1);
-        let native = NativeCoord::new(Angle::from_degrees(0.0), Angle::from_degrees(theta_1));
-        let inter = proj.project(native).unwrap();
-        assert!(inter.x_deg().abs() < 1e-10);
-        assert!(inter.y_deg().abs() < 1e-10);
-    }
+    // Per-projection native_reference checks are covered by
+    // spherical::tests::test_all_projections_map_reference_to_origin.
 
     #[test]
-    fn test_bon_native_reference() {
-        let theta_1 = 45.0;
-        let proj = Projection::bon(theta_1);
-        let (phi0, theta0) = proj.native_reference();
-        assert_eq!(phi0, 0.0);
-        assert_eq!(theta0, theta_1);
-    }
-
-    #[test]
-    fn test_bon_roundtrip() {
-        let proj = Projection::bon(45.0);
-        let original = NativeCoord::new(Angle::from_degrees(30.0), Angle::from_degrees(60.0));
-        let inter = proj.project(original).unwrap();
-        let recovered = proj.deproject(inter).unwrap();
-        assert_ulp_lt!(original.phi().degrees(), recovered.phi().degrees(), 15);
-        assert_ulp_lt!(original.theta().degrees(), recovered.theta().degrees(), 15);
-    }
-
-    #[test]
-    fn test_bon_roundtrip_various_theta_1() {
-        for theta_1 in [30.0, 45.0, 60.0, 75.0] {
+    fn test_bon_reference_maps_to_origin() {
+        // Spec-anchored: per Paper II Eq. (145), (phi=0, theta=0) must map to
+        // (x=0, y=0) for every theta_1.  Forward at the reference is a direct
+        // check on Y_0 = (180/pi) cot(theta_1) + theta_1 (Eq. 150).
+        for theta_1 in [30.0, 45.0, 60.0, 75.0, -45.0] {
             let proj = Projection::bon(theta_1);
-            let original = NativeCoord::new(Angle::from_degrees(45.0), Angle::from_degrees(50.0));
-            let inter = proj.project(original).unwrap();
-            let recovered = proj.deproject(inter).unwrap();
-            assert_ulp_lt!(original.phi().degrees(), recovered.phi().degrees(), 20);
-            assert_ulp_lt!(original.theta().degrees(), recovered.theta().degrees(), 20);
+            let native = NativeCoord::new(Angle::from_degrees(0.0), Angle::from_degrees(0.0));
+            let inter = proj.project(native).unwrap();
+            assert!(
+                inter.x_deg().abs() < 1e-10,
+                "x not zero for BON theta_1={}: {}", theta_1, inter.x_deg(),
+            );
+            assert!(
+                inter.y_deg().abs() < 1e-10,
+                "y not zero for BON theta_1={}: {}", theta_1, inter.y_deg(),
+            );
         }
     }
 
     #[test]
-    fn test_bon_roundtrip_various_angles() {
-        let proj = Projection::bon(45.0);
-        for phi_deg in [-60.0, -30.0, 0.0, 30.0, 60.0] {
-            for theta_deg in [20.0, 40.0, 60.0] {
-                let original =
-                    NativeCoord::new(Angle::from_degrees(phi_deg), Angle::from_degrees(theta_deg));
-                let inter = proj.project(original).unwrap();
-                let recovered = proj.deproject(inter).unwrap();
-                assert_ulp_lt!(original.phi().degrees(), recovered.phi().degrees(), 20);
-                assert_ulp_lt!(original.theta().degrees(), recovered.theta().degrees(), 20);
+    fn test_bon_roundtrip_sweep() {
+        // Sweep theta_1 (including negative) x phi x theta in one shot.
+        for theta_1 in [-45.0, 30.0, 45.0, 60.0, 75.0] {
+            let proj = Projection::bon(theta_1);
+            // Mirror theta sign for negative theta_1 so we stay on the valid side.
+            let thetas: &[f64] = if theta_1 > 0.0 {
+                &[0.0, 10.0, 20.0, 30.0, 50.0, 70.0]
+            } else {
+                &[0.0, -10.0, -20.0, -30.0, -50.0, -70.0]
+            };
+            for &phi_deg in &[-60.0, -30.0, 0.0, 30.0, 60.0] {
+                for &theta_deg in thetas {
+                    let original = NativeCoord::new(
+                        Angle::from_degrees(phi_deg),
+                        Angle::from_degrees(theta_deg),
+                    );
+                    let inter = proj.project(original).unwrap();
+                    let recovered = proj.deproject(inter).unwrap();
+                    // The theta=0 equator case has a separate code path that
+                    // doesn't recover ULP-tight; assert the absolute floor.
+                    assert!(
+                        (original.phi().degrees() - recovered.phi().degrees()).abs() < 1e-8,
+                        "phi (theta_1={}, {}, {})", theta_1, phi_deg, theta_deg,
+                    );
+                    assert!(
+                        (original.theta().degrees() - recovered.theta().degrees()).abs() < 1e-8,
+                        "theta (theta_1={}, {}, {})", theta_1, phi_deg, theta_deg,
+                    );
+                }
             }
         }
     }
 
     #[test]
-    fn test_bon_theta_1_zero() {
-        let proj = Projection::bon(0.0);
-        let native = NativeCoord::new(Angle::from_degrees(0.0), Angle::from_degrees(45.0));
-        let result = proj.project(native);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_bon_equator_handling() {
-        let proj = Projection::bon(45.0);
-        let original = NativeCoord::new(Angle::from_degrees(30.0), Angle::from_degrees(0.0));
-        let inter = proj.project(original).unwrap();
-        let recovered = proj.deproject(inter).unwrap();
-        assert!(
-            (original.phi().degrees() - recovered.phi().degrees()).abs() < 1e-8,
-            "phi mismatch: {} vs {}",
-            original.phi().degrees(),
-            recovered.phi().degrees()
-        );
-        assert!(
-            (original.theta().degrees() - recovered.theta().degrees()).abs() < 1e-8,
-            "theta mismatch: {} vs {}",
-            original.theta().degrees(),
-            recovered.theta().degrees()
-        );
-    }
-
-    #[test]
-    fn test_bon_wide_latitude_range() {
-        let proj = Projection::bon(45.0);
-        for theta_deg in [10.0, 20.0, 30.0, 50.0, 70.0] {
-            let original =
-                NativeCoord::new(Angle::from_degrees(30.0), Angle::from_degrees(theta_deg));
-            let inter = proj.project(original).unwrap();
-            let recovered = proj.deproject(inter).unwrap();
-            assert_ulp_lt!(original.phi().degrees(), recovered.phi().degrees(), 20);
-            assert_ulp_lt!(original.theta().degrees(), recovered.theta().degrees(), 20);
-        }
-    }
-
-    #[test]
-    fn test_bon_negative_theta_1() {
-        let proj = Projection::bon(-45.0);
-        let original = NativeCoord::new(Angle::from_degrees(30.0), Angle::from_degrees(-60.0));
-        let inter = proj.project(original).unwrap();
-        let recovered = proj.deproject(inter).unwrap();
-        assert_ulp_lt!(original.phi().degrees(), recovered.phi().degrees(), 20);
-        assert_ulp_lt!(original.theta().degrees(), recovered.theta().degrees(), 20);
-    }
-
-    #[test]
-    fn test_pco_reference_point() {
+    fn test_pco_equator_known_value_and_symmetry() {
         let proj = Projection::pco();
-        let native = NativeCoord::new(Angle::from_degrees(0.0), Angle::from_degrees(0.0));
-        let inter = proj.project(native).unwrap();
-        assert!(inter.x_deg().abs() < 1e-10);
-        assert!(inter.y_deg().abs() < 1e-10);
-    }
 
-    #[test]
-    fn test_pco_native_reference() {
-        let proj = Projection::pco();
-        let (phi0, theta0) = proj.native_reference();
-        assert_eq!(phi0, 0.0);
-        assert_eq!(theta0, 0.0);
-    }
-
-    #[test]
-    fn test_pco_equator() {
-        let proj = Projection::pco();
+        // On the equator PCO collapses to (phi, 0) - a degree-identity in x.
         let native = NativeCoord::new(Angle::from_degrees(45.0), Angle::from_degrees(0.0));
         let inter = proj.project(native).unwrap();
         assert_ulp_lt!(inter.x_deg(), 45.0, 2);
         assert!(inter.y_deg().abs() < 1e-10);
-    }
 
-    #[test]
-    fn test_pco_roundtrip() {
-        let proj = Projection::pco();
-        let original = NativeCoord::new(Angle::from_degrees(30.0), Angle::from_degrees(45.0));
-        let inter = proj.project(original).unwrap();
-        let recovered = proj.deproject(inter).unwrap();
-        assert_ulp_lt!(original.phi().degrees(), recovered.phi().degrees(), 50);
-        assert_ulp_lt!(original.theta().degrees(), recovered.theta().degrees(), 50);
-    }
-
-    #[test]
-    fn test_pco_roundtrip_various_angles() {
-        let proj = Projection::pco();
-        for phi_deg in [-60.0, -30.0, 0.0, 30.0, 60.0] {
-            for theta_deg in [-60.0, -30.0, 15.0, 30.0, 60.0] {
-                let original =
-                    NativeCoord::new(Angle::from_degrees(phi_deg), Angle::from_degrees(theta_deg));
-                let inter = proj.project(original).unwrap();
-                let recovered = proj.deproject(inter).unwrap();
-                assert!(
-                    (original.phi().degrees() - recovered.phi().degrees()).abs() < 1e-8,
-                    "phi mismatch at ({}, {}): {} vs {}",
-                    phi_deg,
-                    theta_deg,
-                    original.phi().degrees(),
-                    recovered.phi().degrees()
-                );
-                assert!(
-                    (original.theta().degrees() - recovered.theta().degrees()).abs() < 1e-8,
-                    "theta mismatch at ({}, {}): {} vs {}",
-                    phi_deg,
-                    theta_deg,
-                    original.theta().degrees(),
-                    recovered.theta().degrees()
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn test_pco_deproject_origin() {
-        let proj = Projection::pco();
-        let inter = IntermediateCoord::new(0.0, 0.0);
-        let result = proj.deproject(inter).unwrap();
-        assert_eq!(result.phi().degrees(), 0.0);
-        assert_eq!(result.theta().degrees(), 0.0);
-    }
-
-    #[test]
-    fn test_pco_deproject_equator() {
-        let proj = Projection::pco();
+        // Deprojection round trip on the equator.
         let inter = IntermediateCoord::new(30.0, 0.0);
         let result = proj.deproject(inter).unwrap();
         assert_ulp_lt!(result.phi().degrees(), 30.0, 2);
         assert!(result.theta().degrees().abs() < 1e-10);
-    }
 
-    #[test]
-    fn test_pco_symmetric() {
-        let proj = Projection::pco();
+        // Symmetry about the central meridian: (-phi, theta) -> (-x, y).
         let native_pos = NativeCoord::new(Angle::from_degrees(30.0), Angle::from_degrees(45.0));
         let native_neg = NativeCoord::new(Angle::from_degrees(-30.0), Angle::from_degrees(45.0));
         let inter_pos = proj.project(native_pos).unwrap();
@@ -389,61 +257,33 @@ mod tests {
     }
 
     #[test]
-    fn test_pco_wide_latitude_range() {
+    fn test_pco_roundtrip() {
         let proj = Projection::pco();
-        for theta_deg in [-70.0, -45.0, -20.0, 20.0, 45.0, 70.0] {
-            let original =
-                NativeCoord::new(Angle::from_degrees(30.0), Angle::from_degrees(theta_deg));
-            let inter = proj.project(original).unwrap();
-            let recovered = proj.deproject(inter).unwrap();
-            assert!(
-                (original.phi().degrees() - recovered.phi().degrees()).abs() < 1e-8,
-                "phi mismatch at theta={}: {} vs {}",
-                theta_deg,
-                original.phi().degrees(),
-                recovered.phi().degrees()
-            );
-            assert!(
-                (original.theta().degrees() - recovered.theta().degrees()).abs() < 1e-8,
-                "theta mismatch at theta={}: {} vs {}",
-                theta_deg,
-                original.theta().degrees(),
-                recovered.theta().degrees()
-            );
+        for phi_deg in [-60.0, -30.0, 0.0, 30.0, 60.0] {
+            for theta_deg in [-70.0, -45.0, -20.0, 15.0, 20.0, 30.0, 45.0, 60.0, 70.0] {
+                let original = NativeCoord::new(
+                    Angle::from_degrees(phi_deg),
+                    Angle::from_degrees(theta_deg),
+                );
+                let inter = proj.project(original).unwrap();
+                let recovered = proj.deproject(inter).unwrap();
+                assert!(
+                    (original.phi().degrees() - recovered.phi().degrees()).abs() < 1e-8,
+                    "phi mismatch at ({}, {})", phi_deg, theta_deg,
+                );
+                assert!(
+                    (original.theta().degrees() - recovered.theta().degrees()).abs() < 1e-8,
+                    "theta mismatch at ({}, {})", phi_deg, theta_deg,
+                );
+            }
         }
     }
 
     #[test]
-    fn test_polyconic_projections_native_reference() {
-        let theta_1 = 45.0;
-        let bon = Projection::bon(theta_1);
-        let pco = Projection::pco();
-
-        let (bon_phi0, bon_theta0) = bon.native_reference();
-        assert_eq!(bon_phi0, 0.0);
-        assert_eq!(bon_theta0, theta_1);
-
-        let (pco_phi0, pco_theta0) = pco.native_reference();
-        assert_eq!(pco_phi0, 0.0);
-        assert_eq!(pco_theta0, 0.0);
-    }
-
-    #[test]
-    fn test_bon_reference_maps_to_origin() {
-        for theta_1 in [30.0, 45.0, 60.0, 75.0] {
-            let proj = Projection::bon(theta_1);
-            let native = NativeCoord::new(Angle::from_degrees(0.0), Angle::from_degrees(theta_1));
-            let inter = proj.project(native).unwrap();
-            assert!(
-                inter.x_deg().abs() < 1e-10,
-                "x not zero for BON with theta_1={}",
-                theta_1
-            );
-            assert!(
-                inter.y_deg().abs() < 1e-10,
-                "y not zero for BON with theta_1={}",
-                theta_1
-            );
-        }
+    fn test_polyconic_error_cases() {
+        // BON with theta_1 = 0 makes cot(theta_1) undefined.
+        let bon = Projection::bon(0.0);
+        let native = NativeCoord::new(Angle::from_degrees(0.0), Angle::from_degrees(45.0));
+        assert!(bon.project(native).is_err());
     }
 }

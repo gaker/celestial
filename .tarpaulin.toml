@@ -6,5 +6,7 @@ out = ["Lcov", "Json"]
 output-dir = "target/tarpaulin"
 exclude-files = [
     "celestial-core/src/test_helpers.rs",
-    "celestial-catalog/src/bin/**/**"
+    "celestial-catalog/src/bin/**/**",
+    "celestial-solver/src/bin/**/**",
+    "celestial-pointing/src/bin/**/**"
 ]

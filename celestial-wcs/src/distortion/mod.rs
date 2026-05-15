@@ -95,34 +95,23 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_distortion_model_sip() {
+    fn test_distortion_model_dispatches_to_each_variant() {
+        // SIP is the pixel-space distortion; the empty (degree-0 effective)
+        // model leaves coordinates unchanged.
         let sip = SipDistortion::new([512.0, 512.0], 2, 2);
-        let model = DistortionModel::Sip(sip);
-        assert!(model.operates_on_pixels());
-        let (x, y) = model.apply(100.0, 200.0);
-        assert_eq!((x, y), (100.0, 200.0));
-    }
+        let sip_model = DistortionModel::Sip(sip.clone());
+        assert!(sip_model.operates_on_pixels());
+        assert_eq!(sip_model.apply(100.0, 200.0), (100.0, 200.0));
+        let sip_trait: &dyn Distortion = &sip;
+        assert!(sip_trait.operates_on_pixels());
 
-    #[test]
-    fn test_distortion_model_tpv() {
+        // TPV is the intermediate-space distortion; identity leaves
+        // intermediates unchanged.
         let tpv = TpvDistortion::identity();
-        let model = DistortionModel::Tpv(Box::new(tpv));
-        assert!(!model.operates_on_pixels());
-        let (x, y) = model.apply(0.5, 0.5);
-        assert_eq!((x, y), (0.5, 0.5));
-    }
-
-    #[test]
-    fn test_distortion_trait_sip() {
-        let sip = SipDistortion::new([512.0, 512.0], 2, 2);
-        let d: &dyn Distortion = &sip;
-        assert!(d.operates_on_pixels());
-    }
-
-    #[test]
-    fn test_distortion_trait_tpv() {
-        let tpv = TpvDistortion::identity();
-        let d: &dyn Distortion = &tpv;
-        assert!(!d.operates_on_pixels());
+        let tpv_model = DistortionModel::Tpv(Box::new(tpv.clone()));
+        assert!(!tpv_model.operates_on_pixels());
+        assert_eq!(tpv_model.apply(0.5, 0.5), (0.5, 0.5));
+        let tpv_trait: &dyn Distortion = &tpv;
+        assert!(!tpv_trait.operates_on_pixels());
     }
 }

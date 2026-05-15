@@ -1,6 +1,7 @@
+use crate::common::newton_raphson_2d;
 use crate::error::{WcsError, WcsResult};
 
-use super::polynomial::{chebyshev, legendre, newton_raphson_2d};
+use super::polynomial::{chebyshev, legendre};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum SurfaceType {
@@ -278,9 +279,7 @@ impl TnxDistortion {
     pub fn apply_inverse(&self, x: f64, y: f64) -> WcsResult<(f64, f64)> {
         let distort_fn = |px: f64, py: f64| self.apply(px, py);
 
-        newton_raphson_2d((x, y), (x, y), distort_fn, 20, 1e-12).map_err(|msg| {
-            WcsError::convergence_failure(format!("TNX inverse distortion: {}", msg))
-        })
+        newton_raphson_2d((x, y), (x, y), distort_fn, 20, 1e-12, "TNX inverse distortion")
     }
 }
 
@@ -304,111 +303,89 @@ mod tests {
     }
 
     #[test]
-    fn test_identity_full_cross() {
-        let surf = zero_surface(CrossTerms::Full);
-        assert_eq!(surf.evaluate(50.0, 50.0), 0.0);
-        assert_eq!(surf.evaluate(0.0, 0.0), 0.0);
-        assert_eq!(surf.evaluate(100.0, 100.0), 0.0);
+    fn test_zero_surface_evaluates_to_zero_for_every_cross_term_mode() {
+        // A zero-coefficient surface must produce 0 regardless of cross-term
+        // selection.  The coefficient count differs per mode (Full=9, Half=6,
+        // None=6 for x_order=y_order=3); zero_surface() handles that.
+        for mode in [CrossTerms::Full, CrossTerms::Half, CrossTerms::None] {
+            let surf = zero_surface(mode);
+            assert_eq!(surf.evaluate(0.0, 0.0), 0.0, "{:?} at origin", mode);
+            assert_eq!(surf.evaluate(50.0, 50.0), 0.0, "{:?} at center", mode);
+            assert_eq!(surf.evaluate(100.0, 100.0), 0.0, "{:?} at corner", mode);
+        }
     }
 
     #[test]
-    fn test_identity_half_cross() {
-        let surf = zero_surface(CrossTerms::Half);
-        assert_eq!(surf.evaluate(50.0, 50.0), 0.0);
+    fn test_basis_functions_match_explicit_polynomials() {
+        // Surface.basis(n, x) must agree with the explicit polynomial forms
+        // for n = 0..3 across all three basis types.
+        struct Case {
+            ty: SurfaceType,
+            x: f64,
+            expected: [f64; 4],
+        }
+        let x = 0.5;
+        let cases = [
+            // Chebyshev: T_0=1, T_1=x, T_2=2x^2-1, T_3=4x^3-3x.
+            Case {
+                ty: SurfaceType::Chebyshev,
+                x,
+                expected: [1.0, 0.5, 2.0 * 0.25 - 1.0, 4.0 * 0.125 - 3.0 * 0.5],
+            },
+            // Legendre: P_0=1, P_1=x, P_2=(3x^2-1)/2, P_3=(5x^3-3x)/2.
+            Case {
+                ty: SurfaceType::Legendre,
+                x,
+                expected: [
+                    1.0, 0.5, (3.0 * 0.25 - 1.0) / 2.0, (5.0 * 0.125 - 3.0 * 0.5) / 2.0,
+                ],
+            },
+            // Polynomial: x^n.
+            Case {
+                ty: SurfaceType::Polynomial,
+                x,
+                expected: [1.0, 0.5, 0.25, 0.125],
+            },
+        ];
+        for case in &cases {
+            let surf = TnxSurface::new(
+                case.ty,
+                3, 3,
+                CrossTerms::Full,
+                (0.0, 1.0), (0.0, 1.0),
+                vec![0.0; 9],
+            ).unwrap();
+            for (n, &expected) in case.expected.iter().enumerate() {
+                assert!(
+                    (surf.basis(n as u32, case.x) - expected).abs() < 1e-14,
+                    "{:?} basis {} at {} mismatch", case.ty, n, case.x,
+                );
+            }
+        }
     }
 
     #[test]
-    fn test_identity_no_cross() {
-        let surf = zero_surface(CrossTerms::None);
-        assert_eq!(surf.evaluate(50.0, 50.0), 0.0);
-    }
-
-    #[test]
-    fn test_chebyshev_basis() {
+    fn test_normalization_maps_range_to_unit_interval() {
+        // normalize_x/normalize_y must map x_range/y_range onto [-1, +1].
         let surf = TnxSurface::new(
             SurfaceType::Chebyshev,
-            3,
-            3,
+            2, 2,
             CrossTerms::Full,
-            (0.0, 1.0),
-            (0.0, 1.0),
-            vec![0.0; 9],
-        )
-        .unwrap();
-
-        assert_eq!(surf.basis(0, 0.5), 1.0);
-        assert_eq!(surf.basis(1, 0.5), 0.5);
-        assert_eq!(surf.basis(2, 0.5), 2.0 * 0.25 - 1.0);
-    }
-
-    #[test]
-    fn test_legendre_basis() {
-        let surf = TnxSurface::new(
-            SurfaceType::Legendre,
-            3,
-            3,
-            CrossTerms::Full,
-            (0.0, 1.0),
-            (0.0, 1.0),
-            vec![0.0; 9],
-        )
-        .unwrap();
-
-        assert_eq!(surf.basis(0, 0.5), 1.0);
-        assert_eq!(surf.basis(1, 0.5), 0.5);
-        let expected_p2 = (3.0 * 0.25 - 1.0) / 2.0;
-        assert_eq!(surf.basis(2, 0.5), expected_p2);
-    }
-
-    #[test]
-    fn test_polynomial_basis() {
-        let surf = TnxSurface::new(
-            SurfaceType::Polynomial,
-            3,
-            3,
-            CrossTerms::Full,
-            (0.0, 1.0),
-            (0.0, 1.0),
-            vec![0.0; 9],
-        )
-        .unwrap();
-
-        assert_eq!(surf.basis(0, 0.5), 1.0);
-        assert_eq!(surf.basis(1, 0.5), 0.5);
-        assert_eq!(surf.basis(2, 0.5), 0.25);
-        assert_eq!(surf.basis(3, 0.5), 0.125);
-    }
-
-    #[test]
-    fn test_normalization_center() {
-        let surf = TnxSurface::new(
-            SurfaceType::Chebyshev,
-            2,
-            2,
-            CrossTerms::Full,
-            (10.0, 20.0),
-            (30.0, 50.0),
+            (10.0, 20.0), (30.0, 50.0),
             vec![0.0; 4],
-        )
-        .unwrap();
-
+        ).unwrap();
+        // Centre of the asymmetric (10, 20) x (30, 50) range maps to 0.
         assert_eq!(surf.normalize_x(15.0), 0.0);
         assert_eq!(surf.normalize_y(40.0), 0.0);
-    }
 
-    #[test]
-    fn test_normalization_edges() {
+        // Edges of the (0, 100) range map to -1 and +1.
         let surf = TnxSurface::new(
             SurfaceType::Chebyshev,
-            2,
-            2,
+            2, 2,
             CrossTerms::Full,
-            (0.0, 100.0),
-            (0.0, 100.0),
+            (0.0, 100.0), (0.0, 100.0),
             vec![0.0; 4],
-        )
-        .unwrap();
-
+        ).unwrap();
         assert_eq!(surf.normalize_x(0.0), -1.0);
         assert_eq!(surf.normalize_x(100.0), 1.0);
         assert_eq!(surf.normalize_y(0.0), -1.0);
@@ -416,41 +393,30 @@ mod tests {
     }
 
     #[test]
-    fn test_constant_surface() {
-        let coeffs = vec![5.0, 0.0, 0.0, 0.0];
-        let surf = TnxSurface::new(
+    fn test_polynomial_surface_evaluation_known_terms() {
+        // Constant surface (5) is invariant across the domain.
+        let constant = TnxSurface::new(
             SurfaceType::Polynomial,
-            2,
-            2,
+            2, 2,
             CrossTerms::Full,
-            (0.0, 100.0),
-            (0.0, 100.0),
-            coeffs,
-        )
-        .unwrap();
+            (0.0, 100.0), (0.0, 100.0),
+            vec![5.0, 0.0, 0.0, 0.0],
+        ).unwrap();
+        assert_eq!(constant.evaluate(0.0, 0.0), 5.0);
+        assert_eq!(constant.evaluate(50.0, 50.0), 5.0);
+        assert_eq!(constant.evaluate(100.0, 100.0), 5.0);
 
-        assert_eq!(surf.evaluate(0.0, 0.0), 5.0);
-        assert_eq!(surf.evaluate(50.0, 50.0), 5.0);
-        assert_eq!(surf.evaluate(100.0, 100.0), 5.0);
-    }
-
-    #[test]
-    fn test_linear_x_surface() {
-        let coeffs = vec![0.0, 1.0, 0.0, 0.0];
-        let surf = TnxSurface::new(
+        // Linear-in-x surface produces normalized x in [-1, 1] (independent of y).
+        let linear_x = TnxSurface::new(
             SurfaceType::Polynomial,
-            2,
-            2,
+            2, 2,
             CrossTerms::Full,
-            (0.0, 100.0),
-            (0.0, 100.0),
-            coeffs,
-        )
-        .unwrap();
-
-        assert_eq!(surf.evaluate(0.0, 50.0), -1.0);
-        assert_eq!(surf.evaluate(50.0, 50.0), 0.0);
-        assert_eq!(surf.evaluate(100.0, 50.0), 1.0);
+            (0.0, 100.0), (0.0, 100.0),
+            vec![0.0, 1.0, 0.0, 0.0],
+        ).unwrap();
+        assert_eq!(linear_x.evaluate(0.0, 50.0), -1.0);
+        assert_eq!(linear_x.evaluate(50.0, 50.0), 0.0);
+        assert_eq!(linear_x.evaluate(100.0, 50.0), 1.0);
     }
 
     #[test]
@@ -480,213 +446,133 @@ mod tests {
     }
 
     #[test]
-    fn test_roundtrip_polynomial() {
-        let coeffs = vec![0.0, 0.001, 0.0, 0.0, 0.0, 0.001, 0.0, 0.0, 0.0];
-        let lng = TnxSurface::new(
-            SurfaceType::Polynomial,
-            3,
-            3,
-            CrossTerms::Full,
-            (0.0, 100.0),
-            (0.0, 100.0),
-            coeffs.clone(),
-        )
-        .unwrap();
-        let lat = TnxSurface::new(
-            SurfaceType::Polynomial,
-            3,
-            3,
-            CrossTerms::Full,
-            (0.0, 100.0),
-            (0.0, 100.0),
-            coeffs,
-        )
-        .unwrap();
-
-        let tnx = TnxDistortion::new(lng, lat);
-
-        let (x_orig, y_orig) = (45.0, 55.0);
-        let (x_dist, y_dist) = tnx.apply(x_orig, y_orig);
-        let (x_back, y_back) = tnx.apply_inverse(x_dist, y_dist).unwrap();
-
-        assert!((x_back - x_orig).abs() < 1e-10);
-        assert!((y_back - y_orig).abs() < 1e-10);
-    }
-
-    #[test]
-    fn test_roundtrip_chebyshev() {
-        let coeffs = vec![0.0, 0.0005, 0.0, 0.0, 0.0, 0.0003, 0.0, 0.0, 0.0];
-        let lng = TnxSurface::new(
-            SurfaceType::Chebyshev,
-            3,
-            3,
-            CrossTerms::Full,
-            (0.0, 100.0),
-            (0.0, 100.0),
-            coeffs.clone(),
-        )
-        .unwrap();
-        let lat = TnxSurface::new(
-            SurfaceType::Chebyshev,
-            3,
-            3,
-            CrossTerms::Full,
-            (0.0, 100.0),
-            (0.0, 100.0),
-            coeffs,
-        )
-        .unwrap();
-
-        let tnx = TnxDistortion::new(lng, lat);
-
-        for (x_orig, y_orig) in [(25.0, 25.0), (50.0, 75.0), (80.0, 20.0)] {
-            let (x_dist, y_dist) = tnx.apply(x_orig, y_orig);
-            let (x_back, y_back) = tnx.apply_inverse(x_dist, y_dist).unwrap();
-
-            assert!((x_back - x_orig).abs() < 1e-10);
-            assert!((y_back - y_orig).abs() < 1e-10);
+    fn test_roundtrip_across_surface_types() {
+        // All three basis types share the same Newton-Raphson inverse, so a
+        // single sweep covers the polynomial, Chebyshev and Legendre paths.
+        let cases: &[(SurfaceType, [f64; 9], &[(f64, f64)])] = &[
+            (
+                SurfaceType::Polynomial,
+                [0.0, 0.001, 0.0, 0.0, 0.0, 0.001, 0.0, 0.0, 0.0],
+                &[(45.0, 55.0)],
+            ),
+            (
+                SurfaceType::Chebyshev,
+                [0.0, 0.0005, 0.0, 0.0, 0.0, 0.0003, 0.0, 0.0, 0.0],
+                &[(25.0, 25.0), (50.0, 75.0), (80.0, 20.0)],
+            ),
+            (
+                SurfaceType::Legendre,
+                [0.0, 0.0004, 0.0, 0.0, 0.0, 0.0002, 0.0, 0.0, 0.0],
+                &[(60.0, 40.0)],
+            ),
+        ];
+        for (ty, coeffs, pts) in cases {
+            let lng = TnxSurface::new(
+                *ty, 3, 3, CrossTerms::Full,
+                (0.0, 100.0), (0.0, 100.0),
+                coeffs.to_vec(),
+            ).unwrap();
+            let lat = TnxSurface::new(
+                *ty, 3, 3, CrossTerms::Full,
+                (0.0, 100.0), (0.0, 100.0),
+                coeffs.to_vec(),
+            ).unwrap();
+            let tnx = TnxDistortion::new(lng, lat);
+            for &(x_orig, y_orig) in *pts {
+                let (xd, yd) = tnx.apply(x_orig, y_orig);
+                let (xb, yb) = tnx.apply_inverse(xd, yd).unwrap();
+                assert!(
+                    (xb - x_orig).abs() < 1e-10,
+                    "{:?} x at ({}, {})", ty, x_orig, y_orig,
+                );
+                assert!(
+                    (yb - y_orig).abs() < 1e-10,
+                    "{:?} y at ({}, {})", ty, x_orig, y_orig,
+                );
+            }
         }
     }
 
     #[test]
-    fn test_roundtrip_legendre() {
-        let coeffs = vec![0.0, 0.0004, 0.0, 0.0, 0.0, 0.0002, 0.0, 0.0, 0.0];
-        let lng = TnxSurface::new(
-            SurfaceType::Legendre,
-            3,
-            3,
-            CrossTerms::Full,
-            (0.0, 100.0),
-            (0.0, 100.0),
-            coeffs.clone(),
-        )
-        .unwrap();
-        let lat = TnxSurface::new(
-            SurfaceType::Legendre,
-            3,
-            3,
-            CrossTerms::Full,
-            (0.0, 100.0),
-            (0.0, 100.0),
-            coeffs,
-        )
-        .unwrap();
-
-        let tnx = TnxDistortion::new(lng, lat);
-
-        let (x_orig, y_orig) = (60.0, 40.0);
-        let (x_dist, y_dist) = tnx.apply(x_orig, y_orig);
-        let (x_back, y_back) = tnx.apply_inverse(x_dist, y_dist).unwrap();
-
-        assert!((x_back - x_orig).abs() < 1e-10);
-        assert!((y_back - y_orig).abs() < 1e-10);
-    }
-
-    #[test]
-    fn test_half_cross_terms() {
-        let n = TnxSurface::expected_coeffs(3, 3, CrossTerms::Half);
-        let mut coeffs = vec![0.0; n];
-        coeffs[0] = 1.0;
-
-        let surf = TnxSurface::new(
-            SurfaceType::Polynomial,
-            3,
-            3,
-            CrossTerms::Half,
-            (0.0, 100.0),
-            (0.0, 100.0),
-            coeffs,
-        )
-        .unwrap();
-
-        assert_eq!(surf.evaluate(50.0, 50.0), 1.0);
-    }
-
-    #[test]
-    fn test_no_cross_terms() {
-        let n = TnxSurface::expected_coeffs(3, 3, CrossTerms::None);
-        assert_eq!(n, 6);
-
-        let coeffs = vec![1.0, 0.5, 0.0, 0.0, 0.0, 0.0];
-        let surf = TnxSurface::new(
-            SurfaceType::Polynomial,
-            3,
-            3,
-            CrossTerms::None,
-            (0.0, 100.0),
-            (0.0, 100.0),
-            coeffs,
-        )
-        .unwrap();
-
-        let result = surf.evaluate(100.0, 50.0);
-        let expected = 1.0 + 0.5 * 1.0;
-        assert_eq!(result, expected);
-    }
-
-    #[test]
-    fn test_full_cross_coefficient_count() {
+    fn test_cross_terms_coefficient_count_and_evaluation() {
+        // expected_coeffs covers every cross-term mode:
+        //   Full = x_order * y_order
+        //   None = max(x_order, y_order) (one-axis terms only)
+        //   Half = upper-triangular total-degree polynomial
         assert_eq!(TnxSurface::expected_coeffs(2, 2, CrossTerms::Full), 4);
         assert_eq!(TnxSurface::expected_coeffs(3, 3, CrossTerms::Full), 9);
         assert_eq!(TnxSurface::expected_coeffs(4, 4, CrossTerms::Full), 16);
         assert_eq!(TnxSurface::expected_coeffs(2, 3, CrossTerms::Full), 6);
-    }
-
-    #[test]
-    fn test_no_cross_coefficient_count() {
         assert_eq!(TnxSurface::expected_coeffs(2, 2, CrossTerms::None), 4);
         assert_eq!(TnxSurface::expected_coeffs(3, 3, CrossTerms::None), 6);
         assert_eq!(TnxSurface::expected_coeffs(4, 5, CrossTerms::None), 9);
-    }
 
-    #[test]
-    fn test_invalid_surface_type() {
-        let result = SurfaceType::from_value(0);
-        assert!(result.is_err());
-
-        let result = SurfaceType::from_value(4);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_invalid_cross_terms() {
-        let result = CrossTerms::from_value(0);
-        assert!(result.is_err());
-
-        let result = CrossTerms::from_value(4);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_invalid_coefficient_count() {
-        let result = TnxSurface::new(
+        // A constant surface with Half cross terms still evaluates to its
+        // constant - the cross-term mode affects only the term layout.
+        let half_n = TnxSurface::expected_coeffs(3, 3, CrossTerms::Half);
+        let mut half_coeffs = vec![0.0; half_n];
+        half_coeffs[0] = 1.0;
+        let half = TnxSurface::new(
             SurfaceType::Polynomial,
-            2,
-            2,
+            3, 3,
+            CrossTerms::Half,
+            (0.0, 100.0), (0.0, 100.0),
+            half_coeffs,
+        ).unwrap();
+        assert_eq!(half.evaluate(50.0, 50.0), 1.0);
+
+        // None-cross polynomial: const + 0.5*x normalised, evaluated at the
+        // right edge where normalised x = 1.
+        let none = TnxSurface::new(
+            SurfaceType::Polynomial,
+            3, 3,
+            CrossTerms::None,
+            (0.0, 100.0), (0.0, 100.0),
+            vec![1.0, 0.5, 0.0, 0.0, 0.0, 0.0],
+        ).unwrap();
+        assert_eq!(none.evaluate(100.0, 50.0), 1.0 + 0.5);
+    }
+
+    #[test]
+    fn test_surface_construction_validates_inputs() {
+        // Unknown surface-type codes and cross-term codes are rejected.
+        assert!(SurfaceType::from_value(0).is_err());
+        assert!(SurfaceType::from_value(4).is_err());
+        assert!(CrossTerms::from_value(0).is_err());
+        assert!(CrossTerms::from_value(4).is_err());
+
+        // Wrong coefficient count (expected 4, given 3) is rejected.
+        let bad_n = TnxSurface::new(
+            SurfaceType::Polynomial,
+            2, 2,
             CrossTerms::Full,
-            (0.0, 100.0),
-            (0.0, 100.0),
+            (0.0, 100.0), (0.0, 100.0),
             vec![0.0; 3],
         );
-        assert!(result.is_err());
+        assert!(bad_n.is_err());
     }
 
     #[test]
-    fn test_missing_lngcor() {
+    fn test_parse_rejects_malformed_wat_strings() {
+        // Missing lngcor in WAT1.
         let wat1 = "wtype=tnx axtype=ra";
         let wat2 = "wtype=tnx axtype=dec latcor = \"3 2 2 3 0 100 0 100 0 0 0 0\"";
+        assert!(TnxDistortion::parse(wat1, wat2).is_err());
 
-        let result = TnxDistortion::parse(wat1, wat2);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_missing_latcor() {
+        // Missing latcor in WAT2.
         let wat1 = "wtype=tnx axtype=ra lngcor = \"3 2 2 3 0 100 0 100 0 0 0 0\"";
         let wat2 = "wtype=tnx axtype=dec";
+        assert!(TnxDistortion::parse(wat1, wat2).is_err());
 
-        let result = TnxDistortion::parse(wat1, wat2);
-        assert!(result.is_err());
+        // Fewer than the 8 required header tokens.
+        let err = TnxSurface::parse("1 2 3 4 5 6 7").unwrap_err().to_string();
+        assert!(err.contains("at least 8"), "got: {}", err);
+
+        // Unterminated quoted correction string.
+        let wat1 = "wtype=tnx lngcor = \"1 2 3 4 5 6 7 8";
+        let wat2 = "wtype=tnx latcor = \"1 2 3 4 5 6 7 8 0.0\"";
+        let err = TnxDistortion::parse(wat1, wat2).unwrap_err().to_string();
+        assert!(err.contains("unterminated"), "got: {}", err);
     }
 
     #[test]
@@ -707,66 +593,4 @@ mod tests {
         assert!((val - 0.05).abs() < 1e-10);
     }
 
-    #[test]
-    fn test_roundtrip_legendre_distortion() {
-        let coeffs = vec![0.0, 1e-4, 0.0, 0.0];
-        let surface = TnxSurface::new(
-            SurfaceType::Legendre,
-            2,
-            2,
-            CrossTerms::Full,
-            (-10.0, 10.0),
-            (-10.0, 10.0),
-            coeffs.clone(),
-        )
-        .unwrap();
-
-        let tnx = TnxDistortion::new(surface.clone(), surface);
-        let (x_out, y_out) = tnx.apply(5.0, 5.0);
-        let (x_back, y_back) = tnx.apply_inverse(x_out, y_out).unwrap();
-
-        assert!((x_back - 5.0).abs() < 1e-9);
-        assert!((y_back - 5.0).abs() < 1e-9);
-    }
-
-    #[test]
-    fn test_half_cross_terms_surface() {
-        // Create and evaluate a half cross-terms surface
-        let n = TnxSurface::expected_coeffs(3, 3, CrossTerms::Half);
-        let mut coeffs = vec![0.0; n];
-        if n > 1 {
-            coeffs[1] = 0.01;
-        }
-
-        let surface = TnxSurface::new(
-            SurfaceType::Chebyshev,
-            3,
-            3,
-            CrossTerms::Half,
-            (-1.0, 1.0),
-            (-1.0, 1.0),
-            coeffs,
-        )
-        .unwrap();
-
-        let _val = surface.evaluate(0.5, 0.5);
-    }
-
-    #[test]
-    fn test_parse_insufficient_tokens() {
-        let result = TnxSurface::parse("1 2 3 4 5 6 7");
-        assert!(result.is_err());
-        let err = result.unwrap_err().to_string();
-        assert!(err.contains("at least 8"));
-    }
-
-    #[test]
-    fn test_parse_unterminated_correction() {
-        let wat1 = "wtype=tnx lngcor = \"1 2 3 4 5 6 7 8";
-        let wat2 = "wtype=tnx latcor = \"1 2 3 4 5 6 7 8 0.0\"";
-        let result = TnxDistortion::parse(wat1, wat2);
-        assert!(result.is_err());
-        let err = result.unwrap_err().to_string();
-        assert!(err.contains("unterminated"));
-    }
 }

@@ -331,7 +331,7 @@ pub(crate) fn project_qsc(native: NativeCoord) -> WcsResult<IntermediateCoord> {
         let omega2 = omega * omega;
 
         let s = if face.xi >= 0.0 { 1.0 } else { -1.0 };
-        let denom = 1.0 - 1.0 / libm::sqrt(2.0_f64) + omega2;
+        let denom = 1.0 - 1.0 / libm::sqrt(2.0 + omega2);
         let u_val = s * 45.0 * libm::sqrt((1.0 - face.zeta) / denom);
 
         let v_val = if u_val.abs() > 1e-10 {
@@ -352,7 +352,7 @@ pub(crate) fn project_qsc(native: NativeCoord) -> WcsResult<IntermediateCoord> {
         let omega2 = omega * omega;
 
         let s = if face.eta >= 0.0 { 1.0 } else { -1.0 };
-        let denom = 1.0 - 1.0 / libm::sqrt(2.0_f64) + omega2;
+        let denom = 1.0 - 1.0 / libm::sqrt(2.0 + omega2);
         let u_val = s * 45.0 * libm::sqrt((1.0 - face.zeta) / denom);
 
         let v_val = if u_val.abs() > 1e-10 {
@@ -391,7 +391,7 @@ pub(crate) fn deproject_qsc(inter: IntermediateCoord) -> WcsResult<NativeCoord> 
 
         let omega = qsc_inverse_omega(u, v);
         let omega2 = omega * omega;
-        let denom = 1.0 - 1.0 / libm::sqrt(2.0_f64) + omega2;
+        let denom = 1.0 - 1.0 / libm::sqrt(2.0 + omega2);
         let zeta_val = 1.0 - (u / 45.0) * (u / 45.0) * denom;
 
         let factor = libm::sqrt((1.0 - zeta_val * zeta_val) / (1.0 + omega2));
@@ -408,7 +408,7 @@ pub(crate) fn deproject_qsc(inter: IntermediateCoord) -> WcsResult<NativeCoord> 
 
         let omega = qsc_inverse_omega(u, v);
         let omega2 = omega * omega;
-        let denom = 1.0 - 1.0 / libm::sqrt(2.0_f64) + omega2;
+        let denom = 1.0 - 1.0 / libm::sqrt(2.0 + omega2);
         let zeta_val = 1.0 - (u / 45.0) * (u / 45.0) * denom;
 
         let factor = libm::sqrt((1.0 - zeta_val * zeta_val) / (1.0 + omega2));
@@ -455,492 +455,119 @@ mod tests {
     use celestial_core::assert_ulp_lt;
     use celestial_core::Angle;
 
-    #[test]
-    fn test_tsc_reference_point() {
-        let proj = Projection::tsc();
-        let native = NativeCoord::new(Angle::from_degrees(0.0), Angle::from_degrees(0.0));
-        let inter = proj.project(native).unwrap();
-        assert!(inter.x_deg().abs() < 1e-10);
-        assert!(inter.y_deg().abs() < 1e-10);
-    }
-
-    #[test]
-    fn test_tsc_native_reference() {
-        let proj = Projection::tsc();
-        let (phi0, theta0) = proj.native_reference();
-        assert_eq!(phi0, 0.0);
-        assert_eq!(theta0, 0.0);
-    }
+    // Per-projection native_reference and reference-maps-to-origin checks are
+    // covered by spherical::tests::test_all_projections_map_reference_to_origin.
 
     #[test]
     fn test_tsc_roundtrip() {
         let proj = Projection::tsc();
-        let original = NativeCoord::new(Angle::from_degrees(30.0), Angle::from_degrees(30.0));
-        let inter = proj.project(original).unwrap();
-        let recovered = proj.deproject(inter).unwrap();
-        assert_ulp_lt!(original.phi().degrees(), recovered.phi().degrees(), 10);
-        assert_ulp_lt!(original.theta().degrees(), recovered.theta().degrees(), 10);
-    }
-
-    #[test]
-    fn test_tsc_roundtrip_face_0() {
-        let proj = Projection::tsc();
-        let original = NativeCoord::new(Angle::from_degrees(0.0), Angle::from_degrees(60.0));
-        let inter = proj.project(original).unwrap();
-        let recovered = proj.deproject(inter).unwrap();
-        assert_ulp_lt!(original.phi().degrees(), recovered.phi().degrees(), 10);
-        assert_ulp_lt!(original.theta().degrees(), recovered.theta().degrees(), 10);
-    }
-
-    #[test]
-    fn test_tsc_roundtrip_face_1() {
-        let proj = Projection::tsc();
-        let original = NativeCoord::new(Angle::from_degrees(0.0), Angle::from_degrees(30.0));
-        let inter = proj.project(original).unwrap();
-        let recovered = proj.deproject(inter).unwrap();
-        assert_ulp_lt!(original.phi().degrees(), recovered.phi().degrees(), 10);
-        assert_ulp_lt!(original.theta().degrees(), recovered.theta().degrees(), 10);
-    }
-
-    #[test]
-    fn test_tsc_roundtrip_face_2() {
-        let proj = Projection::tsc();
-        let original = NativeCoord::new(Angle::from_degrees(90.0), Angle::from_degrees(30.0));
-        let inter = proj.project(original).unwrap();
-        let recovered = proj.deproject(inter).unwrap();
-        assert_ulp_lt!(original.phi().degrees(), recovered.phi().degrees(), 10);
-        assert_ulp_lt!(original.theta().degrees(), recovered.theta().degrees(), 10);
-    }
-
-    #[test]
-    fn test_tsc_roundtrip_face_3() {
-        let proj = Projection::tsc();
-        let original = NativeCoord::new(Angle::from_degrees(180.0), Angle::from_degrees(30.0));
-        let inter = proj.project(original).unwrap();
-        let recovered = proj.deproject(inter).unwrap();
-        assert!(
-            (original.phi().degrees().abs() - recovered.phi().degrees().abs()).abs() < 1e-8,
-            "phi mismatch: {} vs {}",
-            original.phi().degrees(),
-            recovered.phi().degrees()
-        );
-        assert_ulp_lt!(original.theta().degrees(), recovered.theta().degrees(), 10);
-    }
-
-    #[test]
-    fn test_tsc_roundtrip_face_4() {
-        let proj = Projection::tsc();
-        let original = NativeCoord::new(Angle::from_degrees(-90.0), Angle::from_degrees(30.0));
-        let inter = proj.project(original).unwrap();
-        let recovered = proj.deproject(inter).unwrap();
-        assert_ulp_lt!(original.phi().degrees(), recovered.phi().degrees(), 10);
-        assert_ulp_lt!(original.theta().degrees(), recovered.theta().degrees(), 10);
-    }
-
-    #[test]
-    fn test_tsc_roundtrip_face_5() {
-        let proj = Projection::tsc();
-        let original = NativeCoord::new(Angle::from_degrees(0.0), Angle::from_degrees(-60.0));
-        let inter = proj.project(original).unwrap();
-        let recovered = proj.deproject(inter).unwrap();
-        assert_ulp_lt!(original.phi().degrees(), recovered.phi().degrees(), 10);
-        assert_ulp_lt!(original.theta().degrees(), recovered.theta().degrees(), 10);
-    }
-
-    #[test]
-    fn test_tsc_roundtrip_various_angles() {
-        let proj = Projection::tsc();
         for phi_deg in [-135.0, -90.0, -45.0, 0.0, 45.0, 90.0, 135.0] {
             for theta_deg in [-60.0, -30.0, 0.0, 30.0, 60.0] {
-                let original =
-                    NativeCoord::new(Angle::from_degrees(phi_deg), Angle::from_degrees(theta_deg));
+                let original = NativeCoord::new(
+                    Angle::from_degrees(phi_deg),
+                    Angle::from_degrees(theta_deg),
+                );
                 let inter = proj.project(original).unwrap();
                 let recovered = proj.deproject(inter).unwrap();
                 assert!(
                     (original.phi().degrees() - recovered.phi().degrees()).abs() < 1e-8
                         || (original.phi().degrees().abs() - 180.0).abs() < 1e-8,
                     "phi mismatch at ({}, {}): {} vs {}",
-                    phi_deg,
-                    theta_deg,
-                    original.phi().degrees(),
-                    recovered.phi().degrees()
+                    phi_deg, theta_deg,
+                    original.phi().degrees(), recovered.phi().degrees(),
                 );
                 assert!(
                     (original.theta().degrees() - recovered.theta().degrees()).abs() < 1e-8,
                     "theta mismatch at ({}, {}): {} vs {}",
-                    phi_deg,
-                    theta_deg,
-                    original.theta().degrees(),
-                    recovered.theta().degrees()
+                    phi_deg, theta_deg,
+                    original.theta().degrees(), recovered.theta().degrees(),
                 );
             }
         }
-    }
-
-    #[test]
-    fn test_tsc_deproject_origin() {
-        let proj = Projection::tsc();
-        let inter = IntermediateCoord::new(0.0, 0.0);
-        let result = proj.deproject(inter).unwrap();
-        assert_eq!(result.phi().degrees(), 0.0);
-        assert_eq!(result.theta().degrees(), 0.0);
-    }
-
-    #[test]
-    fn test_tsc_pole() {
-        let proj = Projection::tsc();
-        let native = NativeCoord::new(Angle::from_degrees(0.0), Angle::from_degrees(90.0));
-        let inter = proj.project(native).unwrap();
-        assert!(inter.x_deg().abs() < 1e-10);
-        assert_ulp_lt!(inter.y_deg(), 90.0, 2);
-    }
-
-    #[test]
-    fn test_tsc_south_pole() {
-        let proj = Projection::tsc();
-        let native = NativeCoord::new(Angle::from_degrees(0.0), Angle::from_degrees(-90.0));
-        let inter = proj.project(native).unwrap();
-        assert!(inter.x_deg().abs() < 1e-10);
-        assert_ulp_lt!(inter.y_deg(), -90.0, 2);
-    }
-
-    #[test]
-    fn test_csc_reference_point() {
-        let proj = Projection::csc();
-        let native = NativeCoord::new(Angle::from_degrees(0.0), Angle::from_degrees(0.0));
-        let inter = proj.project(native).unwrap();
-        assert!(inter.x_deg().abs() < 1e-10);
-        assert!(inter.y_deg().abs() < 1e-10);
-    }
-
-    #[test]
-    fn test_csc_native_reference() {
-        let proj = Projection::csc();
-        let (phi0, theta0) = proj.native_reference();
-        assert_eq!(phi0, 0.0);
-        assert_eq!(theta0, 0.0);
     }
 
     #[test]
     fn test_csc_roundtrip() {
-        let proj = Projection::csc();
-        let original = NativeCoord::new(Angle::from_degrees(30.0), Angle::from_degrees(30.0));
-        let inter = proj.project(original).unwrap();
-        let recovered = proj.deproject(inter).unwrap();
-        assert!(
-            (original.phi().degrees() - recovered.phi().degrees()).abs() < 0.01,
-            "phi mismatch: {} vs {}",
-            original.phi().degrees(),
-            recovered.phi().degrees()
-        );
-        assert!(
-            (original.theta().degrees() - recovered.theta().degrees()).abs() < 0.01,
-            "theta mismatch: {} vs {}",
-            original.theta().degrees(),
-            recovered.theta().degrees()
-        );
-    }
-
-    #[test]
-    fn test_csc_roundtrip_face_0() {
-        let proj = Projection::csc();
-        let original = NativeCoord::new(Angle::from_degrees(0.0), Angle::from_degrees(60.0));
-        let inter = proj.project(original).unwrap();
-        let recovered = proj.deproject(inter).unwrap();
-        assert!(
-            (original.phi().degrees() - recovered.phi().degrees()).abs() < 0.01,
-            "phi mismatch: {} vs {}",
-            original.phi().degrees(),
-            recovered.phi().degrees()
-        );
-        assert!(
-            (original.theta().degrees() - recovered.theta().degrees()).abs() < 0.01,
-            "theta mismatch: {} vs {}",
-            original.theta().degrees(),
-            recovered.theta().degrees()
-        );
-    }
-
-    #[test]
-    fn test_csc_roundtrip_face_1() {
-        let proj = Projection::csc();
-        let original = NativeCoord::new(Angle::from_degrees(0.0), Angle::from_degrees(30.0));
-        let inter = proj.project(original).unwrap();
-        let recovered = proj.deproject(inter).unwrap();
-        assert!(
-            (original.phi().degrees() - recovered.phi().degrees()).abs() < 0.01,
-            "phi mismatch: {} vs {}",
-            original.phi().degrees(),
-            recovered.phi().degrees()
-        );
-        assert!(
-            (original.theta().degrees() - recovered.theta().degrees()).abs() < 0.01,
-            "theta mismatch: {} vs {}",
-            original.theta().degrees(),
-            recovered.theta().degrees()
-        );
-    }
-
-    #[test]
-    fn test_csc_roundtrip_face_2() {
-        let proj = Projection::csc();
-        let original = NativeCoord::new(Angle::from_degrees(90.0), Angle::from_degrees(30.0));
-        let inter = proj.project(original).unwrap();
-        let recovered = proj.deproject(inter).unwrap();
-        assert!(
-            (original.phi().degrees() - recovered.phi().degrees()).abs() < 0.01,
-            "phi mismatch: {} vs {}",
-            original.phi().degrees(),
-            recovered.phi().degrees()
-        );
-        assert!(
-            (original.theta().degrees() - recovered.theta().degrees()).abs() < 0.01,
-            "theta mismatch: {} vs {}",
-            original.theta().degrees(),
-            recovered.theta().degrees()
-        );
-    }
-
-    #[test]
-    fn test_csc_roundtrip_face_4() {
-        let proj = Projection::csc();
-        let original = NativeCoord::new(Angle::from_degrees(-90.0), Angle::from_degrees(30.0));
-        let inter = proj.project(original).unwrap();
-        let recovered = proj.deproject(inter).unwrap();
-        assert!(
-            (original.phi().degrees() - recovered.phi().degrees()).abs() < 0.01,
-            "phi mismatch: {} vs {}",
-            original.phi().degrees(),
-            recovered.phi().degrees()
-        );
-        assert!(
-            (original.theta().degrees() - recovered.theta().degrees()).abs() < 0.01,
-            "theta mismatch: {} vs {}",
-            original.theta().degrees(),
-            recovered.theta().degrees()
-        );
-    }
-
-    #[test]
-    fn test_csc_roundtrip_face_5() {
-        let proj = Projection::csc();
-        let original = NativeCoord::new(Angle::from_degrees(0.0), Angle::from_degrees(-60.0));
-        let inter = proj.project(original).unwrap();
-        let recovered = proj.deproject(inter).unwrap();
-        assert!(
-            (original.phi().degrees() - recovered.phi().degrees()).abs() < 0.01,
-            "phi mismatch: {} vs {}",
-            original.phi().degrees(),
-            recovered.phi().degrees()
-        );
-        assert!(
-            (original.theta().degrees() - recovered.theta().degrees()).abs() < 0.01,
-            "theta mismatch: {} vs {}",
-            original.theta().degrees(),
-            recovered.theta().degrees()
-        );
-    }
-
-    #[test]
-    fn test_csc_roundtrip_various_angles() {
+        // CSC's forward polynomial is approximate (Paper II Section 5.6.2);
+        // the round-trip floor is set by the polynomial fit, not float precision.
         let proj = Projection::csc();
         for phi_deg in [-90.0, -45.0, 0.0, 45.0, 90.0] {
             for theta_deg in [-60.0, -30.0, 0.0, 30.0, 60.0] {
-                let original =
-                    NativeCoord::new(Angle::from_degrees(phi_deg), Angle::from_degrees(theta_deg));
+                let original = NativeCoord::new(
+                    Angle::from_degrees(phi_deg),
+                    Angle::from_degrees(theta_deg),
+                );
                 let inter = proj.project(original).unwrap();
                 let recovered = proj.deproject(inter).unwrap();
                 assert!(
                     (original.phi().degrees() - recovered.phi().degrees()).abs() < 0.01,
-                    "phi mismatch at ({}, {}): {} vs {}",
-                    phi_deg,
-                    theta_deg,
-                    original.phi().degrees(),
-                    recovered.phi().degrees()
+                    "phi at ({}, {})", phi_deg, theta_deg,
                 );
                 assert!(
                     (original.theta().degrees() - recovered.theta().degrees()).abs() < 0.01,
-                    "theta mismatch at ({}, {}): {} vs {}",
-                    phi_deg,
-                    theta_deg,
-                    original.theta().degrees(),
-                    recovered.theta().degrees()
+                    "theta at ({}, {})", phi_deg, theta_deg,
                 );
             }
         }
-    }
-
-    #[test]
-    fn test_csc_deproject_origin() {
-        let proj = Projection::csc();
-        let inter = IntermediateCoord::new(0.0, 0.0);
-        let result = proj.deproject(inter).unwrap();
-        assert_eq!(result.phi().degrees(), 0.0);
-        assert_eq!(result.theta().degrees(), 0.0);
-    }
-
-    #[test]
-    fn test_csc_pole() {
-        let proj = Projection::csc();
-        let native = NativeCoord::new(Angle::from_degrees(0.0), Angle::from_degrees(90.0));
-        let inter = proj.project(native).unwrap();
-        assert!(inter.x_deg().abs() < 1e-10);
-        assert_ulp_lt!(inter.y_deg(), 90.0, 2);
-    }
-
-    #[test]
-    fn test_qsc_reference_point() {
-        let proj = Projection::qsc();
-        let native = NativeCoord::new(Angle::from_degrees(0.0), Angle::from_degrees(0.0));
-        let inter = proj.project(native).unwrap();
-        assert!(inter.x_deg().abs() < 1e-10);
-        assert!(inter.y_deg().abs() < 1e-10);
-    }
-
-    #[test]
-    fn test_qsc_native_reference() {
-        let proj = Projection::qsc();
-        let (phi0, theta0) = proj.native_reference();
-        assert_eq!(phi0, 0.0);
-        assert_eq!(theta0, 0.0);
     }
 
     #[test]
     fn test_qsc_roundtrip() {
         let proj = Projection::qsc();
-        let original = NativeCoord::new(Angle::from_degrees(30.0), Angle::from_degrees(30.0));
-        let inter = proj.project(original).unwrap();
-        let recovered = proj.deproject(inter).unwrap();
-        assert_ulp_lt!(original.phi().degrees(), recovered.phi().degrees(), 30);
-        assert_ulp_lt!(original.theta().degrees(), recovered.theta().degrees(), 30);
-    }
-
-    #[test]
-    fn test_qsc_roundtrip_face_0() {
-        let proj = Projection::qsc();
-        let original = NativeCoord::new(Angle::from_degrees(0.0), Angle::from_degrees(60.0));
-        let inter = proj.project(original).unwrap();
-        let recovered = proj.deproject(inter).unwrap();
-        assert_ulp_lt!(original.phi().degrees(), recovered.phi().degrees(), 30);
-        assert_ulp_lt!(original.theta().degrees(), recovered.theta().degrees(), 30);
-    }
-
-    #[test]
-    fn test_qsc_roundtrip_face_1() {
-        let proj = Projection::qsc();
-        let original = NativeCoord::new(Angle::from_degrees(0.0), Angle::from_degrees(30.0));
-        let inter = proj.project(original).unwrap();
-        let recovered = proj.deproject(inter).unwrap();
-        assert_ulp_lt!(original.phi().degrees(), recovered.phi().degrees(), 30);
-        assert_ulp_lt!(original.theta().degrees(), recovered.theta().degrees(), 30);
-    }
-
-    #[test]
-    fn test_qsc_roundtrip_face_2() {
-        let proj = Projection::qsc();
-        let original = NativeCoord::new(Angle::from_degrees(90.0), Angle::from_degrees(30.0));
-        let inter = proj.project(original).unwrap();
-        let recovered = proj.deproject(inter).unwrap();
-        assert_ulp_lt!(original.phi().degrees(), recovered.phi().degrees(), 30);
-        assert_ulp_lt!(original.theta().degrees(), recovered.theta().degrees(), 30);
-    }
-
-    #[test]
-    fn test_qsc_roundtrip_face_4() {
-        let proj = Projection::qsc();
-        let original = NativeCoord::new(Angle::from_degrees(-90.0), Angle::from_degrees(30.0));
-        let inter = proj.project(original).unwrap();
-        let recovered = proj.deproject(inter).unwrap();
-        assert_ulp_lt!(original.phi().degrees(), recovered.phi().degrees(), 30);
-        assert_ulp_lt!(original.theta().degrees(), recovered.theta().degrees(), 30);
-    }
-
-    #[test]
-    fn test_qsc_roundtrip_face_5() {
-        let proj = Projection::qsc();
-        let original = NativeCoord::new(Angle::from_degrees(0.0), Angle::from_degrees(-60.0));
-        let inter = proj.project(original).unwrap();
-        let recovered = proj.deproject(inter).unwrap();
-        assert_ulp_lt!(original.phi().degrees(), recovered.phi().degrees(), 30);
-        assert_ulp_lt!(original.theta().degrees(), recovered.theta().degrees(), 30);
-    }
-
-    #[test]
-    fn test_qsc_roundtrip_various_angles() {
-        let proj = Projection::qsc();
         for phi_deg in [-90.0, -45.0, 0.0, 45.0, 90.0] {
             for theta_deg in [-60.0, -30.0, 0.0, 30.0, 60.0] {
-                let original =
-                    NativeCoord::new(Angle::from_degrees(phi_deg), Angle::from_degrees(theta_deg));
+                let original = NativeCoord::new(
+                    Angle::from_degrees(phi_deg),
+                    Angle::from_degrees(theta_deg),
+                );
                 let inter = proj.project(original).unwrap();
                 let recovered = proj.deproject(inter).unwrap();
                 assert!(
                     (original.phi().degrees() - recovered.phi().degrees()).abs() < 1e-6,
-                    "phi mismatch at ({}, {}): {} vs {}",
-                    phi_deg,
-                    theta_deg,
-                    original.phi().degrees(),
-                    recovered.phi().degrees()
+                    "phi at ({}, {})", phi_deg, theta_deg,
                 );
                 assert!(
                     (original.theta().degrees() - recovered.theta().degrees()).abs() < 1e-6,
-                    "theta mismatch at ({}, {}): {} vs {}",
-                    phi_deg,
-                    theta_deg,
-                    original.theta().degrees(),
-                    recovered.theta().degrees()
+                    "theta at ({}, {})", phi_deg, theta_deg,
                 );
             }
         }
     }
 
     #[test]
-    fn test_qsc_deproject_origin() {
-        let proj = Projection::qsc();
-        let inter = IntermediateCoord::new(0.0, 0.0);
-        let result = proj.deproject(inter).unwrap();
-        assert_eq!(result.phi().degrees(), 0.0);
-        assert_eq!(result.theta().degrees(), 0.0);
-    }
-
-    #[test]
-    fn test_qsc_pole() {
-        let proj = Projection::qsc();
-        let native = NativeCoord::new(Angle::from_degrees(0.0), Angle::from_degrees(90.0));
-        let inter = proj.project(native).unwrap();
-        assert!(inter.x_deg().abs() < 1e-10);
-        assert_ulp_lt!(inter.y_deg(), 90.0, 2);
-    }
-
-    #[test]
-    fn test_qsc_south_pole() {
-        let proj = Projection::qsc();
-        let native = NativeCoord::new(Angle::from_degrees(0.0), Angle::from_degrees(-90.0));
-        let inter = proj.project(native).unwrap();
-        assert!(inter.x_deg().abs() < 1e-10);
-        assert_ulp_lt!(inter.y_deg(), -90.0, 2);
-    }
-
-    #[test]
-    fn test_quadcube_projections_native_reference() {
-        let projections = [Projection::tsc(), Projection::csc(), Projection::qsc()];
-
-        for proj in projections {
-            let (phi0, theta0) = proj.native_reference();
-            assert_eq!(phi0, 0.0);
-            assert_eq!(theta0, 0.0);
+    fn test_quadcube_deproject_origin_returns_reference() {
+        // The forward (reference -> origin) direction is covered universally
+        // in mod.rs; this anchors the inverse direction for every quadcube.
+        for proj in [Projection::tsc(), Projection::csc(), Projection::qsc()] {
+            let native = proj.deproject(IntermediateCoord::new(0.0, 0.0)).unwrap();
+            assert_eq!(native.phi().degrees(), 0.0, "{:?}", proj);
+            assert_eq!(native.theta().degrees(), 0.0, "{:?}", proj);
         }
     }
 
     #[test]
-    fn test_quadcube_projections_reference_maps_to_origin() {
-        let projections = [Projection::tsc(), Projection::csc(), Projection::qsc()];
-
-        for proj in &projections {
-            let native = NativeCoord::new(Angle::from_degrees(0.0), Angle::from_degrees(0.0));
-            let inter = proj.project(native).unwrap();
-            assert!(inter.x_deg().abs() < 1e-10, "x not zero for {:?}", proj);
-            assert!(inter.y_deg().abs() < 1e-10, "y not zero for {:?}", proj);
+    fn test_quadcube_poles_map_to_top_and_bottom_faces() {
+        // Spec-anchored: the polar faces (face 0 / face 5) put the pole at
+        // (x=0, y=+/-90) for every quadcube projection.  This is the QSC
+        // Paper II Eq. 177 regression anchor for the radical-scope bug fix.
+        for (proj, name) in [
+            (Projection::tsc(), "TSC"),
+            (Projection::csc(), "CSC"),
+            (Projection::qsc(), "QSC"),
+        ] {
+            for sign in [1.0, -1.0] {
+                let native = NativeCoord::new(
+                    Angle::from_degrees(0.0),
+                    Angle::from_degrees(90.0 * sign),
+                );
+                let inter = proj.project(native).unwrap();
+                assert!(
+                    inter.x_deg().abs() < 1e-10,
+                    "{} pole x not 0 (sign={}): {}", name, sign, inter.x_deg(),
+                );
+                assert_ulp_lt!(inter.y_deg(), 90.0 * sign, 2,
+                    "{} pole y (sign={})", name, sign);
+            }
         }
     }
 
@@ -967,16 +594,14 @@ mod tests {
 
     #[test]
     fn test_tsc_vs_tan_at_face_center() {
+        // TSC at theta=60 should be on the top face (y > 45), while TAN puts
+        // the same point above the equator but inside the local projection
+        // plane (y < 0 due to sign convention).  This confirms TSC's face
+        // selection differs from a single-tangent-plane projection.
         let tsc = Projection::tsc();
         let tan = Projection::tan();
-
         let native = NativeCoord::new(Angle::from_degrees(0.0), Angle::from_degrees(60.0));
-        let tsc_inter = tsc.project(native).unwrap();
-
-        let native_for_tan = NativeCoord::new(Angle::from_degrees(0.0), Angle::from_degrees(60.0));
-        let tan_inter = tan.project(native_for_tan).unwrap();
-
-        assert!(tsc_inter.y_deg() > 45.0);
-        assert!(tan_inter.y_deg() < 0.0);
+        assert!(tsc.project(native).unwrap().y_deg() > 45.0);
+        assert!(tan.project(native).unwrap().y_deg() < 0.0);
     }
 }

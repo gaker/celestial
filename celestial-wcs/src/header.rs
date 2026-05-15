@@ -65,68 +65,39 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_keyword_map_strings() {
-        let mut map = KeywordMap::new();
-        map.set_string("CTYPE1", "RA---TAN");
-        assert_eq!(map.get_string("CTYPE1"), Some("RA---TAN".to_string()));
-        assert_eq!(map.get_string("CTYPE2"), None);
-    }
-
-    #[test]
-    fn test_keyword_map_floats() {
-        let mut map = KeywordMap::new();
-        map.set_float("CRPIX1", 512.0);
-        assert_eq!(map.get_float("CRPIX1"), Some(512.0));
-        assert_eq!(map.get_float("CRPIX2"), None);
-    }
-
-    #[test]
-    fn test_keyword_map_ints() {
-        let mut map = KeywordMap::new();
-        map.set_int("NAXIS", 2);
-        assert_eq!(map.get_int("NAXIS"), Some(2));
-        assert_eq!(map.get_int("NAXIS1"), None);
-    }
-
-    #[test]
-    fn test_require_float_present() {
-        let mut map = KeywordMap::new();
-        map.set_float("CRVAL1", 180.0);
-        assert_eq!(map.require_float("CRVAL1").unwrap(), 180.0);
-    }
-
-    #[test]
-    fn test_require_float_missing() {
-        let map = KeywordMap::new();
-        let result = map.require_float("CRVAL1");
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("CRVAL1"));
-    }
-
-    #[test]
-    fn test_require_string_present() {
-        let mut map = KeywordMap::new();
-        map.set_string("CTYPE1", "RA---TAN");
-        assert_eq!(map.require_string("CTYPE1").unwrap(), "RA---TAN");
-    }
-
-    #[test]
-    fn test_require_string_missing() {
-        let map = KeywordMap::new();
-        let result = map.require_string("CTYPE1");
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("CTYPE1"));
-    }
-
-    #[test]
-    fn test_builder_pattern() {
+    fn test_keyword_map_get_set_all_types() {
+        // Chained setters and per-type get/miss in one map.
         let mut map = KeywordMap::new();
         map.set_string("CTYPE1", "RA---TAN")
             .set_float("CRPIX1", 512.0)
             .set_int("NAXIS", 2);
 
+        // Hits.
         assert_eq!(map.get_string("CTYPE1"), Some("RA---TAN".to_string()));
         assert_eq!(map.get_float("CRPIX1"), Some(512.0));
         assert_eq!(map.get_int("NAXIS"), Some(2));
+
+        // Misses for each type return None rather than a default.
+        assert_eq!(map.get_string("CTYPE2"), None);
+        assert_eq!(map.get_float("CRPIX2"), None);
+        assert_eq!(map.get_int("NAXIS1"), None);
+    }
+
+    #[test]
+    fn test_require_methods_present_and_missing() {
+        let mut map = KeywordMap::new();
+        map.set_float("CRVAL1", 180.0)
+            .set_string("CTYPE1", "RA---TAN");
+
+        // Present keys return the value.
+        assert_eq!(map.require_float("CRVAL1").unwrap(), 180.0);
+        assert_eq!(map.require_string("CTYPE1").unwrap(), "RA---TAN");
+
+        // Missing keys surface the keyword name in the error.
+        let err = map.require_float("CRVAL2").unwrap_err();
+        assert!(err.to_string().contains("CRVAL2"));
+
+        let err = map.require_string("CTYPE2").unwrap_err();
+        assert!(err.to_string().contains("CTYPE2"));
     }
 }

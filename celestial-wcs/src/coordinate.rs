@@ -130,31 +130,19 @@ mod tests {
     }
 
     #[test]
-    fn test_pixel_to_array_index() {
-        let p = PixelCoord::new(1.0, 1.0);
-        assert_eq!(p.to_array_index(), (0, 0));
+    fn test_pixel_array_index_conversion() {
+        // Forward direction: 1-indexed FITS pixel -> 0-indexed (row, col).
+        assert_eq!(PixelCoord::new(1.0, 1.0).to_array_index(), (0, 0));
+        assert_eq!(PixelCoord::new(10.0, 20.0).to_array_index(), (19, 9));
 
-        let p2 = PixelCoord::new(10.0, 20.0);
-        assert_eq!(p2.to_array_index(), (19, 9));
-    }
+        // Inverse direction: (row, col) -> FITS pixel.
+        assert_eq!(PixelCoord::from_array_index(0, 0), PixelCoord::new(1.0, 1.0));
+        assert_eq!(PixelCoord::from_array_index(19, 9), PixelCoord::new(10.0, 20.0));
 
-    #[test]
-    fn test_array_index_to_pixel() {
-        let p = PixelCoord::from_array_index(0, 0);
-        assert_eq!(p.x(), 1.0);
-        assert_eq!(p.y(), 1.0);
-
-        let p2 = PixelCoord::from_array_index(19, 9);
-        assert_eq!(p2.x(), 10.0);
-        assert_eq!(p2.y(), 20.0);
-    }
-
-    #[test]
-    fn test_pixel_roundtrip() {
+        // Round trip preserves the original pixel.
         let p = PixelCoord::new(50.0, 100.0);
         let (row, col) = p.to_array_index();
-        let p2 = PixelCoord::from_array_index(row, col);
-        assert_eq!(p, p2);
+        assert_eq!(PixelCoord::from_array_index(row, col), p);
     }
 
     #[test]

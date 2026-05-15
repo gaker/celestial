@@ -31,7 +31,7 @@ celestial-pointing = { path = "celestial-pointing" }
 celestial-solver = { path = "celestial-solver" }
 celestial-wcs = { path = "celestial-wcs" }
 
-celestial-eop-data = { version = "0.1"}
+celestial-eop-data = "0.1"
 
 # External dependencies
 anyhow = "1.0"

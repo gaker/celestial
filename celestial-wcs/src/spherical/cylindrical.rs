@@ -135,33 +135,18 @@ mod tests {
     use super::*;
     use crate::Projection;
     use celestial_core::assert_ulp_lt;
+    use celestial_core::constants::{PI, QUARTER_PI};
     use celestial_core::Angle;
 
-    #[test]
-    fn test_car_reference_point() {
-        let proj = Projection::car();
-        let native = NativeCoord::new(Angle::from_degrees(0.0), Angle::from_degrees(0.0));
-        let inter = proj.project(native).unwrap();
-
-        assert_eq!(inter.x_deg(), 0.0);
-        assert_eq!(inter.y_deg(), 0.0);
-    }
+    // Per-projection native_reference checks are covered by
+    // spherical::tests::test_all_projections_map_reference_to_origin.
 
     #[test]
-    fn test_car_roundtrip() {
-        let proj = Projection::car();
-        let original = NativeCoord::new(Angle::from_degrees(45.0), Angle::from_degrees(30.0));
-        let inter = proj.project(original).unwrap();
-        let recovered = proj.deproject(inter).unwrap();
-
-        assert_eq!(original.phi().degrees(), recovered.phi().degrees());
-        assert_eq!(original.theta().degrees(), recovered.theta().degrees());
-    }
-
-    #[test]
-    fn test_car_known_values() {
+    fn test_car_known_values_and_roundtrip() {
+        // CAR is a literal pass-through (phi, theta) -> (x, y) in degrees.
         let proj = Projection::car();
 
+        // Spec-anchored: a couple of known points should be byte-exact.
         let native = NativeCoord::new(Angle::from_degrees(90.0), Angle::from_degrees(45.0));
         let inter = proj.project(native).unwrap();
         assert_eq!(inter.x_deg(), 90.0);
@@ -171,18 +156,16 @@ mod tests {
         let inter2 = proj.project(native2).unwrap();
         assert_ulp_lt!(inter2.x_deg(), -120.0, 1);
         assert_ulp_lt!(inter2.y_deg(), -60.0, 1);
-    }
 
-    #[test]
-    fn test_car_roundtrip_various_angles() {
-        let proj = Projection::car();
+        // CAR is an identity in degrees, so the roundtrip must be byte-exact.
         for phi_deg in [-180.0, -90.0, 0.0, 45.0, 90.0, 135.0, 180.0] {
             for theta_deg in [-85.0, -45.0, 0.0, 45.0, 85.0] {
-                let original =
-                    NativeCoord::new(Angle::from_degrees(phi_deg), Angle::from_degrees(theta_deg));
+                let original = NativeCoord::new(
+                    Angle::from_degrees(phi_deg),
+                    Angle::from_degrees(theta_deg),
+                );
                 let inter = proj.project(original).unwrap();
                 let recovered = proj.deproject(inter).unwrap();
-
                 assert_eq!(original.phi().degrees(), recovered.phi().degrees());
                 assert_eq!(original.theta().degrees(), recovered.theta().degrees());
             }
@@ -190,76 +173,24 @@ mod tests {
     }
 
     #[test]
-    fn test_car_native_reference() {
-        let proj = Projection::car();
-        let (phi0, theta0) = proj.native_reference();
-        assert_eq!(phi0, 0.0);
-        assert_eq!(theta0, 0.0);
-    }
-
-    #[test]
-    fn test_mer_reference_point() {
+    fn test_mer_known_value_and_roundtrip() {
         let proj = Projection::mer();
-        let native = NativeCoord::new(Angle::from_degrees(0.0), Angle::from_degrees(0.0));
-        let inter = proj.project(native).unwrap();
 
-        assert_eq!(inter.x_deg(), 0.0);
-        assert!(inter.y_deg().abs() < 1e-10);
-    }
-
-    #[test]
-    fn test_mer_roundtrip() {
-        let proj = Projection::mer();
-        let original = NativeCoord::new(Angle::from_degrees(45.0), Angle::from_degrees(30.0));
-        let inter = proj.project(original).unwrap();
-        let recovered = proj.deproject(inter).unwrap();
-
-        assert_ulp_lt!(original.phi().degrees(), recovered.phi().degrees(), 1);
-        assert_ulp_lt!(original.theta().degrees(), recovered.theta().degrees(), 2);
-    }
-
-    #[test]
-    fn test_mer_known_value() {
-        let proj = Projection::mer();
+        // Spec-anchored Paper II Eq. 17: y = (180/pi) * ln(tan(pi/4 + theta/2)).
         let native = NativeCoord::new(Angle::from_degrees(0.0), Angle::from_degrees(45.0));
         let inter = proj.project(native).unwrap();
-
         assert_eq!(inter.x_deg(), 0.0);
-        let expected_y = ((std::f64::consts::FRAC_PI_4 + 45.0_f64.to_radians() / 2.0)
-            .tan()
-            .ln())
-            * RAD_TO_DEG;
+        let expected_y = libm::log(libm::tan(QUARTER_PI + (PI / 4.0) / 2.0)) * RAD_TO_DEG;
         assert_ulp_lt!(inter.y_deg(), expected_y, 1);
-    }
 
-    #[test]
-    fn test_mer_singularity_north_pole() {
-        let proj = Projection::mer();
-        let native = NativeCoord::new(Angle::from_degrees(0.0), Angle::from_degrees(90.0));
-        let result = proj.project(native);
-
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_mer_singularity_south_pole() {
-        let proj = Projection::mer();
-        let native = NativeCoord::new(Angle::from_degrees(0.0), Angle::from_degrees(-90.0));
-        let result = proj.project(native);
-
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_mer_roundtrip_various_angles() {
-        let proj = Projection::mer();
         for phi_deg in [-180.0, -90.0, 0.0, 45.0, 90.0, 135.0, 180.0] {
             for theta_deg in [-80.0, -45.0, 0.0, 45.0, 80.0] {
-                let original =
-                    NativeCoord::new(Angle::from_degrees(phi_deg), Angle::from_degrees(theta_deg));
+                let original = NativeCoord::new(
+                    Angle::from_degrees(phi_deg),
+                    Angle::from_degrees(theta_deg),
+                );
                 let inter = proj.project(original).unwrap();
                 let recovered = proj.deproject(inter).unwrap();
-
                 assert_ulp_lt!(original.phi().degrees(), recovered.phi().degrees(), 2);
                 assert_ulp_lt!(original.theta().degrees(), recovered.theta().degrees(), 2);
             }
@@ -267,112 +198,43 @@ mod tests {
     }
 
     #[test]
-    fn test_mer_native_reference() {
-        let proj = Projection::mer();
-        let (phi0, theta0) = proj.native_reference();
-        assert_eq!(phi0, 0.0);
-        assert_eq!(theta0, 0.0);
-    }
-
-    #[test]
-    fn test_cea_reference_point() {
+    fn test_cea_known_value_and_roundtrip() {
         let proj = Projection::cea();
-        let native = NativeCoord::new(Angle::from_degrees(0.0), Angle::from_degrees(0.0));
-        let inter = proj.project(native).unwrap();
 
-        assert_eq!(inter.x_deg(), 0.0);
-        assert_eq!(inter.y_deg(), 0.0);
-    }
-
-    #[test]
-    fn test_cea_roundtrip() {
-        let proj = Projection::cea();
-        let original = NativeCoord::new(Angle::from_degrees(45.0), Angle::from_degrees(30.0));
-        let inter = proj.project(original).unwrap();
-        let recovered = proj.deproject(inter).unwrap();
-
-        assert_ulp_lt!(original.phi().degrees(), recovered.phi().degrees(), 1);
-        assert_ulp_lt!(original.theta().degrees(), recovered.theta().degrees(), 2);
-    }
-
-    #[test]
-    fn test_cea_known_value() {
-        let proj = Projection::cea();
+        // Spec-anchored Paper II Eq. 19 with lambda = 1: y = (180/pi) * sin(theta).
         let native = NativeCoord::new(Angle::from_degrees(90.0), Angle::from_degrees(30.0));
         let inter = proj.project(native).unwrap();
-
         assert_eq!(inter.x_deg(), 90.0);
-        let expected_y = libm::sin(30.0_f64.to_radians()) * RAD_TO_DEG;
+        let expected_y = libm::sin(PI / 6.0) * RAD_TO_DEG;
         assert_ulp_lt!(inter.y_deg(), expected_y, 1);
-    }
 
-    #[test]
-    fn test_cea_with_lambda() {
-        let proj = Projection::cea_with_lambda(0.5);
-        let original = NativeCoord::new(Angle::from_degrees(60.0), Angle::from_degrees(45.0));
-        let inter = proj.project(original).unwrap();
-        let recovered = proj.deproject(inter).unwrap();
-
-        assert_ulp_lt!(original.phi().degrees(), recovered.phi().degrees(), 1);
-        assert_ulp_lt!(original.theta().degrees(), recovered.theta().degrees(), 2);
-    }
-
-    #[test]
-    fn test_cea_roundtrip_various_angles() {
-        let proj = Projection::cea();
         for phi_deg in [-180.0, -90.0, 0.0, 45.0, 90.0, 135.0, 180.0] {
             for theta_deg in [-85.0, -45.0, 0.0, 45.0, 85.0] {
-                let original =
-                    NativeCoord::new(Angle::from_degrees(phi_deg), Angle::from_degrees(theta_deg));
+                let original = NativeCoord::new(
+                    Angle::from_degrees(phi_deg),
+                    Angle::from_degrees(theta_deg),
+                );
                 let inter = proj.project(original).unwrap();
                 let recovered = proj.deproject(inter).unwrap();
-
                 assert_ulp_lt!(original.phi().degrees(), recovered.phi().degrees(), 2);
                 assert_ulp_lt!(original.theta().degrees(), recovered.theta().degrees(), 2);
             }
         }
+
+        // Custom lambda preserves roundtrip.
+        let proj_half = Projection::cea_with_lambda(0.5);
+        let pt = NativeCoord::new(Angle::from_degrees(60.0), Angle::from_degrees(45.0));
+        let inter = proj_half.project(pt).unwrap();
+        let recovered = proj_half.deproject(inter).unwrap();
+        assert_ulp_lt!(pt.phi().degrees(), recovered.phi().degrees(), 1);
+        assert_ulp_lt!(pt.theta().degrees(), recovered.theta().degrees(), 2);
     }
 
     #[test]
-    fn test_cea_out_of_bounds() {
-        let proj = Projection::cea();
-        let inter = IntermediateCoord::new(0.0, 100.0);
-        let result = proj.deproject(inter);
-
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_cea_native_reference() {
-        let proj = Projection::cea();
-        let (phi0, theta0) = proj.native_reference();
-        assert_eq!(phi0, 0.0);
-        assert_eq!(theta0, 0.0);
-    }
-
-    #[test]
-    fn test_cyp_reference_point() {
-        let proj = Projection::cyp(1.0, 1.0);
-        let native = NativeCoord::new(Angle::from_degrees(0.0), Angle::from_degrees(0.0));
-        let inter = proj.project(native).unwrap();
-
-        assert_eq!(inter.x_deg(), 0.0);
-        assert_eq!(inter.y_deg(), 0.0);
-    }
-
-    #[test]
-    fn test_cyp_roundtrip() {
-        let proj = Projection::cyp(1.0, 1.0);
-        let original = NativeCoord::new(Angle::from_degrees(45.0), Angle::from_degrees(30.0));
-        let inter = proj.project(original).unwrap();
-        let recovered = proj.deproject(inter).unwrap();
-
-        assert_ulp_lt!(original.phi().degrees(), recovered.phi().degrees(), 2);
-        assert_ulp_lt!(original.theta().degrees(), recovered.theta().degrees(), 2);
-    }
-
-    #[test]
-    fn test_cyp_various_parameters() {
+    fn test_cyp_roundtrip_parameter_sweep() {
+        // Sweeps mu x lambda x phi x theta in one shot.  The fixed-parameter
+        // grid (mu=1, lambda=1) covers many phi/theta points; the parameter
+        // sweep covers many (mu, lambda) at one well-behaved point.
         for mu in [0.5, 1.0, 2.0, 5.0] {
             for lambda in [0.5, 1.0, 2.0] {
                 let proj = Projection::cyp(mu, lambda);
@@ -380,23 +242,20 @@ mod tests {
                     NativeCoord::new(Angle::from_degrees(60.0), Angle::from_degrees(45.0));
                 let inter = proj.project(original).unwrap();
                 let recovered = proj.deproject(inter).unwrap();
-
                 assert_ulp_lt!(original.phi().degrees(), recovered.phi().degrees(), 5);
                 assert_ulp_lt!(original.theta().degrees(), recovered.theta().degrees(), 5);
             }
         }
-    }
 
-    #[test]
-    fn test_cyp_roundtrip_various_angles() {
         let proj = Projection::cyp(1.0, 1.0);
         for phi_deg in [-180.0, -90.0, 0.0, 45.0, 90.0, 135.0, 180.0] {
             for theta_deg in [-60.0, -30.0, 0.0, 30.0, 60.0] {
-                let original =
-                    NativeCoord::new(Angle::from_degrees(phi_deg), Angle::from_degrees(theta_deg));
+                let original = NativeCoord::new(
+                    Angle::from_degrees(phi_deg),
+                    Angle::from_degrees(theta_deg),
+                );
                 let inter = proj.project(original).unwrap();
                 let recovered = proj.deproject(inter).unwrap();
-
                 assert_ulp_lt!(original.phi().degrees(), recovered.phi().degrees(), 5);
                 assert_ulp_lt!(original.theta().degrees(), recovered.theta().degrees(), 5);
             }
@@ -404,58 +263,30 @@ mod tests {
     }
 
     #[test]
-    fn test_cyp_singularity() {
+    fn test_cylindrical_error_cases() {
+        // MER blows up at the poles (theta = +/- 90).
+        let mer = Projection::mer();
+        for theta in [90.0, -90.0] {
+            let native = NativeCoord::new(Angle::from_degrees(0.0), Angle::from_degrees(theta));
+            assert!(mer.project(native).is_err(), "MER theta = {} should error", theta);
+        }
+
+        // CEA deproject: |lambda * y| > 1 is out of range.
+        let cea = Projection::cea();
+        assert!(cea.deproject(IntermediateCoord::new(0.0, 100.0)).is_err());
+
+        // CYP projects fail at theta = arccos(-mu) (denom mu + cos(theta) -> 0).
         let mu = 0.5;
-        let proj = Projection::cyp(mu, 1.0);
-        let theta_singular = (-(mu)).acos() * RAD_TO_DEG;
+        let cyp = Projection::cyp(mu, 1.0);
+        let theta_singular = libm::acos(-mu) * RAD_TO_DEG;
         let native = NativeCoord::new(
             Angle::from_degrees(0.0),
             Angle::from_degrees(theta_singular),
         );
-        let result = proj.project(native);
+        assert!(cyp.project(native).is_err());
 
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_cyp_native_reference() {
-        let proj = Projection::cyp(1.0, 1.0);
-        let (phi0, theta0) = proj.native_reference();
-        assert_eq!(phi0, 0.0);
-        assert_eq!(theta0, 0.0);
-    }
-
-    #[test]
-    fn test_cylindrical_projections_native_reference() {
-        let projections = [
-            Projection::car(),
-            Projection::mer(),
-            Projection::cea(),
-            Projection::cyp(1.0, 1.0),
-        ];
-
-        for proj in projections {
-            let (phi0, theta0) = proj.native_reference();
-            assert_eq!(phi0, 0.0);
-            assert_eq!(theta0, 0.0);
-        }
-    }
-
-    #[test]
-    fn test_cyp_lambda_zero() {
-        let proj = Projection::cyp(1.0, 0.0);
-        let inter = IntermediateCoord::new(10.0, 10.0);
-        let result = proj.deproject(inter);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_cyp_mu_equals_one_linear_case() {
-        let proj = Projection::cyp(1.0, 1.0);
-        let native = NativeCoord::new(Angle::from_degrees(45.0), Angle::from_degrees(30.0));
-        let inter = proj.project(native).unwrap();
-        let recovered = proj.deproject(inter).unwrap();
-        assert_ulp_lt!(native.phi().degrees(), recovered.phi().degrees(), 2);
-        assert_ulp_lt!(native.theta().degrees(), recovered.theta().degrees(), 2);
+        // CYP deproject with lambda = 0 is an invalid parameter.
+        let cyp_zero = Projection::cyp(1.0, 0.0);
+        assert!(cyp_zero.deproject(IntermediateCoord::new(10.0, 10.0)).is_err());
     }
 }

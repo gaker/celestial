@@ -82,34 +82,35 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_roundtrip_pixel_intermediate_pixel() {
+    fn test_diagonal_cd_matrix_known_values_and_accessors() {
+        // Diagonal CD: a 1 milliradian-equivalent diagonal matrix at the centre
+        // of a 1024 detector.  This single fixture exercises pixel <-> intermediate
+        // both ways and the crpix/pixel_scale accessors.
         let crpix = [512.0, 512.0];
         let cd = [[0.001, 0.0], [0.0, 0.001]];
         let transform = LinearTransform::from_cd(crpix, cd).unwrap();
 
-        let original = PixelCoord::new(256.0, 768.0);
-        let intermediate = transform.pixel_to_intermediate(original);
-        let recovered = transform.intermediate_to_pixel(intermediate);
-
-        assert_eq!(original.x(), recovered.x());
-        assert_eq!(original.y(), recovered.y());
-    }
-
-    #[test]
-    fn test_known_values() {
-        let crpix = [512.0, 512.0];
-        let cd = [[0.001, 0.0], [0.0, 0.001]];
-        let transform = LinearTransform::from_cd(crpix, cd).unwrap();
-
-        let pixel = PixelCoord::new(256.0, 256.0);
-        let inter = transform.pixel_to_intermediate(pixel);
-
+        // Known value: pixel (256, 256) is (-256 * 0.001, -256 * 0.001) deg from CRPIX.
+        let inter = transform.pixel_to_intermediate(PixelCoord::new(256.0, 256.0));
         assert_eq!(inter.x_deg(), -0.256);
         assert_eq!(inter.y_deg(), -0.256);
+
+        // Round trip back to the pixel.
+        let original = PixelCoord::new(256.0, 768.0);
+        let recovered =
+            transform.intermediate_to_pixel(transform.pixel_to_intermediate(original));
+        assert_eq!(original.x(), recovered.x());
+        assert_eq!(original.y(), recovered.y());
+
+        // Accessors return what they were given; pixel scale = sqrt(|det|).
+        assert_eq!(transform.crpix(), crpix);
+        assert_eq!(transform.pixel_scale(), 0.001);
     }
 
     #[test]
-    fn test_pc_cdelt_equivalence() {
+    fn test_pc_cdelt_equivalence_to_cd() {
+        // A non-diagonal matrix expressed two ways: CD directly vs PC * CDELT.
+        // Both should produce identical transforms.
         let crpix = [100.0, 100.0];
         let cd = [[0.002, 0.001], [-0.001, 0.002]];
         let transform_cd = LinearTransform::from_cd(crpix, cd).unwrap();
@@ -117,47 +118,22 @@ mod tests {
         let cdelt = [0.002, 0.002];
         let pc = [[1.0, 0.5], [-0.5, 1.0]];
         let transform_pc = LinearTransform::from_pc_cdelt(crpix, pc, cdelt).unwrap();
-
         assert_eq!(transform_cd.cd_matrix(), transform_pc.cd_matrix());
 
         let pixel = PixelCoord::new(150.0, 175.0);
         let inter_cd = transform_cd.pixel_to_intermediate(pixel);
         let inter_pc = transform_pc.pixel_to_intermediate(pixel);
-
         assert_eq!(inter_cd.x_deg(), inter_pc.x_deg());
         assert_eq!(inter_cd.y_deg(), inter_pc.y_deg());
     }
 
     #[test]
-    fn test_non_invertible_matrix() {
-        let crpix = [512.0, 512.0];
-        let cd = [[1.0, 2.0], [2.0, 4.0]];
-        let result = LinearTransform::from_cd(crpix, cd);
-
-        assert!(result.is_err());
-        match result {
-            Err(WcsError::NonInvertibleMatrix { determinant }) => {
-                assert_eq!(determinant, 0.0);
-            }
-            _ => panic!("Expected NonInvertibleMatrix error"),
-        }
-    }
-
-    #[test]
-    fn test_pixel_scale() {
-        let crpix = [512.0, 512.0];
-        let cd = [[0.001, 0.0], [0.0, 0.001]];
-        let transform = LinearTransform::from_cd(crpix, cd).unwrap();
-
-        assert_eq!(transform.pixel_scale(), 0.001);
-    }
-
-    #[test]
     fn test_rotated_matrix_roundtrip() {
+        // 30-degree rotation with a 0.5 mdeg/pix scale.  Off-diagonal CD
+        // exercises full matrix inversion in the round trip.
         let crpix = [256.0, 256.0];
-        let angle = celestial_core::constants::PI / 6.0;
         let scale = 0.0005;
-        let (angle_s, angle_c) = angle.sin_cos();
+        let (angle_s, angle_c) = libm::sincos(celestial_core::constants::PI / 6.0);
         let cd = [
             [scale * angle_c, -scale * angle_s],
             [scale * angle_s, scale * angle_c],
@@ -165,19 +141,23 @@ mod tests {
         let transform = LinearTransform::from_cd(crpix, cd).unwrap();
 
         let original = PixelCoord::new(100.0, 400.0);
-        let intermediate = transform.pixel_to_intermediate(original);
-        let recovered = transform.intermediate_to_pixel(intermediate);
-
+        let recovered =
+            transform.intermediate_to_pixel(transform.pixel_to_intermediate(original));
         assert_eq!(original.x(), recovered.x());
         assert_eq!(original.y(), recovered.y());
     }
 
     #[test]
-    fn test_crpix_accessor() {
-        let crpix = [123.456, 789.012];
-        let cd = [[0.001, 0.0], [0.0, 0.001]];
-        let transform = LinearTransform::from_cd(crpix, cd).unwrap();
-
-        assert_eq!(transform.crpix(), crpix);
+    fn test_non_invertible_matrix() {
+        // A singular matrix (column-2 = 2 * column-1) must error rather than
+        // produce a transform that silently degenerates.
+        let cd = [[1.0, 2.0], [2.0, 4.0]];
+        let result = LinearTransform::from_cd([512.0, 512.0], cd);
+        match result {
+            Err(WcsError::NonInvertibleMatrix { determinant }) => {
+                assert_eq!(determinant, 0.0);
+            }
+            other => panic!("Expected NonInvertibleMatrix, got: {:?}", other),
+        }
     }
 }

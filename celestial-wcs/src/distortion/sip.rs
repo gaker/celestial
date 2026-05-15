@@ -1,8 +1,9 @@
 use std::collections::HashMap;
 
-use crate::error::{WcsError, WcsResult};
+use crate::common::newton_raphson_2d;
+use crate::error::WcsResult;
 
-use super::polynomial::{newton_raphson_2d, power_term};
+use super::polynomial::power_term;
 
 #[derive(Debug, Clone)]
 pub struct SipDistortion {
@@ -100,9 +101,7 @@ impl SipDistortion {
     fn apply_inverse_iterative(&self, x: f64, y: f64) -> WcsResult<(f64, f64)> {
         let distort_fn = |px: f64, py: f64| self.apply(px, py);
 
-        newton_raphson_2d((x, y), (x, y), distort_fn, 20, 1e-12).map_err(|msg| {
-            WcsError::convergence_failure(format!("SIP inverse distortion: {}", msg))
-        })
+        newton_raphson_2d((x, y), (x, y), distort_fn, 20, 1e-12, "SIP inverse distortion")
     }
 
     fn eval_poly(coeffs: &HashMap<(u32, u32), f64>, u: f64, v: f64) -> f64 {
@@ -118,26 +117,32 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_identity_distortion() {
-        let sip = SipDistortion::new([512.0, 512.0], 2, 2);
-        let (x, y) = sip.apply(100.0, 200.0);
-        assert_eq!(x, 100.0);
-        assert_eq!(y, 200.0);
-    }
+    fn test_apply_known_polynomial_terms() {
+        // Three forward-only assertions on terms predicted by the SIP polynomial:
+        //   (a) identity (no coeffs set),
+        //   (b) pure quadratic in u via A_2_0,
+        //   (c) cross-term u*v via A_1_1 and B_1_1.
 
-    #[test]
-    fn test_simple_quadratic() {
-        let mut sip = SipDistortion::new([512.0, 512.0], 2, 2);
-        sip.set_a(2, 0, 1e-6);
+        let id = SipDistortion::new([512.0, 512.0], 2, 2);
+        assert_eq!(id.apply(100.0, 200.0), (100.0, 200.0));
 
+        let mut quad = SipDistortion::new([512.0, 512.0], 2, 2);
+        quad.set_a(2, 0, 1e-6);
         let (x, y) = (612.0, 612.0);
         let u = x - 512.0;
+        let (xo, yo) = quad.apply(x, y);
+        assert_eq!(xo, x + 1e-6 * u * u);
+        assert_eq!(yo, y);
 
-        let (x_out, y_out) = sip.apply(x, y);
-
-        let expected_x = x + 1e-6 * u * u;
-        assert_eq!(x_out, expected_x);
-        assert_eq!(y_out, y);
+        let mut cross = SipDistortion::new([512.0, 512.0], 2, 2);
+        cross.set_a(1, 1, 1e-6);
+        cross.set_b(1, 1, 2e-6);
+        let (x, y) = (612.0, 712.0);
+        let u = x - 512.0;
+        let v = y - 512.0;
+        let (xo, yo) = cross.apply(x, y);
+        assert_eq!(xo, x + 1e-6 * u * v);
+        assert_eq!(yo, y + 2e-6 * u * v);
     }
 
     #[test]
@@ -170,25 +175,6 @@ mod tests {
 
         assert!((x_back - x_orig).abs() < 1e-10);
         assert!((y_back - y_orig).abs() < 1e-10);
-    }
-
-    #[test]
-    fn test_cross_terms() {
-        let mut sip = SipDistortion::new([512.0, 512.0], 2, 2);
-        sip.set_a(1, 1, 1e-6);
-        sip.set_b(1, 1, 2e-6);
-
-        let (x, y) = (612.0, 712.0);
-        let u = x - 512.0;
-        let v = y - 512.0;
-
-        let (x_out, y_out) = sip.apply(x, y);
-
-        let expected_x = x + 1e-6 * u * v;
-        let expected_y = y + 2e-6 * u * v;
-
-        assert_eq!(x_out, expected_x);
-        assert_eq!(y_out, expected_y);
     }
 
     #[test]
@@ -228,21 +214,17 @@ mod tests {
     }
 
     #[test]
-    fn test_zero_coefficient_omitted() {
+    fn test_set_a_filters_zero_and_over_order_terms() {
+        // SIP only stores non-zero coefficients up to A_ORDER (p + q <= A_ORDER).
         let mut sip = SipDistortion::new([512.0, 512.0], 2, 2);
-        sip.set_a(2, 0, 0.0);
-        sip.set_a(1, 1, 1e-6);
+
+        sip.set_a(2, 0, 0.0);   // zero -> not stored
+        sip.set_a(1, 1, 1e-6);  // valid (1 + 1 = 2) -> stored
+        sip.set_a(3, 0, 1e-6);  // 3 + 0 > 2 -> rejected
+        sip.set_a(2, 1, 1e-6);  // 2 + 1 > 2 -> rejected
 
         assert!(!sip.a_coeffs.contains_key(&(2, 0)));
         assert!(sip.a_coeffs.contains_key(&(1, 1)));
-    }
-
-    #[test]
-    fn test_order_constraint() {
-        let mut sip = SipDistortion::new([512.0, 512.0], 2, 2);
-        sip.set_a(3, 0, 1e-6);
-        sip.set_a(2, 1, 1e-6);
-
         assert!(!sip.a_coeffs.contains_key(&(3, 0)));
         assert!(!sip.a_coeffs.contains_key(&(2, 1)));
     }

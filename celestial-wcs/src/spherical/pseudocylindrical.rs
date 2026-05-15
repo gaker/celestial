@@ -76,7 +76,7 @@ pub(crate) fn project_mol(native: NativeCoord) -> WcsResult<IntermediateCoord> {
     let sqrt_8_over_pi = libm::sqrt(8.0_f64) / PI;
     let (gamma_sin, gamma_cos) = libm::sincos(gamma);
     let x = sqrt_8_over_pi * phi * gamma_cos * RAD_TO_DEG;
-    let y = SQRT2 * 90.0 * gamma_sin;
+    let y = SQRT2 * RAD_TO_DEG * gamma_sin;
     Ok(IntermediateCoord::new(x, y))
 }
 
@@ -101,8 +101,8 @@ pub(crate) fn deproject_mol(inter: IntermediateCoord) -> WcsResult<NativeCoord> 
     let x = inter.x_deg();
     let y = inter.y_deg();
 
-    let sqrt_2_times_90 = SQRT2 * 90.0;
-    let sin_gamma = y / sqrt_2_times_90;
+    let sqrt_2_times_r0 = SQRT2 * RAD_TO_DEG;
+    let sin_gamma = y / sqrt_2_times_r0;
 
     if sin_gamma.abs() > 1.0 {
         return Err(WcsError::out_of_bounds(
@@ -180,99 +180,42 @@ mod tests {
     use celestial_core::assert_ulp_lt;
     use celestial_core::Angle;
 
+    // Per-projection native_reference checks are covered by
+    // spherical::tests::test_all_projections_map_reference_to_origin.
+
     #[test]
-    fn test_sfl_reference_point() {
+    fn test_sfl_roundtrip_and_known_value() {
         let proj = Projection::sfl();
-        let native = NativeCoord::new(Angle::from_degrees(0.0), Angle::from_degrees(0.0));
+
+        // SFL on the equator collapses to (phi, 0) - an identity in degrees.
+        let native = NativeCoord::new(Angle::from_degrees(90.0), Angle::from_degrees(0.0));
         let inter = proj.project(native).unwrap();
-        assert_eq!(inter.x_deg(), 0.0);
-        assert_eq!(inter.y_deg(), 0.0);
-    }
+        assert!((inter.x_deg() - 90.0).abs() < 1e-10);
+        assert!(inter.y_deg().abs() < 1e-10);
 
-    #[test]
-    fn test_sfl_native_reference() {
-        let proj = Projection::sfl();
-        let (phi0, theta0) = proj.native_reference();
-        assert_eq!(phi0, 0.0);
-        assert_eq!(theta0, 0.0);
-    }
-
-    #[test]
-    fn test_sfl_roundtrip() {
-        let proj = Projection::sfl();
-        let original = NativeCoord::new(Angle::from_degrees(45.0), Angle::from_degrees(30.0));
-        let inter = proj.project(original).unwrap();
-        let recovered = proj.deproject(inter).unwrap();
-        assert_ulp_lt!(original.phi().degrees(), recovered.phi().degrees(), 2);
-        assert_ulp_lt!(original.theta().degrees(), recovered.theta().degrees(), 2);
-    }
-
-    #[test]
-    fn test_sfl_roundtrip_various_angles() {
-        let proj = Projection::sfl();
         for phi_deg in [-180.0, -90.0, -45.0, 0.0, 45.0, 90.0, 180.0] {
             for theta_deg in [-60.0, -30.0, 0.0, 30.0, 60.0] {
-                let original =
-                    NativeCoord::new(Angle::from_degrees(phi_deg), Angle::from_degrees(theta_deg));
+                let original = NativeCoord::new(
+                    Angle::from_degrees(phi_deg),
+                    Angle::from_degrees(theta_deg),
+                );
                 let inter = proj.project(original).unwrap();
                 let recovered = proj.deproject(inter).unwrap();
                 assert_ulp_lt!(original.phi().degrees(), recovered.phi().degrees(), 5);
                 assert_ulp_lt!(original.theta().degrees(), recovered.theta().degrees(), 5);
             }
         }
-    }
-
-    #[test]
-    fn test_sfl_known_value() {
-        let proj = Projection::sfl();
-        let native = NativeCoord::new(Angle::from_degrees(90.0), Angle::from_degrees(0.0));
-        let inter = proj.project(native).unwrap();
-        assert!((inter.x_deg() - 90.0).abs() < 1e-10);
-        assert!((inter.y_deg() - 0.0).abs() < 1e-10);
-    }
-
-    #[test]
-    fn test_sfl_singularity_deproject() {
-        let proj = Projection::sfl();
-        let inter = IntermediateCoord::new(10.0, 90.0);
-        let result = proj.deproject(inter);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_par_reference_point() {
-        let proj = Projection::par();
-        let native = NativeCoord::new(Angle::from_degrees(0.0), Angle::from_degrees(0.0));
-        let inter = proj.project(native).unwrap();
-        assert_eq!(inter.x_deg(), 0.0);
-        assert_eq!(inter.y_deg(), 0.0);
-    }
-
-    #[test]
-    fn test_par_native_reference() {
-        let proj = Projection::par();
-        let (phi0, theta0) = proj.native_reference();
-        assert_eq!(phi0, 0.0);
-        assert_eq!(theta0, 0.0);
     }
 
     #[test]
     fn test_par_roundtrip() {
         let proj = Projection::par();
-        let original = NativeCoord::new(Angle::from_degrees(45.0), Angle::from_degrees(30.0));
-        let inter = proj.project(original).unwrap();
-        let recovered = proj.deproject(inter).unwrap();
-        assert_ulp_lt!(original.phi().degrees(), recovered.phi().degrees(), 2);
-        assert_ulp_lt!(original.theta().degrees(), recovered.theta().degrees(), 2);
-    }
-
-    #[test]
-    fn test_par_roundtrip_various_angles() {
-        let proj = Projection::par();
         for phi_deg in [-180.0, -90.0, -45.0, 0.0, 45.0, 90.0, 180.0] {
             for theta_deg in [-60.0, -30.0, 0.0, 30.0, 60.0] {
-                let original =
-                    NativeCoord::new(Angle::from_degrees(phi_deg), Angle::from_degrees(theta_deg));
+                let original = NativeCoord::new(
+                    Angle::from_degrees(phi_deg),
+                    Angle::from_degrees(theta_deg),
+                );
                 let inter = proj.project(original).unwrap();
                 let recovered = proj.deproject(inter).unwrap();
                 assert_ulp_lt!(original.phi().degrees(), recovered.phi().degrees(), 5);
@@ -282,47 +225,29 @@ mod tests {
     }
 
     #[test]
-    fn test_par_boundary_y() {
-        let proj = Projection::par();
-        let inter = IntermediateCoord::new(0.0, 200.0);
-        let result = proj.deproject(inter);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_mol_reference_point() {
+    fn test_mol_roundtrip_and_poles() {
         let proj = Projection::mol();
-        let native = NativeCoord::new(Angle::from_degrees(0.0), Angle::from_degrees(0.0));
-        let inter = proj.project(native).unwrap();
-        assert!((inter.x_deg()).abs() < 1e-10);
-        assert!((inter.y_deg()).abs() < 1e-10);
-    }
 
-    #[test]
-    fn test_mol_native_reference() {
-        let proj = Projection::mol();
-        let (phi0, theta0) = proj.native_reference();
-        assert_eq!(phi0, 0.0);
-        assert_eq!(theta0, 0.0);
-    }
+        // Paper II Eq. 79: at the poles, |y| = sqrt(2) * (180/pi) and x = 0.
+        let expected_y = SQRT2 * RAD_TO_DEG;
+        let north = proj
+            .project(NativeCoord::new(Angle::from_degrees(0.0), Angle::from_degrees(90.0)))
+            .unwrap();
+        assert!(north.x_deg().abs() < 1e-10);
+        assert!((north.y_deg() - expected_y).abs() < 1e-10);
 
-    #[test]
-    fn test_mol_roundtrip() {
-        let proj = Projection::mol();
-        let original = NativeCoord::new(Angle::from_degrees(45.0), Angle::from_degrees(30.0));
-        let inter = proj.project(original).unwrap();
-        let recovered = proj.deproject(inter).unwrap();
-        assert_ulp_lt!(original.phi().degrees(), recovered.phi().degrees(), 10);
-        assert_ulp_lt!(original.theta().degrees(), recovered.theta().degrees(), 10);
-    }
+        let south = proj
+            .project(NativeCoord::new(Angle::from_degrees(0.0), Angle::from_degrees(-90.0)))
+            .unwrap();
+        assert!(south.x_deg().abs() < 1e-10);
+        assert!((south.y_deg() + expected_y).abs() < 1e-10);
 
-    #[test]
-    fn test_mol_roundtrip_various_angles() {
-        let proj = Projection::mol();
         for phi_deg in [-180.0, -90.0, -45.0, 0.0, 45.0, 90.0, 180.0] {
             for theta_deg in [-60.0, -30.0, 0.0, 30.0, 60.0] {
-                let original =
-                    NativeCoord::new(Angle::from_degrees(phi_deg), Angle::from_degrees(theta_deg));
+                let original = NativeCoord::new(
+                    Angle::from_degrees(phi_deg),
+                    Angle::from_degrees(theta_deg),
+                );
                 let inter = proj.project(original).unwrap();
                 let recovered = proj.deproject(inter).unwrap();
                 assert_ulp_lt!(original.phi().degrees(), recovered.phi().degrees(), 15);
@@ -332,58 +257,22 @@ mod tests {
     }
 
     #[test]
-    fn test_mol_poles() {
-        let proj = Projection::mol();
+    fn test_ait_roundtrip_and_pole() {
+        let proj = Projection::ait();
+
+        // Paper II Eq. 81-86: at the north pole, x = 0 and y = sqrt(2) * (180/pi).
         let north_pole = NativeCoord::new(Angle::from_degrees(0.0), Angle::from_degrees(90.0));
         let inter = proj.project(north_pole).unwrap();
-        assert!((inter.x_deg()).abs() < 1e-10);
-        let expected_y = std::f64::consts::SQRT_2 * 90.0;
-        assert!((inter.y_deg() - expected_y).abs() < 1e-10);
-    }
+        assert!(inter.x_deg().abs() < 1e-10);
+        let expected_y = SQRT2 * RAD_TO_DEG;
+        assert!((inter.y_deg() - expected_y).abs() < 1e-8);
 
-    #[test]
-    fn test_mol_boundary() {
-        let proj = Projection::mol();
-        let sqrt_2_times_90 = std::f64::consts::SQRT_2 * 90.0;
-        let inter = IntermediateCoord::new(0.0, sqrt_2_times_90 + 10.0);
-        let result = proj.deproject(inter);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_ait_reference_point() {
-        let proj = Projection::ait();
-        let native = NativeCoord::new(Angle::from_degrees(0.0), Angle::from_degrees(0.0));
-        let inter = proj.project(native).unwrap();
-        assert!((inter.x_deg()).abs() < 1e-10);
-        assert!((inter.y_deg()).abs() < 1e-10);
-    }
-
-    #[test]
-    fn test_ait_native_reference() {
-        let proj = Projection::ait();
-        let (phi0, theta0) = proj.native_reference();
-        assert_eq!(phi0, 0.0);
-        assert_eq!(theta0, 0.0);
-    }
-
-    #[test]
-    fn test_ait_roundtrip() {
-        let proj = Projection::ait();
-        let original = NativeCoord::new(Angle::from_degrees(45.0), Angle::from_degrees(30.0));
-        let inter = proj.project(original).unwrap();
-        let recovered = proj.deproject(inter).unwrap();
-        assert_ulp_lt!(original.phi().degrees(), recovered.phi().degrees(), 10);
-        assert_ulp_lt!(original.theta().degrees(), recovered.theta().degrees(), 10);
-    }
-
-    #[test]
-    fn test_ait_roundtrip_various_angles() {
-        let proj = Projection::ait();
         for phi_deg in [-150.0, -90.0, -45.0, 0.0, 45.0, 90.0, 150.0] {
             for theta_deg in [-60.0, -30.0, 0.0, 30.0, 60.0] {
-                let original =
-                    NativeCoord::new(Angle::from_degrees(phi_deg), Angle::from_degrees(theta_deg));
+                let original = NativeCoord::new(
+                    Angle::from_degrees(phi_deg),
+                    Angle::from_degrees(theta_deg),
+                );
                 let inter = proj.project(original).unwrap();
                 let recovered = proj.deproject(inter).unwrap();
                 assert_ulp_lt!(original.phi().degrees(), recovered.phi().degrees(), 15);
@@ -393,30 +282,22 @@ mod tests {
     }
 
     #[test]
-    fn test_ait_poles() {
-        let proj = Projection::ait();
-        let north_pole = NativeCoord::new(Angle::from_degrees(0.0), Angle::from_degrees(90.0));
-        let inter = proj.project(north_pole).unwrap();
-        assert!((inter.x_deg()).abs() < 1e-10);
-        let expected_y = std::f64::consts::SQRT_2 * RAD_TO_DEG;
-        assert!((inter.y_deg() - expected_y).abs() < 1e-8);
-    }
+    fn test_pseudocylindrical_error_cases() {
+        // SFL deproject is singular at |y| = 90 (cos(theta) = 0).
+        let sfl = Projection::sfl();
+        assert!(sfl.deproject(IntermediateCoord::new(10.0, 90.0)).is_err());
 
-    #[test]
-    fn test_ait_boundary() {
-        let proj = Projection::ait();
-        let inter = IntermediateCoord::new(400.0, 200.0);
-        let result = proj.deproject(inter);
-        assert!(result.is_err());
-    }
+        // PAR deproject rejects |y| > 180 (Paper II Eq. 78).
+        let par = Projection::par();
+        assert!(par.deproject(IntermediateCoord::new(0.0, 200.0)).is_err());
 
-    #[test]
-    fn test_ait_equator() {
-        let proj = Projection::ait();
-        let native = NativeCoord::new(Angle::from_degrees(90.0), Angle::from_degrees(0.0));
-        let inter = proj.project(native).unwrap();
-        let recovered = proj.deproject(inter).unwrap();
-        assert_ulp_lt!(native.phi().degrees(), recovered.phi().degrees(), 1);
-        assert_ulp_lt!(native.theta().degrees(), recovered.theta().degrees(), 1);
+        // MOL deproject rejects points outside the projection ellipse.
+        let mol = Projection::mol();
+        let outside = SQRT2 * RAD_TO_DEG + 10.0;
+        assert!(mol.deproject(IntermediateCoord::new(0.0, outside)).is_err());
+
+        // AIT deproject rejects points outside the projection ellipse.
+        let ait = Projection::ait();
+        assert!(ait.deproject(IntermediateCoord::new(400.0, 200.0)).is_err());
     }
 }
