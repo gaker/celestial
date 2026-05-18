@@ -39,15 +39,6 @@ fn coord_name(coord: Coordinate) -> &'static str {
     }
 }
 
-#[allow(dead_code)]
-fn coord_var(coord: Coordinate) -> &'static str {
-    match coord {
-        Coordinate::Longitude => "longitude",
-        Coordinate::Latitude => "latitude",
-        Coordinate::Distance => "distance",
-    }
-}
-
 #[cfg(feature = "cli")]
 pub fn generate_moon_module(
     elp: &ElpData,
@@ -282,6 +273,14 @@ mod tests {
     use super::super::parser::PertSeries;
     use super::*;
     use tempfile::TempDir;
+
+    fn coord_var(coord: Coordinate) -> &'static str {
+        match coord {
+            Coordinate::Longitude => "longitude",
+            Coordinate::Latitude => "latitude",
+            Coordinate::Distance => "distance",
+        }
+    }
 
     fn make_main_term(delaunay: [i32; 4], a0: f64) -> MainTerm {
         MainTerm {

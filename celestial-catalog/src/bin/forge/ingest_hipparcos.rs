@@ -38,6 +38,11 @@ struct StarRecord {
     _padding: u16,
 }
 
+// Parsed fields kept as a faithful representation of the Hipparcos-2 record format.
+// `v_i`, `solution_type`, and `num_components` aren't consumed today; they're retained
+// so future quality filtering (e.g. single-star vs multi-component systems via
+// `solution_type`, or color cross-validation via `v_i`) doesn't require touching the
+// parser. The catalog isn't getting new versions, so this is a one-time investment.
 #[allow(dead_code)]
 struct Hip2Star {
     hip: u32,

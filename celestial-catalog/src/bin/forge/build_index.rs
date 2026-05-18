@@ -89,16 +89,16 @@ pub fn run(args: &BuildIndexArgs, cli: &Cli) -> anyhow::Result<()> {
     };
 
     let elapsed = start.elapsed().as_secs_f64();
-    let stats = compute_stats(
-        args.healpix_order,
+    let stats = compute_stats(StatsInputs {
+        order: args.healpix_order,
         nside,
         npix,
-        total_stars,
-        args.max_per_cell,
-        &final_counts,
-        &args.output,
+        total_stars_before: total_stars,
+        max_per_cell: args.max_per_cell,
+        final_counts: &final_counts,
+        output: &args.output,
         elapsed,
-    )?;
+    })?;
     print_stats(&stats);
 
     println!("\nValidating output...");
@@ -343,19 +343,21 @@ fn copy_capped_records(
     }
 }
 
-fn compute_stats(
+struct StatsInputs<'a> {
     order: u32,
     nside: u32,
     npix: u64,
     total_stars_before: u64,
     max_per_cell: Option<u32>,
-    final_counts: &[u32],
-    output: &Path,
+    final_counts: &'a [u32],
+    output: &'a Path,
     elapsed: f64,
-) -> anyhow::Result<IndexStats> {
-    let total_after: u64 = final_counts.iter().map(|&c| c as u64).sum();
-    let non_empty: Vec<u32> = final_counts.iter().copied().filter(|&c| c > 0).collect();
-    let empty_pixels = npix - non_empty.len() as u64;
+}
+
+fn compute_stats(inputs: StatsInputs<'_>) -> anyhow::Result<IndexStats> {
+    let total_after: u64 = inputs.final_counts.iter().map(|&c| c as u64).sum();
+    let non_empty: Vec<u32> = inputs.final_counts.iter().copied().filter(|&c| c > 0).collect();
+    let empty_pixels = inputs.npix - non_empty.len() as u64;
     let (min_stars, max_stars) = if non_empty.is_empty() {
         (0, 0)
     } else {
@@ -370,21 +372,21 @@ fn compute_stats(
         non_empty.iter().map(|&c| c as f64).sum::<f64>() / non_empty.len() as f64
     };
     let median_stars = compute_median(&non_empty);
-    let file_size = fs::metadata(output)?.len();
+    let file_size = fs::metadata(inputs.output)?.len();
 
-    let (stars_after_cap, cells_capped) = match max_per_cell {
+    let (stars_after_cap, cells_capped) = match inputs.max_per_cell {
         Some(cap) => {
-            let capped = final_counts.iter().filter(|&&c| c >= cap).count() as u64;
+            let capped = inputs.final_counts.iter().filter(|&&c| c >= cap).count() as u64;
             (Some(total_after), Some(capped))
         }
         None => (None, None),
     };
 
     Ok(IndexStats {
-        healpix_order: order,
-        nside,
-        npix,
-        total_stars: total_stars_before,
+        healpix_order: inputs.order,
+        nside: inputs.nside,
+        npix: inputs.npix,
+        total_stars: inputs.total_stars_before,
         stars_after_cap,
         cells_capped,
         min_stars,
@@ -393,7 +395,7 @@ fn compute_stats(
         median_stars,
         empty_pixels,
         file_size,
-        elapsed_secs: elapsed,
+        elapsed_secs: inputs.elapsed,
     })
 }
 

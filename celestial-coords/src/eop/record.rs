@@ -73,6 +73,15 @@ pub enum EopQuality {
     Predicted,
 }
 
+fn validate_range(value: f64, limit: f64, label: &str, unit: &str) -> CoordResult<()> {
+    if value.abs() > limit {
+        return Err(CoordError::invalid_coordinate(format!(
+            "{} out of range: {} {}", label, value, unit,
+        )));
+    }
+    Ok(())
+}
+
 impl EopRecord {
     const ARCSEC_TO_UNITS: f64 = 10_000_000.0;
     const SEC_TO_UNITS: f64 = 10_000_000.0;
@@ -85,34 +94,10 @@ impl EopRecord {
         ut1_utc_sec: f64,
         lod_sec: f64,
     ) -> CoordResult<Self> {
-        if x_p_arcsec.abs() > 6.0 {
-            return Err(CoordError::invalid_coordinate(format!(
-                "X polar motion out of range: {} arcsec",
-                x_p_arcsec
-            )));
-        }
-
-        if y_p_arcsec.abs() > 6.0 {
-            return Err(CoordError::invalid_coordinate(format!(
-                "Y polar motion out of range: {} arcsec",
-                y_p_arcsec
-            )));
-        }
-
-        if ut1_utc_sec.abs() > 1.0 {
-            return Err(CoordError::invalid_coordinate(format!(
-                "UT1-UTC out of range: {} sec",
-                ut1_utc_sec
-            )));
-        }
-
-        if lod_sec.abs() > 0.01 {
-            return Err(CoordError::invalid_coordinate(format!(
-                "LOD out of range: {} sec",
-                lod_sec
-            )));
-        }
-
+        validate_range(x_p_arcsec, 6.0, "X polar motion", "arcsec")?;
+        validate_range(y_p_arcsec, 6.0, "Y polar motion", "arcsec")?;
+        validate_range(ut1_utc_sec, 1.0, "UT1-UTC", "sec")?;
+        validate_range(lod_sec, 0.01, "LOD", "sec")?;
         Ok(Self {
             mjd,
             x_p_encoded: libm::round(x_p_arcsec * Self::ARCSEC_TO_UNITS) as i32,
@@ -132,24 +117,11 @@ impl EopRecord {
         dx_milliarcsec: f64,
         dy_milliarcsec: f64,
     ) -> CoordResult<Self> {
-        if dx_milliarcsec.abs() > 1000.0 {
-            return Err(CoordError::invalid_coordinate(format!(
-                "CIP dX out of range: {} mas",
-                dx_milliarcsec
-            )));
-        }
-
-        if dy_milliarcsec.abs() > 1000.0 {
-            return Err(CoordError::invalid_coordinate(format!(
-                "CIP dY out of range: {} mas",
-                dy_milliarcsec
-            )));
-        }
-
+        validate_range(dx_milliarcsec, 1000.0, "CIP dX", "mas")?;
+        validate_range(dy_milliarcsec, 1000.0, "CIP dY", "mas")?;
         self.dx_encoded = Some(libm::round(dx_milliarcsec * Self::MILLIARCSEC_TO_UNITS) as i16);
         self.dy_encoded = Some(libm::round(dy_milliarcsec * Self::MILLIARCSEC_TO_UNITS) as i16);
         self.flags.has_cip_offsets = true;
-
         Ok(self)
     }
 
@@ -158,18 +130,8 @@ impl EopRecord {
         xrt_arcsec_per_day: f64,
         yrt_arcsec_per_day: f64,
     ) -> CoordResult<Self> {
-        if xrt_arcsec_per_day.abs() > 1.0 {
-            return Err(CoordError::invalid_coordinate(format!(
-                "Pole rate xrt out of range: {} arcsec/day",
-                xrt_arcsec_per_day
-            )));
-        }
-        if yrt_arcsec_per_day.abs() > 1.0 {
-            return Err(CoordError::invalid_coordinate(format!(
-                "Pole rate yrt out of range: {} arcsec/day",
-                yrt_arcsec_per_day
-            )));
-        }
+        validate_range(xrt_arcsec_per_day, 1.0, "Pole rate xrt", "arcsec/day")?;
+        validate_range(yrt_arcsec_per_day, 1.0, "Pole rate yrt", "arcsec/day")?;
         self.xrt_encoded = Some(libm::round(xrt_arcsec_per_day * Self::ARCSEC_TO_UNITS) as i32);
         self.yrt_encoded = Some(libm::round(yrt_arcsec_per_day * Self::ARCSEC_TO_UNITS) as i32);
         self.flags.has_pole_rates = true;
@@ -407,5 +369,135 @@ mod tests {
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(err.to_string().contains("CIP dY out of range"));
+    }
+
+    #[test]
+    fn with_pole_rates_round_trips_through_to_parameters() {
+        let record = EopRecord::new(59945.0, 0.1, 0.2, 0.01, 0.001)
+            .unwrap()
+            .with_pole_rates(0.0001, -0.0002)
+            .unwrap();
+        let params = record.to_parameters();
+        assert!((params.xrt.unwrap() - 0.0001).abs() < 1e-9);
+        assert!((params.yrt.unwrap() - (-0.0002)).abs() < 1e-9);
+        assert!(params.flags.has_pole_rates);
+    }
+
+    #[test]
+    fn with_pole_rates_xrt_out_of_range_errors() {
+        let result = EopRecord::new(59945.0, 0.1, 0.2, 0.01, 0.001)
+            .unwrap()
+            .with_pole_rates(1.5, 0.0);
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("Pole rate xrt out of range"));
+    }
+
+    #[test]
+    fn with_pole_rates_yrt_out_of_range_errors() {
+        let result = EopRecord::new(59945.0, 0.1, 0.2, 0.01, 0.001)
+            .unwrap()
+            .with_pole_rates(0.0, -1.5);
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("Pole rate yrt out of range"));
+    }
+
+    #[test]
+    fn with_flags_overrides_default_flags() {
+        let custom = EopFlags {
+            source: EopSource::IersC04,
+            quality: EopQuality::Predicted,
+            has_polar_motion: false,
+            has_ut1_utc: false,
+            has_cip_offsets: true,
+            has_pole_rates: true,
+        };
+        let record = EopRecord::new(59945.0, 0.1, 0.2, 0.01, 0.001)
+            .unwrap()
+            .with_flags(custom);
+        assert_eq!(record.flags.source, EopSource::IersC04);
+        assert_eq!(record.flags.quality, EopQuality::Predicted);
+        assert!(!record.flags.has_polar_motion);
+    }
+
+    #[test]
+    fn eop_flags_default_values() {
+        let f = EopFlags::default();
+        assert_eq!(f.source, EopSource::UserData);
+        assert_eq!(f.quality, EopQuality::Standard);
+        assert!(f.has_polar_motion);
+        assert!(f.has_ut1_utc);
+        assert!(!f.has_cip_offsets);
+        assert!(!f.has_pole_rates);
+    }
+
+    fn sample_params(mjd: f64) -> EopParameters {
+        EopParameters {
+            mjd,
+            x_p: 0.0, y_p: 0.0,
+            ut1_utc: 0.0, lod: 0.0,
+            dx: None, dy: None, xrt: None, yrt: None,
+            s_prime: 0.0,
+            flags: EopFlags::default(),
+        }
+    }
+
+    #[test]
+    fn compute_s_prime_jd_matches_compute_s_prime_at_j2000() {
+        // At J2000 (MJD 51544.5), t=0 → s_prime should be 0.
+        let mut params = sample_params(51544.5);
+        params.compute_s_prime();
+        assert!(params.s_prime.abs() < 1e-15);
+
+        // compute_s_prime_jd with the same epoch via 2-part JD must agree.
+        let mut params2 = sample_params(51544.5);
+        params2.compute_s_prime_jd(2451545.0, 0.0);
+        assert!((params.s_prime - params2.s_prime).abs() < 1e-15);
+    }
+
+    #[test]
+    fn compute_s_prime_jd_is_linear_in_centuries() {
+        // 1 century after J2000 → s' = -47e-6 * ARCSEC_TO_RAD radians.
+        let mut params = sample_params(0.0);
+        params.compute_s_prime_jd(2451545.0 + 36525.0, 0.0);
+        let expected = -47e-6 * ARCSEC_TO_RAD;
+        assert!((params.s_prime - expected).abs() < 1e-15);
+    }
+
+    #[test]
+    fn compute_era_returns_radians_in_range() {
+        // ERA wraps in [0, 2π); just verify it returns something in range
+        // and is sensitive to mjd.
+        let params_a = sample_params(60000.0);
+        let params_b = sample_params(60000.5);
+        let era_a = params_a.compute_era().unwrap();
+        let era_b = params_b.compute_era().unwrap();
+        assert!((0.0..celestial_core::constants::TWOPI).contains(&era_a));
+        assert!((0.0..celestial_core::constants::TWOPI).contains(&era_b));
+        assert!(era_a != era_b);
+    }
+
+    #[test]
+    fn corrected_cip_x_adds_dx_offset_when_present() {
+        let mut params = sample_params(60000.0);
+        params.dx = Some(1.0); // 1 mas
+        let corrected = params.corrected_cip_x(0.5);
+        // Expected: 0.5 + 1.0 * MILLIARCSEC_TO_RAD
+        let expected = 0.5 + MILLIARCSEC_TO_RAD;
+        assert!((corrected - expected).abs() < 1e-15);
+    }
+
+    #[test]
+    fn corrected_cip_y_falls_back_to_zero_when_dy_is_none() {
+        let params = sample_params(60000.0);
+        assert_eq!(params.dy, None);
+        // No dy → corrected == input.
+        assert_eq!(params.corrected_cip_y(0.7), 0.7);
+    }
+
+    #[test]
+    fn corrected_cip_x_passthrough_when_dx_is_none() {
+        let params = sample_params(60000.0);
+        assert_eq!(params.dx, None);
+        assert_eq!(params.corrected_cip_x(-0.3), -0.3);
     }
 }

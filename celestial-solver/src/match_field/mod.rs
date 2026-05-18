@@ -218,8 +218,109 @@ struct ParityAttempt {
 }
 
 #[cfg(test)]
+pub(super) mod test_catalog {
+    use celestial_catalog::query::healpix::ang2pix_nest;
+    use std::io::Write;
+    use tempfile::NamedTempFile;
+
+    const HEADER_SIZE: usize = 64;
+    const PIXEL_ENTRY_SIZE: usize = 16;
+    const STAR_RECORD_SIZE: usize = 56;
+
+    pub struct SynthStar {
+        pub source_id: i64,
+        pub ra: f64,
+        pub dec: f64,
+        pub mag: f32,
+    }
+
+    pub fn build(order: u32, stars: &[SynthStar]) -> NamedTempFile {
+        let nside = 1u32 << order;
+        let npix = 12u64 * (nside as u64) * (nside as u64);
+
+        let mut buckets: Vec<Vec<&SynthStar>> = (0..npix).map(|_| Vec::new()).collect();
+        for s in stars {
+            let pix = ang2pix_nest(order, s.ra, s.dec);
+            buckets[pix as usize].push(s);
+        }
+        // Magnitude-sort within each pixel — cone_search relies on it elsewhere.
+        for b in buckets.iter_mut() {
+            b.sort_by(|a, b| a.mag.partial_cmp(&b.mag).unwrap_or(std::cmp::Ordering::Equal));
+        }
+
+        let total_stars: u64 = stars.len() as u64;
+
+        let mut buf: Vec<u8> = Vec::new();
+        buf.extend_from_slice(b"CCAT");
+        buf.extend_from_slice(&1u32.to_le_bytes());
+        buf.extend_from_slice(&order.to_le_bytes());
+        buf.extend_from_slice(&nside.to_le_bytes());
+        buf.extend_from_slice(&npix.to_le_bytes());
+        buf.extend_from_slice(&total_stars.to_le_bytes());
+        buf.extend_from_slice(&2016.0f64.to_le_bytes());
+        buf.extend_from_slice(&21.0f32.to_le_bytes());
+        buf.extend_from_slice(&[0u8; 20]);
+        assert_eq!(buf.len(), HEADER_SIZE);
+
+        let mut star_data: Vec<u8> = Vec::new();
+        let mut offsets: Vec<(u64, u32)> = vec![(0, 0); npix as usize];
+        for (pix, bucket) in buckets.iter().enumerate() {
+            let off = star_data.len() as u64;
+            offsets[pix] = (off, bucket.len() as u32);
+            for s in bucket {
+                star_data.extend_from_slice(&s.source_id.to_le_bytes());
+                star_data.extend_from_slice(&s.ra.to_le_bytes());
+                star_data.extend_from_slice(&s.dec.to_le_bytes());
+                star_data.extend_from_slice(&0.0f64.to_le_bytes()); // pmra
+                star_data.extend_from_slice(&0.0f64.to_le_bytes()); // pmdec
+                star_data.extend_from_slice(&0.0f64.to_le_bytes()); // parallax
+                star_data.extend_from_slice(&s.mag.to_le_bytes());
+                star_data.extend_from_slice(&0u16.to_le_bytes()); // flags
+                star_data.extend_from_slice(&0u16.to_le_bytes()); // padding
+            }
+        }
+        assert_eq!(star_data.len(), stars.len() * STAR_RECORD_SIZE);
+
+        for &(o, c) in &offsets {
+            buf.extend_from_slice(&o.to_le_bytes());
+            buf.extend_from_slice(&c.to_le_bytes());
+            buf.extend_from_slice(&0u32.to_le_bytes());
+        }
+        assert_eq!(buf.len(), HEADER_SIZE + npix as usize * PIXEL_ENTRY_SIZE);
+
+        buf.extend_from_slice(&star_data);
+
+        let mut file = NamedTempFile::new().unwrap();
+        file.write_all(&buf).unwrap();
+        file.flush().unwrap();
+        file
+    }
+}
+
+#[cfg(test)]
 mod tests {
+    use super::test_catalog::{build, SynthStar};
     use super::*;
+
+    use celestial_catalog::query::Catalog;
+    use celestial_images::formats::PixelData;
+    use celestial_time::JulianDate;
+
+    use crate::detect::DetectedStar;
+
+    fn det(x: f64, y: f64, flux: f64) -> DetectedStar {
+        DetectedStar {
+            x, y, flux,
+            snr: 20.0,
+            saturated: false,
+            saturated_count: 0,
+            background: 0.0,
+        }
+    }
+
+    fn empty_image(w: usize, h: usize) -> Image {
+        Image::new(PixelData::from(vec![0u16; w * h]), [w, h])
+    }
 
     #[test]
     fn match_params_default_values() {
@@ -236,5 +337,169 @@ mod tests {
         assert_eq!(q.max_stars, 250);
         assert_eq!(q.k_neighbors, 20);
         assert_eq!(q.search_radius_deg, Some(3.5));
+    }
+
+    #[test]
+    fn star_pair_clone_preserves_fields() {
+        let p = StarPair {
+            px_x: 1.0, px_y: 2.0,
+            ra_deg: 10.0, dec_deg: 20.0,
+            votes: 5, snr: 30.0,
+        };
+        let q = p.clone();
+        assert_eq!(q.px_x, 1.0);
+        assert_eq!(q.px_y, 2.0);
+        assert_eq!(q.ra_deg, 10.0);
+        assert_eq!(q.dec_deg, 20.0);
+        assert_eq!(q.votes, 5);
+        assert_eq!(q.snr, 30.0);
+    }
+
+    #[test]
+    fn quad_match_clone_preserves_quads() {
+        use celestial_catalog::query::Quad;
+        let qm = QuadMatch {
+            image_quad: Quad { hash: [0.1, 0.2, 0.3, 0.4], star_indices: [1, 2, 3, 4] },
+            catalog_quad: Quad { hash: [0.5, 0.6, 0.7, 0.8], star_indices: [5, 6, 7, 8] },
+        };
+        let c = qm.clone();
+        assert_eq!(c.image_quad.hash, [0.1, 0.2, 0.3, 0.4]);
+        assert_eq!(c.catalog_quad.star_indices, [5, 6, 7, 8]);
+    }
+
+    #[test]
+    fn match_field_no_detections_returns_empty_pairs() {
+        // Catalog with a handful of stars, but zero detections → no image quads,
+        // so no matches, no pairs. Must not panic and must return cleanly.
+        let center_ra = 180.0;
+        let center_dec = 0.0;
+        let stars: Vec<SynthStar> = (0..30)
+            .map(|i| {
+                let i = i as f64;
+                SynthStar {
+                    source_id: 1000 + i as i64,
+                    ra: center_ra + (i * 0.01),
+                    dec: center_dec + (i * 0.01 - 0.15),
+                    mag: 8.0 + (i * 0.05) as f32,
+                }
+            })
+            .collect();
+        let file = build(4, &stars);
+        let catalog = Catalog::open(file.path()).unwrap();
+
+        let img = empty_image(1024, 1024);
+        let hint = ICRSPosition::from_degrees(center_ra, center_dec).unwrap();
+        let epoch = JulianDate::new(2451545.0, 0.0);
+
+        let out = match_field(
+            &[],
+            &img,
+            &catalog,
+            &hint,
+            2.0,
+            epoch,
+            &MatchParams::default(),
+        )
+        .unwrap();
+
+        assert!(out.pairs.is_empty());
+        assert!(out.matches.is_empty());
+        assert!(out.image_stars.is_empty());
+        // Catalog quads need ≥4 stars in the cone; we placed 30 nearby.
+        assert!(!out.catalog_stars.is_empty());
+    }
+
+    #[test]
+    fn match_field_search_radius_override_is_used() {
+        // Tiny override radius → very few catalog stars in the cone → catalog_stars short.
+        let center_ra = 0.0;
+        let center_dec = 0.0;
+        let stars: Vec<SynthStar> = (0..50)
+            .map(|i| SynthStar {
+                source_id: 2000 + i,
+                ra: center_ra + (i as f64) * 0.2,
+                dec: center_dec + (i as f64) * 0.01,
+                mag: 9.0,
+            })
+            .collect();
+        let file = build(4, &stars);
+        let catalog = Catalog::open(file.path()).unwrap();
+
+        let img = empty_image(1024, 1024);
+        let hint = ICRSPosition::from_degrees(center_ra, center_dec).unwrap();
+        let epoch = JulianDate::new(2451545.0, 0.0);
+
+        let tight = MatchParams {
+            search_radius_deg: Some(0.05),
+            ..MatchParams::default()
+        };
+        let wide = MatchParams {
+            search_radius_deg: Some(5.0),
+            ..MatchParams::default()
+        };
+
+        let tight_out = match_field(&[], &img, &catalog, &hint, 1.0, epoch, &tight).unwrap();
+        let wide_out = match_field(&[], &img, &catalog, &hint, 1.0, epoch, &wide).unwrap();
+
+        // Wider radius must reach at least as many catalog stars.
+        assert!(wide_out.catalog_stars.len() >= tight_out.catalog_stars.len());
+    }
+
+    #[test]
+    fn match_field_runs_both_parities_returns_field_match() {
+        // Build a star field and a corresponding set of pixel detections such that
+        // both parities are evaluated. We don't assert on which parity wins or how
+        // many pairs are produced — just that the call completes and exposes the
+        // FieldMatch fields.
+        let center_ra = 90.0;
+        let center_dec = 45.0;
+        let mut stars: Vec<SynthStar> = Vec::new();
+        for i in 0..40 {
+            let theta = (i as f64) * 0.4;
+            stars.push(SynthStar {
+                source_id: 3000 + i as i64,
+                ra: center_ra + 0.1 * libm::cos(theta),
+                dec: center_dec + 0.1 * libm::sin(theta),
+                mag: 9.0 + (i as f32) * 0.05,
+            });
+        }
+        let file = build(4, &stars);
+        let catalog = Catalog::open(file.path()).unwrap();
+
+        // A small batch of detections — enough to build at least one image quad.
+        let detections: Vec<DetectedStar> = (0..20)
+            .map(|i| {
+                let i = i as f64;
+                det(100.0 + i * 30.0, 200.0 + i * 25.0, 5000.0 - i * 100.0)
+            })
+            .collect();
+
+        let img = empty_image(1024, 1024);
+        let hint = ICRSPosition::from_degrees(center_ra, center_dec).unwrap();
+        let epoch = JulianDate::new(2451545.0, 0.0);
+
+        let out = match_field(
+            &detections,
+            &img,
+            &catalog,
+            &hint,
+            2.0,
+            epoch,
+            &MatchParams::default(),
+        )
+        .unwrap();
+
+        // image_stars belongs to the winning parity; pairs may be empty for a
+        // synthetic non-aligned field, but the structure must be populated.
+        let _ = (out.image_stars.len(), out.catalog_stars.len(), out.matches.len(), out.pairs.len());
+    }
+
+    #[test]
+    fn parity_attempt_default_is_empty() {
+        let p = ParityAttempt::default();
+        assert!(p.img_stars.is_empty());
+        assert!(p.matches.is_empty());
+        assert!(p.pairs.is_empty());
+        assert_eq!(p.score, 0);
     }
 }

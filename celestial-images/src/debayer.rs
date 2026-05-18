@@ -273,7 +273,7 @@ fn debayer_row_u16_simd(
     }
 
     // Interior pixels - SIMD where we can do chunks of 8
-    while x + 8 <= width - 1 {
+    while x + 8 < width {
         debayer_8_pixels_simd(raw, dims, x, y, offsets, &mut row[x * 3..]);
         x += 8;
     }

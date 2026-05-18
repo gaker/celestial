@@ -11,9 +11,6 @@ pub const MAIN_FILES: &[&str] = &["ELP_MAIN.S1", "ELP_MAIN.S2", "ELP_MAIN.S3"];
 
 pub const PERT_FILES: &[&str] = &["ELP_PERT.S1", "ELP_PERT.S2", "ELP_PERT.S3"];
 
-#[allow(dead_code)]
-pub const FORTRAN_FILE: &str = "ELPMPP02.for";
-
 pub fn file_url(filename: &str) -> String {
     format!("{}/{}", BASE_URL, filename)
 }
@@ -25,13 +22,6 @@ pub fn default_client() -> Result<Client, String> {
         .danger_accept_invalid_certs(true)
         .build()
         .map_err(|e| format!("Failed to create HTTP client: {}", e))
-}
-
-#[cfg(feature = "cli")]
-#[allow(dead_code)]
-pub fn download_file_from_url(url: &str, filename: &str, output_dir: &Path) -> Result<(), String> {
-    let client = default_client()?;
-    download_file_with_client(&client, url, filename, output_dir)
 }
 
 #[cfg(feature = "cli")]
@@ -128,6 +118,14 @@ mod tests {
     use super::*;
     use std::fs::File;
     use tempfile::TempDir;
+
+    const FORTRAN_FILE: &str = "ELPMPP02.for";
+
+    #[cfg(feature = "cli")]
+    fn download_file_from_url(url: &str, filename: &str, output_dir: &Path) -> Result<(), String> {
+        let client = default_client()?;
+        download_file_with_client(&client, url, filename, output_dir)
+    }
 
     #[test]
     fn test_file_url() {

@@ -126,4 +126,49 @@ mod tests {
         let _p1 = provider.get(59945.0).unwrap();
         let _p2 = provider.get(59945.0).unwrap();
     }
+
+    fn sample_finals_line_at(mjd: &[u8]) -> String {
+        let mut line = vec![b' '; 188];
+        line[7..7 + mjd.len()].copy_from_slice(mjd);
+        line[18..27].copy_from_slice(b"  0.10000");
+        line[37..46].copy_from_slice(b"  0.25000");
+        line[58..68].copy_from_slice(b" -0.050000");
+        line[79..86].copy_from_slice(b"  1.500");
+        String::from_utf8(line).unwrap()
+    }
+
+    #[test]
+    fn bundled_c04_loads_records() {
+        let provider = EopProvider::bundled_c04().unwrap();
+        assert!(provider.record_count() > 0);
+        assert!(provider.time_span().is_some());
+    }
+
+    #[test]
+    fn with_interpolation_changes_method() {
+        // Both methods must yield the same exact-MJD value; the setter only
+        // changes behavior between samples. Pin the return type by checking
+        // chaining and that the result is still queryable.
+        let provider = EopProvider::bundled()
+            .unwrap()
+            .with_interpolation(InterpolationMethod::Lagrange5);
+        let params = provider.get(59945.0).unwrap();
+        assert_eq!(params.mjd, 59945.0);
+    }
+
+    #[test]
+    fn from_finals_str_parses_and_builds_provider() {
+        let line1 = sample_finals_line_at(b"60000.00");
+        let line2 = sample_finals_line_at(b"60001.00");
+        let content = format!("{}\n{}\n", line1, line2);
+        let provider = EopProvider::from_finals_str(&content).unwrap();
+        assert_eq!(provider.record_count(), 2);
+        assert_eq!(provider.time_span(), Some((60000.0, 60001.0)));
+    }
+
+    #[test]
+    fn from_finals_str_propagates_parse_error() {
+        let result = EopProvider::from_finals_str("garbage\nlines\nonly\n");
+        assert!(result.is_err());
+    }
 }

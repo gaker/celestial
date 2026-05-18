@@ -12,8 +12,8 @@ pub enum Coordinate {
     Distance,
 }
 
+#[cfg(test)]
 impl Coordinate {
-    #[allow(dead_code)]
     pub fn index(&self) -> usize {
         match self {
             Coordinate::Longitude => 0,

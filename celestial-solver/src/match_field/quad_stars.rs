@@ -207,4 +207,80 @@ mod tests {
         let out = stars_to_quad_stars(&stars, 1000, 1000, 1.0, 10, false);
         assert!(out.is_empty());
     }
+
+    use celestial_catalog::query::Catalog;
+    use celestial_time::JulianDate;
+
+    use super::super::test_catalog::{build, SynthStar};
+
+    #[test]
+    fn catalog_cone_search_returns_stars_in_radius_sorted_by_mag() {
+        // Cluster of stars within 0.1° of the center; build a catalog and verify
+        // the cone search returns them, magnitude-sorted, truncated to max_stars.
+        let center_ra = 270.0;
+        let center_dec = -30.0;
+        let mut stars = Vec::new();
+        for i in 0..20 {
+            let i = i as f64;
+            stars.push(SynthStar {
+                source_id: 5000 + i as i64,
+                ra: center_ra + 0.02 * (i - 10.0),
+                dec: center_dec + 0.01 * (i - 5.0),
+                mag: 10.0 - i as f32 * 0.1, // brightest first when sorted
+            });
+        }
+        let file = build(4, &stars);
+        let catalog = Catalog::open(file.path()).unwrap();
+        let epoch = JulianDate::new(2451545.0, 0.0);
+
+        let (quad_stars, results) = catalog_cone_search(
+            &catalog, center_ra, center_dec, 1.0, 8, epoch,
+        );
+
+        // truncate(max_stars) → at most 8 entries.
+        assert!(quad_stars.len() <= 8);
+        assert_eq!(quad_stars.len(), results.len());
+        // Mag-sorted ascending → check monotonicity of results.
+        for w in results.windows(2) {
+            assert!(w[0].star.mag <= w[1].star.mag);
+        }
+        // QuadStar source_id mirrors the catalog source_id.
+        for (qs, r) in quad_stars.iter().zip(results.iter()) {
+            assert_eq!(qs.source_id, r.star.source_id);
+        }
+    }
+
+    #[test]
+    fn catalog_cone_search_empty_far_field_returns_empty() {
+        // Stars on one side of the sky, search the other side → no hits.
+        let stars = vec![SynthStar { source_id: 1, ra: 10.0, dec: 0.0, mag: 9.0 }];
+        let file = build(4, &stars);
+        let catalog = Catalog::open(file.path()).unwrap();
+        let epoch = JulianDate::new(2451545.0, 0.0);
+
+        let (qs, res) = catalog_cone_search(&catalog, 200.0, 0.0, 0.5, 50, epoch);
+        assert!(qs.is_empty());
+        assert!(res.is_empty());
+    }
+
+    #[test]
+    fn catalog_cone_search_skips_stars_that_fail_tangent_projection() {
+        // tan_project_star returns None for stars on the far side of the sphere
+        // (denom <= 0). Searching with a huge radius forces such stars into the
+        // result list, where they must be filtered out of quad_stars.
+        let center_ra = 0.0;
+        let center_dec = 0.0;
+        let stars = vec![
+            SynthStar { source_id: 1, ra: 0.0, dec: 0.0, mag: 8.0 },
+            SynthStar { source_id: 2, ra: 180.0, dec: 0.0, mag: 9.0 },
+        ];
+        let file = build(4, &stars);
+        let catalog = Catalog::open(file.path()).unwrap();
+        let epoch = JulianDate::new(2451545.0, 0.0);
+
+        let (qs, res) = catalog_cone_search(&catalog, center_ra, center_dec, 180.0, 50, epoch);
+        // Both stars are within the cone, but only the near one projects.
+        assert!(res.len() >= 1);
+        assert!(qs.len() < res.len() || qs.iter().all(|s| s.source_id != 2));
+    }
 }
