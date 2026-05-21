@@ -54,40 +54,55 @@ impl Image {
 
         let keywords = header.keywords().to_vec();
 
-        Ok(Self {
+        let mut img = Self {
             pixels,
             dimensions,
             keywords,
             xisf_properties: Vec::new(),
-        })
+        };
+        // FITS stores multi-channel images planar (all R, then all G,
+        // then all B). Callers expect interleaved layout for display.
+        img.planar_to_interleaved();
+        Ok(img)
     }
 
     pub(super) fn save_fits(&self, path: &Path) -> Result<()> {
         let mut writer = FitsWriter::create(path).map_err(ImageError::Fits)?;
 
-        match &self.pixels {
+        // FITS expects multi-channel data in planar layout (NAXIS3
+        // chunks each holding one full channel). In-memory we keep
+        // it interleaved, so flip for the write.
+        let source = if self.channels() == 3 {
+            let mut planar = self.clone();
+            planar.interleaved_to_planar();
+            std::borrow::Cow::Owned(planar)
+        } else {
+            std::borrow::Cow::Borrowed(self)
+        };
+
+        match &source.pixels {
             PixelData::U8(data) => writer
-                .write_primary_image(data, &self.dimensions, &self.keywords)
+                .write_primary_image(data, &source.dimensions, &source.keywords)
                 .map_err(ImageError::Fits)?,
             PixelData::U16(data) => {
                 let shifted: Vec<i16> =
                     data.iter().map(|&v| (v as i32 - 32768) as i16).collect();
-                let keywords = with_u16_scaling(&self.keywords);
+                let keywords = with_u16_scaling(&source.keywords);
                 writer
-                    .write_primary_image(&shifted, &self.dimensions, &keywords)
+                    .write_primary_image(&shifted, &source.dimensions, &keywords)
                     .map_err(ImageError::Fits)?
             }
             PixelData::I16(data) => writer
-                .write_primary_image(data, &self.dimensions, &self.keywords)
+                .write_primary_image(data, &source.dimensions, &source.keywords)
                 .map_err(ImageError::Fits)?,
             PixelData::I32(data) => writer
-                .write_primary_image(data, &self.dimensions, &self.keywords)
+                .write_primary_image(data, &source.dimensions, &source.keywords)
                 .map_err(ImageError::Fits)?,
             PixelData::F32(data) => writer
-                .write_primary_image(data, &self.dimensions, &self.keywords)
+                .write_primary_image(data, &source.dimensions, &source.keywords)
                 .map_err(ImageError::Fits)?,
             PixelData::F64(data) => writer
-                .write_primary_image(data, &self.dimensions, &self.keywords)
+                .write_primary_image(data, &source.dimensions, &source.keywords)
                 .map_err(ImageError::Fits)?,
         }
 
@@ -200,6 +215,27 @@ mod tests {
         let bscale = restored.get_keyword("BSCALE").unwrap().value.clone().unwrap();
         assert_eq!(bzero.as_real(), Some(32768.0));
         assert_eq!(bscale.as_real(), Some(1.0));
+    }
+
+    #[test]
+    fn roundtrip_rgb_f32_stays_interleaved_in_memory() {
+        // In-memory layout must be interleaved (RGB RGB RGB) both before
+        // save and after load — the on-disk FITS layout is planar but
+        // that conversion is handled transparently.
+        let tmp = tmp_fits();
+        let interleaved: Vec<f32> = vec![
+            1.0, 2.0, 3.0,    // pixel (0,0)
+            4.0, 5.0, 6.0,    // pixel (1,0)
+            7.0, 8.0, 9.0,    // pixel (0,1)
+            10.0, 11.0, 12.0, // pixel (1,1)
+        ];
+        let img = Image::new(PixelData::F32(interleaved.clone()), vec![2usize, 2, 3]);
+        img.save(tmp.path()).unwrap();
+
+        let restored = Image::open(tmp.path()).unwrap();
+        assert!(restored.is_rgb());
+        assert_eq!(restored.dimensions, vec![2usize, 2, 3]);
+        assert_eq!(restored.pixels.as_f32().unwrap(), &interleaved);
     }
 
     #[test]

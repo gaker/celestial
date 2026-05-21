@@ -54,12 +54,17 @@ impl Image {
 
         let keywords = xisf.keywords().to_vec();
 
-        Ok(Self {
+        let mut img = Self {
             pixels,
             dimensions,
             keywords,
             xisf_properties: Vec::new(),
-        })
+        };
+        // XISF normal storage is read back in planar order
+        // (`deinterleave_normal_storage` does the deinterleave). Callers
+        // expect interleaved RGB for display, so reinterleave here.
+        img.planar_to_interleaved();
+        Ok(img)
     }
 
     pub(super) fn save_xisf(&self, path: &Path) -> Result<()> {
@@ -211,6 +216,9 @@ mod tests {
         let restored = Image::open(tmp.path()).unwrap();
         assert_eq!(restored.dimensions, vec![4usize, 4, 3]);
         assert_eq!(restored.channels(), 3);
+        // Pixel layout in memory must be interleaved (RGB RGB ...) so
+        // display code can pass the buffer straight to a texture upload.
+        assert_eq!(restored.pixels.as_u8().unwrap(), &original);
     }
 
     #[test]

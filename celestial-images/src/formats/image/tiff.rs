@@ -3,6 +3,7 @@ use crate::core::{ImageError, Result};
 use crate::formats::pixel_data::PixelData;
 use std::path::Path;
 use tiff::encoder::{colortype, TiffEncoder};
+use tiff::ColorType;
 
 impl Image {
     pub fn open_tiff<P: AsRef<Path>>(path: P) -> Result<Self> {
@@ -16,12 +17,21 @@ impl Image {
             ImageError::FormatDetectionFailed(format!("TIFF dimensions error: {}", e))
         })?;
 
+        // Samples-per-pixel comes from the TIFF colortype, not from the
+        // decoded buffer (which is always flat). Without this, RGB TIFFs
+        // get reported as 1-channel and downstream code treats the
+        // interleaved R/G/B samples as 3× as many grayscale pixels.
+        let colortype = decoder.colortype().map_err(|e| {
+            ImageError::FormatDetectionFailed(format!("TIFF colortype error: {}", e))
+        })?;
+        let samples = samples_per_pixel(colortype);
+
         let image = decoder
             .read_image()
             .map_err(|e| ImageError::FormatDetectionFailed(format!("TIFF read error: {}", e)))?;
 
-        let (pixels, channels) = decode_tiff_image(image)?;
-        let dimensions = build_tiff_dimensions(width, height, channels);
+        let pixels = decode_tiff_image(image)?;
+        let dimensions = build_tiff_dimensions(width, height, samples);
 
         Ok(Self {
             pixels,
@@ -41,18 +51,30 @@ impl Image {
     }
 }
 
-fn decode_tiff_image(image: tiff::decoder::DecodingResult) -> Result<(PixelData, usize)> {
+fn samples_per_pixel(colortype: ColorType) -> usize {
+    match colortype {
+        ColorType::Gray(_) | ColorType::Palette(_) => 1,
+        ColorType::GrayA(_) => 2,
+        ColorType::RGB(_) | ColorType::YCbCr(_) | ColorType::Lab(_) => 3,
+        ColorType::RGBA(_) | ColorType::CMYK(_) => 4,
+        ColorType::CMYKA(_) => 5,
+        ColorType::Multiband { num_samples, .. } => num_samples as usize,
+        _ => 1,
+    }
+}
+
+fn decode_tiff_image(image: tiff::decoder::DecodingResult) -> Result<PixelData> {
     use tiff::decoder::DecodingResult;
 
     match image {
-        DecodingResult::U8(data) => Ok((PixelData::U8(data), 1)),
-        DecodingResult::U16(data) => Ok((PixelData::U16(data), 1)),
+        DecodingResult::U8(data) => Ok(PixelData::U8(data)),
+        DecodingResult::U16(data) => Ok(PixelData::U16(data)),
         DecodingResult::U32(data) => {
             let converted: Vec<i32> = data.iter().map(|&v| v as i32).collect();
-            Ok((PixelData::I32(converted), 1))
+            Ok(PixelData::I32(converted))
         }
-        DecodingResult::F32(data) => Ok((PixelData::F32(data), 1)),
-        DecodingResult::F64(data) => Ok((PixelData::F64(data), 1)),
+        DecodingResult::F32(data) => Ok(PixelData::F32(data)),
+        DecodingResult::F64(data) => Ok(PixelData::F64(data)),
         _ => Err(ImageError::UnsupportedFormat),
     }
 }
@@ -83,6 +105,9 @@ fn write_tiff_image(
         }
         (PixelData::F32(data), 1) => {
             encoder.write_image::<colortype::Gray32Float>(width, height, data)
+        }
+        (PixelData::F32(data), 3) => {
+            encoder.write_image::<colortype::RGB32Float>(width, height, data)
         }
         _ => return Err(ImageError::UnsupportedFormat),
     }
@@ -145,6 +170,35 @@ mod tests {
         let tmp = tmp_tiff();
         let img = Image::new(PixelData::U16(vec![0; 48]), vec![4usize, 4, 3]);
         img.save(tmp.path()).unwrap();
+    }
+
+    #[test]
+    fn roundtrip_rgb_u8_reports_three_channels() {
+        let tmp = tmp_tiff();
+        let img = Image::new(PixelData::U8((0u8..48).collect()), vec![4usize, 4, 3]);
+        img.save(tmp.path()).unwrap();
+
+        let restored = Image::open_tiff(tmp.path()).unwrap();
+        assert!(restored.is_rgb(), "RGB TIFF should round-trip with channels==3");
+        assert_eq!(restored.channels(), 3);
+        assert_eq!(restored.width(), 4);
+        assert_eq!(restored.height(), 4);
+        assert_eq!(restored.pixels.as_u8().unwrap().len(), 48);
+    }
+
+    #[test]
+    fn roundtrip_rgb_u16_reports_three_channels() {
+        let tmp = tmp_tiff();
+        let img = Image::new(
+            PixelData::U16((0u16..48).map(|i| i * 1000).collect()),
+            vec![4usize, 4, 3],
+        );
+        img.save(tmp.path()).unwrap();
+
+        let restored = Image::open_tiff(tmp.path()).unwrap();
+        assert!(restored.is_rgb());
+        assert_eq!(restored.channels(), 3);
+        assert_eq!(restored.pixels.as_u16().unwrap().len(), 48);
     }
 
     #[test]
