@@ -42,14 +42,14 @@ pub struct Geodetic {
 /// ```
 pub fn geodetic_from_image(img: &Image) -> Option<Geodetic> {
     let lat_deg = img
-        .get_keyword("OBSGEO-B")
-        .and_then(|kw| kw.value.as_ref()?.as_real())?;
+        .get("OBSGEO-B")
+        .as_f64()?;
     let lon_deg = img
-        .get_keyword("OBSGEO-L")
-        .and_then(|kw| kw.value.as_ref()?.as_real())?;
+        .get("OBSGEO-L")
+        .as_f64()?;
     let alt_m = img
-        .get_keyword("OBSGEO-H")
-        .and_then(|kw| kw.value.as_ref()?.as_real());
+        .get("OBSGEO-H")
+        .as_f64();
     Some(Geodetic {
         lon_deg,
         lat_deg,

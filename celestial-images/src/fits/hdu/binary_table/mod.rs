@@ -28,26 +28,26 @@ impl BinaryTableHdu {
 
     pub fn number_of_fields(&self) -> Option<i64> {
         self.header
-            .get_keyword_value("TFIELDS")
-            .and_then(|v| v.as_integer())
+            .get("TFIELDS")
+            .as_i64()
     }
 
     pub fn number_of_rows(&self) -> Option<i64> {
         self.header
-            .get_keyword_value("NAXIS2")
-            .and_then(|v| v.as_integer())
+            .get("NAXIS2")
+            .as_i64()
     }
 
     pub fn extension_name(&self) -> Option<&str> {
         self.header
-            .get_keyword_value("EXTNAME")
-            .and_then(|v| v.as_string())
+            .get("EXTNAME")
+            .as_str()
     }
 
     pub fn extension_version(&self) -> Option<i64> {
         self.header
-            .get_keyword_value("EXTVER")
-            .and_then(|v| v.as_integer())
+            .get("EXTVER")
+            .as_i64()
     }
 }
 
@@ -121,9 +121,7 @@ mod tests {
         let header_ref = hdu.header();
         assert_eq!(
             header_ref
-                .get_keyword_value("XTENSION")
-                .unwrap()
-                .as_string()
+                .get("XTENSION").as_str()
                 .unwrap(),
             "BINTABLE"
         );

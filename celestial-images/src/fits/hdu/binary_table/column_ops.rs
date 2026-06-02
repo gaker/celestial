@@ -17,8 +17,8 @@ pub(super) struct ColumnReadParams {
 impl BinaryTableHdu {
     pub fn column_count(&self) -> Result<usize> {
         self.header
-            .get_keyword_value("TFIELDS")
-            .and_then(|v| v.as_integer())
+            .get("TFIELDS")
+            .as_i64()
             .map(|n| n as usize)
             .ok_or_else(|| FitsError::KeywordNotFound {
                 keyword: "TFIELDS".to_string(),
@@ -45,8 +45,8 @@ impl BinaryTableHdu {
     fn get_column_format(&self, column_index: usize) -> Result<String> {
         let format_key = format!("TFORM{}", column_index);
         self.header
-            .get_keyword_value(&format_key)
-            .and_then(|v| v.as_string())
+            .get(&format_key)
+            .as_str()
             .map(|s| s.to_string())
             .ok_or(FitsError::KeywordNotFound {
                 keyword: format_key,
@@ -65,8 +65,8 @@ impl BinaryTableHdu {
     fn set_column_name(&self, info: &mut ColumnInfo, column_index: usize) {
         if let Some(name) = self
             .header
-            .get_keyword_value(&format!("TTYPE{}", column_index))
-            .and_then(|v| v.as_string())
+            .get(&format!("TTYPE{}", column_index))
+            .as_str()
         {
             *info = info.clone().with_name(name.to_string());
         }
@@ -75,8 +75,8 @@ impl BinaryTableHdu {
     fn set_column_unit(&self, info: &mut ColumnInfo, column_index: usize) {
         if let Some(unit) = self
             .header
-            .get_keyword_value(&format!("TUNIT{}", column_index))
-            .and_then(|v| v.as_string())
+            .get(&format!("TUNIT{}", column_index))
+            .as_str()
         {
             *info = info.clone().with_unit(unit.to_string());
         }
@@ -85,8 +85,8 @@ impl BinaryTableHdu {
     fn set_column_null_value(&self, info: &mut ColumnInfo, column_index: usize) {
         if let Some(null_val) = self
             .header
-            .get_keyword_value(&format!("TNULL{}", column_index))
-            .and_then(|v| v.as_string())
+            .get(&format!("TNULL{}", column_index))
+            .as_str()
         {
             *info = info.clone().with_null_value(null_val.to_string());
         }
@@ -95,8 +95,8 @@ impl BinaryTableHdu {
     fn set_column_scale(&self, info: &mut ColumnInfo, column_index: usize) {
         if let Some(scale) = self
             .header
-            .get_keyword_value(&format!("TSCAL{}", column_index))
-            .and_then(|v| v.as_real())
+            .get(&format!("TSCAL{}", column_index))
+            .as_f64()
         {
             *info = info.clone().with_scale(scale);
         }
@@ -105,8 +105,8 @@ impl BinaryTableHdu {
     fn set_column_zero_offset(&self, info: &mut ColumnInfo, column_index: usize) {
         if let Some(zero) = self
             .header
-            .get_keyword_value(&format!("TZERO{}", column_index))
-            .and_then(|v| v.as_real())
+            .get(&format!("TZERO{}", column_index))
+            .as_f64()
         {
             *info = info.clone().with_zero_offset(zero);
         }
@@ -115,8 +115,8 @@ impl BinaryTableHdu {
     fn set_column_display_format(&self, info: &mut ColumnInfo, column_index: usize) {
         if let Some(disp) = self
             .header
-            .get_keyword_value(&format!("TDISP{}", column_index))
-            .and_then(|v| v.as_string())
+            .get(&format!("TDISP{}", column_index))
+            .as_str()
         {
             info.display_format = Some(disp.to_string());
         }
@@ -242,8 +242,8 @@ impl BinaryTableHdu {
 
     pub(super) fn get_row_size(&self) -> Result<usize> {
         self.header
-            .get_keyword_value("NAXIS1")
-            .and_then(|v| v.as_integer())
+            .get("NAXIS1")
+            .as_i64()
             .map(|n| n as usize)
             .ok_or_else(|| FitsError::KeywordNotFound {
                 keyword: "NAXIS1".to_string(),

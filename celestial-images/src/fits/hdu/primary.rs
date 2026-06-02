@@ -23,8 +23,8 @@ impl PrimaryHdu {
 
     pub fn has_data(&self) -> bool {
         self.header
-            .get_keyword_value("NAXIS")
-            .and_then(|v| v.as_integer())
+            .get("NAXIS")
+            .as_i64()
             .unwrap_or(0)
             > 0
     }
@@ -32,8 +32,8 @@ impl PrimaryHdu {
     pub fn data_dimensions(&self) -> Vec<usize> {
         let naxis = self
             .header
-            .get_keyword_value("NAXIS")
-            .and_then(|v| v.as_integer())
+            .get("NAXIS")
+            .as_i64()
             .unwrap_or(0) as usize;
 
         let mut dims = Vec::with_capacity(naxis);
@@ -41,8 +41,8 @@ impl PrimaryHdu {
             let axis_name = format!("NAXIS{}", i);
             let axis_size = self
                 .header
-                .get_keyword_value(&axis_name)
-                .and_then(|v| v.as_integer())
+                .get(&axis_name)
+                .as_i64()
                 .unwrap_or(0) as usize;
             dims.push(axis_size);
         }
@@ -51,8 +51,8 @@ impl PrimaryHdu {
 
     pub fn bitpix(&self) -> Option<crate::core::BitPix> {
         self.header
-            .get_keyword_value("BITPIX")
-            .and_then(|v| v.as_integer())
+            .get("BITPIX")
+            .as_i64()
             .and_then(|i| crate::core::BitPix::from_value(i as i32))
     }
 }
@@ -116,17 +116,13 @@ mod tests {
         assert_eq!(hdu.info.index, 0);
         assert_eq!(
             hdu.header
-                .get_keyword_value("NAXIS")
-                .unwrap()
-                .as_integer()
+                .get("NAXIS").as_i64()
                 .unwrap(),
             2
         );
         assert!(hdu
             .header
-            .get_keyword_value("SIMPLE")
-            .unwrap()
-            .as_logical()
+            .get("SIMPLE").as_bool()
             .unwrap());
     }
 
@@ -139,16 +135,12 @@ mod tests {
         let header_ref = hdu.header();
         assert_eq!(
             header_ref
-                .get_keyword_value("NAXIS")
-                .unwrap()
-                .as_integer()
+                .get("NAXIS").as_i64()
                 .unwrap(),
             2
         );
         assert!(header_ref
-            .get_keyword_value("SIMPLE")
-            .unwrap()
-            .as_logical()
+            .get("SIMPLE").as_bool()
             .unwrap());
     }
 
@@ -435,15 +427,11 @@ mod tests {
         assert_eq!(hdu.calculate_data_size().unwrap(), 100 * 50);
         assert!(hdu
             .header()
-            .get_keyword_value("SIMPLE")
-            .unwrap()
-            .as_logical()
+            .get("SIMPLE").as_bool()
             .unwrap());
         assert!(hdu
             .header()
-            .get_keyword_value("EXTEND")
-            .unwrap()
-            .as_logical()
+            .get("EXTEND").as_bool()
             .unwrap());
     }
 

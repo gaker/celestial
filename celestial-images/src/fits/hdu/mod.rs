@@ -84,15 +84,15 @@ pub trait HduTrait: std::fmt::Debug {
 
     fn bzero(&self) -> f64 {
         self.header()
-            .get_keyword_value("BZERO")
-            .and_then(|v| v.as_real())
+            .get("BZERO")
+            .as_f64()
             .unwrap_or(0.0)
     }
 
     fn bscale(&self) -> f64 {
         self.header()
-            .get_keyword_value("BSCALE")
-            .and_then(|v| v.as_real())
+            .get("BSCALE")
+            .as_f64()
             .unwrap_or(1.0)
     }
 
@@ -104,8 +104,8 @@ pub trait HduTrait: std::fmt::Debug {
 
     fn has_data(&self) -> bool {
         self.header()
-            .get_keyword_value("NAXIS")
-            .and_then(|v| v.as_integer())
+            .get("NAXIS")
+            .as_i64()
             .unwrap_or(0)
             > 0
     }
@@ -113,8 +113,8 @@ pub trait HduTrait: std::fmt::Debug {
     fn data_dimensions(&self) -> Vec<usize> {
         let naxis = self
             .header()
-            .get_keyword_value("NAXIS")
-            .and_then(|v| v.as_integer())
+            .get("NAXIS")
+            .as_i64()
             .unwrap_or(0) as usize;
 
         let mut dims = Vec::with_capacity(naxis);
@@ -122,8 +122,8 @@ pub trait HduTrait: std::fmt::Debug {
             let axis_name = format!("NAXIS{}", i);
             let axis_size = self
                 .header()
-                .get_keyword_value(&axis_name)
-                .and_then(|v| v.as_integer())
+                .get(&axis_name)
+                .as_i64()
                 .unwrap_or(0) as usize;
             dims.push(axis_size);
         }
@@ -132,8 +132,8 @@ pub trait HduTrait: std::fmt::Debug {
 
     fn bitpix(&self) -> Option<BitPix> {
         self.header()
-            .get_keyword_value("BITPIX")
-            .and_then(|v| v.as_integer())
+            .get("BITPIX")
+            .as_i64()
             .and_then(|i| BitPix::from_value(i as i32))
     }
 
@@ -535,11 +535,11 @@ mod tests {
         let hdu_ascii = Hdu::AsciiTable(ascii_table);
         let hdu_random = Hdu::RandomGroups(random_groups);
 
-        assert!(hdu_primary.header().get_keyword_value("SIMPLE").is_some());
-        assert!(hdu_image.header().get_keyword_value("XTENSION").is_some());
-        assert!(hdu_binary.header().get_keyword_value("TFIELDS").is_some());
-        assert!(hdu_ascii.header().get_keyword_value("TFIELDS").is_some());
-        assert!(hdu_random.header().get_keyword_value("GROUPS").is_some());
+        assert!(hdu_primary.header().get("SIMPLE").exists());
+        assert!(hdu_image.header().get("XTENSION").exists());
+        assert!(hdu_binary.header().get("TFIELDS").exists());
+        assert!(hdu_ascii.header().get("TFIELDS").exists());
+        assert!(hdu_random.header().get("GROUPS").exists());
     }
 
     #[test]

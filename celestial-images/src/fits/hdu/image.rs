@@ -23,20 +23,20 @@ impl ImageHdu {
 
     pub fn extension_name(&self) -> Option<&str> {
         self.header
-            .get_keyword_value("EXTNAME")
-            .and_then(|v| v.as_string())
+            .get("EXTNAME")
+            .as_str()
     }
 
     pub fn extension_version(&self) -> Option<i64> {
         self.header
-            .get_keyword_value("EXTVER")
-            .and_then(|v| v.as_integer())
+            .get("EXTVER")
+            .as_i64()
     }
 
     pub fn has_data(&self) -> bool {
         self.header
-            .get_keyword_value("NAXIS")
-            .and_then(|v| v.as_integer())
+            .get("NAXIS")
+            .as_i64()
             .unwrap_or(0)
             > 0
     }
@@ -44,8 +44,8 @@ impl ImageHdu {
     pub fn data_dimensions(&self) -> Vec<usize> {
         let naxis = self
             .header
-            .get_keyword_value("NAXIS")
-            .and_then(|v| v.as_integer())
+            .get("NAXIS")
+            .as_i64()
             .unwrap_or(0) as usize;
 
         let mut dims = Vec::with_capacity(naxis);
@@ -53,8 +53,8 @@ impl ImageHdu {
             let axis_name = format!("NAXIS{}", i);
             let axis_size = self
                 .header
-                .get_keyword_value(&axis_name)
-                .and_then(|v| v.as_integer())
+                .get(&axis_name)
+                .as_i64()
                 .unwrap_or(0) as usize;
             dims.push(axis_size);
         }
@@ -63,8 +63,8 @@ impl ImageHdu {
 
     pub fn bitpix(&self) -> Option<crate::core::BitPix> {
         self.header
-            .get_keyword_value("BITPIX")
-            .and_then(|v| v.as_integer())
+            .get("BITPIX")
+            .as_i64()
             .and_then(|i| crate::core::BitPix::from_value(i as i32))
     }
 }
@@ -131,9 +131,7 @@ mod tests {
         assert_eq!(hdu.info.index, 1);
         assert_eq!(
             hdu.header
-                .get_keyword_value("NAXIS")
-                .unwrap()
-                .as_integer()
+                .get("NAXIS").as_i64()
                 .unwrap(),
             2
         );
@@ -148,9 +146,7 @@ mod tests {
         let header_ref = hdu.header();
         assert_eq!(
             header_ref
-                .get_keyword_value("NAXIS")
-                .unwrap()
-                .as_integer()
+                .get("NAXIS").as_i64()
                 .unwrap(),
             2
         );

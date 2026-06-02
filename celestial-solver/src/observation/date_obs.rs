@@ -16,8 +16,8 @@ use celestial_images::formats::Image;
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub fn date_obs_from_image(img: &Image) -> Option<String> {
-    img.get_keyword("DATE-OBS")
-        .and_then(|kw| kw.value.as_ref()?.as_string().map(|s| s.to_owned()))
+    img.get("DATE-OBS")
+        .as_str().map(|s| s.to_owned())
 }
 
 #[cfg(test)]

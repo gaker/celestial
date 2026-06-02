@@ -827,18 +827,18 @@ mod tests {
         );
 
         let zimage = header
-            .get_keyword_value("ZIMAGE")
-            .and_then(|v| v.as_logical());
+            .get("ZIMAGE")
+            .as_bool();
         assert_eq!(zimage, Some(true));
 
         let zcmptype = header
-            .get_keyword_value("ZCMPTYPE")
-            .and_then(|v| v.as_string());
+            .get("ZCMPTYPE")
+            .as_str();
         assert_eq!(zcmptype, Some("RICE_1"));
 
         let zbitpix = header
-            .get_keyword_value("ZBITPIX")
-            .and_then(|v| v.as_integer());
+            .get("ZBITPIX")
+            .as_i64();
         assert_eq!(zbitpix, Some(16));
     }
 
@@ -975,8 +975,8 @@ mod tests {
         assert_eq!(fits.num_hdus(), 1);
 
         let header = fits.get_header(0).unwrap();
-        assert!(header.get_keyword_value("DATASUM").is_some());
-        assert!(header.get_keyword_value("CHECKSUM").is_some());
+        assert!(header.get("DATASUM").exists());
+        assert!(header.get("CHECKSUM").exists());
     }
 
     #[test]
@@ -1041,11 +1041,11 @@ mod tests {
 
         let header = writer.build_primary_header::<i16>(&dimensions, &[]);
 
-        assert!(header.get_keyword_value("SIMPLE").is_some());
-        assert!(header.get_keyword_value("BITPIX").is_some());
-        assert!(header.get_keyword_value("NAXIS").is_some());
-        assert!(header.get_keyword_value("NAXIS1").is_some());
-        assert!(header.get_keyword_value("NAXIS2").is_some());
+        assert!(header.get("SIMPLE").exists());
+        assert!(header.get("BITPIX").exists());
+        assert!(header.get("NAXIS").exists());
+        assert!(header.get("NAXIS1").exists());
+        assert!(header.get("NAXIS2").exists());
     }
 
     #[test]

@@ -20,32 +20,32 @@ impl AsciiTableHdu {
 
     pub fn number_of_fields(&self) -> Option<i64> {
         self.header
-            .get_keyword_value("TFIELDS")
-            .and_then(|v| v.as_integer())
+            .get("TFIELDS")
+            .as_i64()
     }
 
     pub fn number_of_rows(&self) -> Option<i64> {
         self.header
-            .get_keyword_value("NAXIS2")
-            .and_then(|v| v.as_integer())
+            .get("NAXIS2")
+            .as_i64()
     }
 
     pub fn extension_name(&self) -> Option<&str> {
         self.header
-            .get_keyword_value("EXTNAME")
-            .and_then(|v| v.as_string())
+            .get("EXTNAME")
+            .as_str()
     }
 
     pub fn extension_version(&self) -> Option<i64> {
         self.header
-            .get_keyword_value("EXTVER")
-            .and_then(|v| v.as_integer())
+            .get("EXTVER")
+            .as_i64()
     }
 
     pub fn column_count(&self) -> Result<usize> {
         self.header
-            .get_keyword_value("TFIELDS")
-            .and_then(|v| v.as_integer())
+            .get("TFIELDS")
+            .as_i64()
             .map(|n| n as usize)
             .ok_or_else(|| FitsError::KeywordNotFound {
                 keyword: "TFIELDS".to_string(),
@@ -66,8 +66,8 @@ impl AsciiTableHdu {
         let format_key = format!("TFORM{}", column_index);
         let format = self
             .header
-            .get_keyword_value(&format_key)
-            .and_then(|v| v.as_string())
+            .get(&format_key)
+            .as_str()
             .ok_or(FitsError::KeywordNotFound {
                 keyword: format_key,
             })?;
@@ -76,48 +76,48 @@ impl AsciiTableHdu {
 
         if let Some(name) = self
             .header
-            .get_keyword_value(&format!("TTYPE{}", column_index))
-            .and_then(|v| v.as_string())
+            .get(&format!("TTYPE{}", column_index))
+            .as_str()
         {
             info = info.with_name(name.to_string());
         }
 
         if let Some(unit) = self
             .header
-            .get_keyword_value(&format!("TUNIT{}", column_index))
-            .and_then(|v| v.as_string())
+            .get(&format!("TUNIT{}", column_index))
+            .as_str()
         {
             info = info.with_unit(unit.to_string());
         }
 
         if let Some(null_val) = self
             .header
-            .get_keyword_value(&format!("TNULL{}", column_index))
-            .and_then(|v| v.as_string())
+            .get(&format!("TNULL{}", column_index))
+            .as_str()
         {
             info = info.with_null_value(null_val.to_string());
         }
 
         if let Some(scale) = self
             .header
-            .get_keyword_value(&format!("TSCAL{}", column_index))
-            .and_then(|v| v.as_real())
+            .get(&format!("TSCAL{}", column_index))
+            .as_f64()
         {
             info = info.with_scale(scale);
         }
 
         if let Some(zero) = self
             .header
-            .get_keyword_value(&format!("TZERO{}", column_index))
-            .and_then(|v| v.as_real())
+            .get(&format!("TZERO{}", column_index))
+            .as_f64()
         {
             info = info.with_zero_offset(zero);
         }
 
         if let Some(disp) = self
             .header
-            .get_keyword_value(&format!("TDISP{}", column_index))
-            .and_then(|v| v.as_string())
+            .get(&format!("TDISP{}", column_index))
+            .as_str()
         {
             info.display_format = Some(disp.to_string());
         }
@@ -531,9 +531,7 @@ mod tests {
         let header_ref = hdu.header();
         assert_eq!(
             header_ref
-                .get_keyword_value("XTENSION")
-                .unwrap()
-                .as_string()
+                .get("XTENSION").as_str()
                 .unwrap(),
             "TABLE"
         );

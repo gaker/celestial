@@ -6,16 +6,16 @@ use std::io::{Read, Seek, SeekFrom};
 impl BinaryTableHdu {
     pub fn is_compressed_image(&self) -> bool {
         self.header
-            .get_keyword_value("ZIMAGE")
-            .and_then(|v| v.as_logical())
+            .get("ZIMAGE")
+            .as_bool()
             .unwrap_or(false)
     }
 
     pub fn compression_algorithm(&self) -> Option<&str> {
         if self.is_compressed_image() {
             self.header
-                .get_keyword_value("ZCMPTYPE")
-                .and_then(|v| v.as_string())
+                .get("ZCMPTYPE")
+                .as_str()
         } else {
             None
         }
@@ -24,8 +24,8 @@ impl BinaryTableHdu {
     pub fn quantization_level(&self) -> Option<i64> {
         if self.is_compressed_image() {
             self.header
-                .get_keyword_value("ZQUANTIZ")
-                .and_then(|v| v.as_integer())
+                .get("ZQUANTIZ")
+                .as_i64()
         } else {
             None
         }
@@ -39,16 +39,16 @@ impl BinaryTableHdu {
     pub fn get_tile_dimensions(&self) -> Result<(usize, usize)> {
         let znaxis1 = self
             .header
-            .get_keyword_value("ZNAXIS1")
-            .and_then(|v| v.as_integer())
+            .get("ZNAXIS1")
+            .as_i64()
             .ok_or_else(|| FitsError::KeywordNotFound {
                 keyword: "ZNAXIS1".to_string(),
             })?;
 
         let znaxis2 = self
             .header
-            .get_keyword_value("ZNAXIS2")
-            .and_then(|v| v.as_integer())
+            .get("ZNAXIS2")
+            .as_i64()
             .ok_or_else(|| FitsError::KeywordNotFound {
                 keyword: "ZNAXIS2".to_string(),
             })?;
@@ -58,8 +58,8 @@ impl BinaryTableHdu {
 
     pub fn get_bits_per_pixel(&self) -> Result<i32> {
         self.header
-            .get_keyword_value("ZBITPIX")
-            .and_then(|v| v.as_integer())
+            .get("ZBITPIX")
+            .as_i64()
             .map(|v| v as i32)
             .ok_or_else(|| FitsError::KeywordNotFound {
                 keyword: "ZBITPIX".to_string(),

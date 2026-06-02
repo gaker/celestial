@@ -24,13 +24,27 @@ impl Image {
         let colortype = decoder.colortype().map_err(|e| {
             ImageError::FormatDetectionFailed(format!("TIFF colortype error: {}", e))
         })?;
-        let samples = samples_per_pixel(colortype);
+        let logical_samples = samples_per_pixel(colortype);
 
         let image = decoder
             .read_image()
             .map_err(|e| ImageError::FormatDetectionFailed(format!("TIFF read error: {}", e)))?;
 
-        let pixels = decode_tiff_image(image)?;
+        let mut pixels = decode_tiff_image(image)?;
+
+        // `read_image` returns every stored sample, including extra samples the
+        // colortype doesn't account for — most commonly an associated-alpha
+        // channel on an RGB image (PixInsight writes RGBA with photometric=RGB,
+        // so colortype() reports RGB / 3 samples while the buffer holds 4). The
+        // true sample count is the buffer length per pixel; reconcile against
+        // the colortype and drop the trailing extra samples so the in-memory
+        // image is a clean 1- or 3-channel buffer.
+        let pixel_count = (width as usize) * (height as usize);
+        let actual = actual_samples(pixels.len(), pixel_count);
+        let samples = reconcile_samples(pixels.len(), pixel_count, logical_samples)?;
+        if samples != actual {
+            pixels = strip_extra_samples(pixels, actual, samples);
+        }
         let dimensions = build_tiff_dimensions(width, height, samples);
 
         Ok(Self {
@@ -48,6 +62,57 @@ impl Image {
 
         let (width, height, channels) = self.extract_dimensions();
         write_tiff_image(&self.pixels, &mut encoder, width as u32, height as u32, channels)
+    }
+}
+
+/// Samples per pixel actually present in the decoded buffer.
+fn actual_samples(buffer_len: usize, pixel_count: usize) -> usize {
+    if pixel_count == 0 {
+        return 0;
+    }
+    buffer_len / pixel_count
+}
+
+/// Resolve how many channels to keep, given the decoded buffer's true sample
+/// count and the count implied by the colortype. When the buffer carries more
+/// samples than the colortype (extra/alpha samples), keep only the logical
+/// channels (1 for gray-like, 3 for RGB-like) and drop the rest. When the two
+/// agree, use the colortype's count.
+fn reconcile_samples(
+    buffer_len: usize,
+    pixel_count: usize,
+    logical_samples: usize,
+) -> Result<usize> {
+    let actual = actual_samples(buffer_len, pixel_count);
+    if pixel_count == 0 || actual == 0 || !buffer_len.is_multiple_of(pixel_count) {
+        return Err(ImageError::FormatDetectionFailed(format!(
+            "TIFF buffer ({buffer_len}) is not a whole number of samples per pixel ({pixel_count})"
+        )));
+    }
+    if actual <= logical_samples {
+        return Ok(actual);
+    }
+    // More samples than the colortype expects: keep the logical channels.
+    // Gray-like (1–2) collapse to 1, RGB-like (3–4) collapse to 3.
+    Ok(if logical_samples >= 3 { 3 } else { 1 })
+}
+
+/// Drop the trailing `from - to` samples of every pixel in an interleaved
+/// buffer, keeping the first `to` of each group of `from`. Used to strip an
+/// alpha (or other extra) channel down to the logical RGB/gray channels.
+fn strip_extra_samples(pixels: PixelData, from: usize, to: usize) -> PixelData {
+    fn strip<T: Copy>(data: Vec<T>, from: usize, to: usize) -> Vec<T> {
+        data.chunks(from)
+            .flat_map(|px| px.iter().take(to).copied())
+            .collect()
+    }
+    match pixels {
+        PixelData::U8(d) => PixelData::U8(strip(d, from, to)),
+        PixelData::U16(d) => PixelData::U16(strip(d, from, to)),
+        PixelData::I16(d) => PixelData::I16(strip(d, from, to)),
+        PixelData::I32(d) => PixelData::I32(strip(d, from, to)),
+        PixelData::F32(d) => PixelData::F32(strip(d, from, to)),
+        PixelData::F64(d) => PixelData::F64(strip(d, from, to)),
     }
 }
 
@@ -206,6 +271,41 @@ mod tests {
         let tmp = tmp_tiff();
         let img = Image::new(PixelData::I16(vec![0; 16]), vec![4usize, 4]);
         assert!(img.save(tmp.path()).is_err());
+    }
+
+    #[test]
+    fn reconcile_keeps_matching_samples() {
+        // 3 samples/pixel buffer, colortype says 3 → keep 3.
+        assert_eq!(reconcile_samples(4 * 3, 4, 3).unwrap(), 3);
+        // 1 sample/pixel gray.
+        assert_eq!(reconcile_samples(4, 4, 1).unwrap(), 1);
+    }
+
+    #[test]
+    fn reconcile_strips_rgb_alpha() {
+        // PixInsight RGBA: buffer has 4 samples/pixel but colortype reports
+        // RGB (3). Keep 3, drop the assoc-alpha.
+        assert_eq!(reconcile_samples(4 * 4, 4, 3).unwrap(), 3);
+    }
+
+    #[test]
+    fn reconcile_strips_gray_alpha() {
+        // GrayA: 2 samples/pixel, logical 1 → keep 1.
+        assert_eq!(reconcile_samples(4 * 2, 4, 1).unwrap(), 1);
+    }
+
+    #[test]
+    fn reconcile_rejects_non_integer_samples() {
+        // A buffer that isn't a whole number of samples per pixel.
+        assert!(reconcile_samples(10, 4, 3).is_err());
+    }
+
+    #[test]
+    fn strip_extra_samples_drops_trailing_channel() {
+        // RGBA → RGB: keep first 3 of every 4. One pixel: [R,G,B,A].
+        let rgba = PixelData::U16(vec![10, 20, 30, 999, 40, 50, 60, 888]);
+        let rgb = strip_extra_samples(rgba, 4, 3);
+        assert_eq!(rgb.as_u16().unwrap(), &vec![10, 20, 30, 40, 50, 60]);
     }
 
     #[test]

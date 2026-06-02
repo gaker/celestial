@@ -1,4 +1,4 @@
-use crate::fits::header::{Keyword, KeywordValue};
+use crate::fits::header::{Field, Keyword, KeywordValue};
 use crate::xisf::header::{
     parse_geometry, ColorSpace, DataLocation, ImageInfo, PixelStorage, SampleFormat,
     XisfCompression, XisfHeader,
@@ -92,6 +92,10 @@ impl<R: Read + Seek> XisfFile<R> {
 
     pub fn get_keyword(&self, key: &str) -> Option<&Keyword> {
         self.header.keywords.iter().find(|k| k.name == key)
+    }
+
+    pub fn get(&self, key: &str) -> Field<'_> {
+        Field::from_value(self.get_keyword(key).and_then(|k| k.value.as_ref()))
     }
 
     #[deprecated(note = "Use keywords() instead")]
@@ -800,6 +804,27 @@ mod tests {
             Some(KeywordValue::String("Hubble".to_string()))
         );
         assert!(xisf_file.get_keyword("NONEXISTENT").is_none());
+    }
+
+    #[test]
+    fn get_returns_typed_field() {
+        let data = create_xisf_data_with_xml(&create_valid_xisf_xml());
+        let cursor = Cursor::new(data);
+        let xisf_file = XisfFile::new(cursor).unwrap();
+
+        let telescop = xisf_file.get("TELESCOP");
+        assert!(telescop.exists());
+        assert_eq!(telescop.as_str(), Some("Hubble"));
+        assert_eq!(telescop.as_i64(), None);
+        assert_eq!(
+            telescop.value(),
+            Some(&KeywordValue::String("Hubble".to_string()))
+        );
+
+        let missing = xisf_file.get("NONEXISTENT");
+        assert!(!missing.exists());
+        assert_eq!(missing.as_str(), None);
+        assert_eq!(missing.value(), None);
     }
 
     #[test]

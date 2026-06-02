@@ -8,18 +8,15 @@ struct FitsKeywordAdapter<'a> {
 
 impl KeywordProvider for FitsKeywordAdapter<'_> {
     fn get_string(&self, key: &str) -> Option<String> {
-        self.header
-            .get_keyword_value(key)?
-            .as_string()
-            .map(|s| s.to_string())
+        self.header.get(key).as_str().map(|s| s.to_string())
     }
 
     fn get_float(&self, key: &str) -> Option<f64> {
-        self.header.get_keyword_value(key)?.as_real()
+        self.header.get(key).as_f64()
     }
 
     fn get_int(&self, key: &str) -> Option<i64> {
-        self.header.get_keyword_value(key)?.as_integer()
+        self.header.get(key).as_i64()
     }
 }
 
@@ -29,7 +26,7 @@ pub struct WcsInfo {
 
 impl WcsInfo {
     pub fn from_header(header: &Header) -> Result<Option<Self>> {
-        if header.get_keyword_value("CTYPE1").is_none() {
+        if !header.get("CTYPE1").exists() {
             return Ok(None);
         }
 

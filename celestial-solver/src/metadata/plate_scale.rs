@@ -57,12 +57,12 @@ pub fn plate_scale_from_image(
     pixel_override: Option<f64>,
 ) -> Result<PlateScale, MetadataError> {
     let focal = focal_override.or_else(|| {
-        img.get_keyword("FOCALLEN")
-            .and_then(|kw| kw.value.as_ref()?.as_real())
+        img.get("FOCALLEN")
+            .as_f64()
     });
     let pixel = pixel_override.or_else(|| {
-        img.get_keyword("XPIXSZ")
-            .and_then(|kw| kw.value.as_ref()?.as_real())
+        img.get("XPIXSZ")
+            .as_f64()
     });
 
     let focal_mm = focal.ok_or(MetadataError::MissingHeader("FOCALLEN"))?;

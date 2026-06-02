@@ -123,7 +123,7 @@ impl<R: Read + Seek> FitsFile<R> {
 
     pub fn get_header_value(&mut self, index: usize, keyword: &str) -> Result<Option<String>> {
         let header = self.get_header(index)?;
-        Ok(header.get_keyword_value(keyword).map(|v| v.to_string()))
+        Ok(header.get(keyword).value().map(|v| v.to_string()))
     }
 
     pub fn clear_header_cache(&mut self) {
@@ -181,7 +181,7 @@ impl<R: Read + Seek> FitsFile<R> {
         header: &Header,
         data_bytes: &[u8],
     ) -> Result<Option<bool>> {
-        let datasum_value = match header.get_keyword_value("DATASUM") {
+        let datasum_value = match header.get("DATASUM").value() {
             Some(v) => v.as_string(),
             None => return Ok(None),
         };
@@ -202,7 +202,7 @@ impl<R: Read + Seek> FitsFile<R> {
         header_bytes: &[u8],
         data_bytes: &[u8],
     ) -> Result<Option<bool>> {
-        let checksum_value = match header.get_keyword_value("CHECKSUM") {
+        let checksum_value = match header.get("CHECKSUM").value() {
             Some(v) => v.as_string(),
             None => return Ok(None),
         };
@@ -385,12 +385,8 @@ impl<R: Read + Seek> FitsFile<R> {
             let header = HeaderParser::parse_header(&header_data)?;
             self.buffer_pool.return_buffer(header_data);
 
-            if let Some(extend_value) = header.get_keyword_value("EXTEND") {
-                if let Some(logical_val) = extend_value.as_logical() {
-                    if !logical_val {
-                        return Ok(true);
-                    }
-                }
+            if let Some(false) = header.get("EXTEND").as_bool() {
+                return Ok(true);
             }
         }
 
@@ -454,8 +450,8 @@ impl<R: Read + Seek> FitsFile<R> {
 
     fn calculate_data_size(&self, header: &Header) -> Result<usize> {
         let naxis = header
-            .get_keyword_value("NAXIS")
-            .and_then(|v| v.as_integer())
+            .get("NAXIS")
+            .as_i64()
             .unwrap_or(0) as usize;
 
         if naxis == 0 {
@@ -463,8 +459,8 @@ impl<R: Read + Seek> FitsFile<R> {
         }
 
         let bitpix = header
-            .get_keyword_value("BITPIX")
-            .and_then(|v| v.as_integer())
+            .get("BITPIX")
+            .as_i64()
             .ok_or_else(|| FitsError::KeywordNotFound {
                 keyword: "BITPIX".to_string(),
             })? as i32;
@@ -477,8 +473,8 @@ impl<R: Read + Seek> FitsFile<R> {
         for i in 1..=naxis {
             let axis_name = format!("NAXIS{}", i);
             let axis_size = header
-                .get_keyword_value(&axis_name)
-                .and_then(|v| v.as_integer())
+                .get(&axis_name)
+                .as_i64()
                 .unwrap_or(1) as usize;
             total_pixels = total_pixels
                 .checked_mul(axis_size)
@@ -495,8 +491,8 @@ impl<R: Read + Seek> FitsFile<R> {
 
     fn create_extension_hdu(&self, header: Header, hdu_info: HduInfo) -> Result<Hdu> {
         let xtension = header
-            .get_keyword_value("XTENSION")
-            .and_then(|v| v.as_string())
+            .get("XTENSION")
+            .as_str()
             .ok_or_else(|| FitsError::KeywordNotFound {
                 keyword: "XTENSION".to_string(),
             })?;

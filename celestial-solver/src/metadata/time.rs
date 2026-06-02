@@ -29,21 +29,18 @@ use super::error::MetadataError;
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub fn jd_from_image(img: &Image) -> Result<JulianDate, MetadataError> {
-    if let Some(kw) = img.get_keyword("MJD-OBS") {
-        let mjd = kw
-            .value
-            .as_ref()
-            .and_then(|v| v.as_real())
-            .ok_or(MetadataError::InvalidHeaderType {
-                keyword: "MJD-OBS",
-                kind: "numeric",
-            })?;
+    let mjd_obs = img.get("MJD-OBS");
+    if mjd_obs.exists() {
+        let mjd = mjd_obs.as_f64().ok_or(MetadataError::InvalidHeaderType {
+            keyword: "MJD-OBS",
+            kind: "numeric",
+        })?;
         return Ok(JulianDate::new(2_400_000.5, mjd));
     }
 
     let date_obs = img
-        .get_keyword("DATE-OBS")
-        .and_then(|kw| kw.value.as_ref()?.as_string().map(|s| s.to_owned()))
+        .get("DATE-OBS")
+        .as_str().map(|s| s.to_owned())
         .ok_or(MetadataError::MissingHeader("DATE-OBS or MJD-OBS"))?;
 
     let dt = parse_date_obs(img, &date_obs)?;
@@ -75,8 +72,8 @@ fn parse_date_obs(img: &Image, date_obs: &str) -> Result<NaiveDateTime, Metadata
             source: e,
         })?;
     let time = img
-        .get_keyword("TIME-OBS")
-        .and_then(|kw| kw.value.as_ref()?.as_string().map(|s| s.to_owned()))
+        .get("TIME-OBS")
+        .as_str().map(|s| s.to_owned())
         .ok_or(MetadataError::MissingTimeOfDay)?;
     let t = NaiveTime::parse_from_str(&time, "%H:%M:%S%.f").map_err(|e| {
         MetadataError::TimeParse {

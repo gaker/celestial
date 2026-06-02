@@ -13,7 +13,7 @@ use super::format::ImageFormat;
 use super::kind::ImageKind;
 use super::pixel_data::PixelData;
 use crate::core::{ImageError, Result};
-use crate::fits::header::Keyword;
+use crate::fits::header::{Field, Keyword};
 use crate::xisf::XisfProperty;
 use std::path::Path;
 
@@ -111,6 +111,10 @@ impl Image {
 
     pub fn get_keyword(&self, name: &str) -> Option<&Keyword> {
         self.keywords.iter().find(|k| k.name == name)
+    }
+
+    pub fn get(&self, name: &str) -> Field<'_> {
+        Field::from_value(self.get_keyword(name).and_then(|k| k.value.as_ref()))
     }
 
     pub fn set_keyword(&mut self, kw: Keyword) {
@@ -225,6 +229,31 @@ mod tests {
     fn get_keyword_returns_none_for_missing_name() {
         let img = mono_u8(2, 2);
         assert!(img.get_keyword("NONEXISTENT").is_none());
+    }
+
+    #[test]
+    fn get_returns_typed_field() {
+        let mut img = mono_u8(2, 2);
+        img.set_keyword(Keyword::integer("NAXIS", 2));
+        img.set_keyword(Keyword::real("EXPTIME", 30.0));
+        img.set_keyword(Keyword::string("OBJECT", "M31"));
+        img.set_keyword(Keyword::logical("SIMPLE", true));
+
+        assert_eq!(img.get("NAXIS").as_i64(), Some(2));
+        assert_eq!(img.get("NAXIS").as_f64(), Some(2.0));
+        assert_eq!(img.get("EXPTIME").as_f64(), Some(30.0));
+        assert_eq!(img.get("EXPTIME").as_i64(), None);
+        assert_eq!(img.get("OBJECT").as_str(), Some("M31"));
+        assert_eq!(img.get("SIMPLE").as_bool(), Some(true));
+    }
+
+    #[test]
+    fn get_missing_keyword_returns_empty_field() {
+        let img = mono_u8(2, 2);
+        let field = img.get("NONEXISTENT");
+        assert!(!field.exists());
+        assert_eq!(field.as_i64(), None);
+        assert_eq!(field.value(), None);
     }
 
     #[test]

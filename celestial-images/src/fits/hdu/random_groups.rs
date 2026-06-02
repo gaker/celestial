@@ -15,26 +15,26 @@ impl RandomGroupsHdu {
 
     pub fn group_count(&self) -> Option<i64> {
         self.header
-            .get_keyword_value("GCOUNT")
-            .and_then(|v| v.as_integer())
+            .get("GCOUNT")
+            .as_i64()
     }
 
     pub fn parameter_count(&self) -> Option<i64> {
         self.header
-            .get_keyword_value("PCOUNT")
-            .and_then(|v| v.as_integer())
+            .get("PCOUNT")
+            .as_i64()
     }
 
     pub fn extension_name(&self) -> Option<&str> {
         self.header
-            .get_keyword_value("EXTNAME")
-            .and_then(|v| v.as_string())
+            .get("EXTNAME")
+            .as_str()
     }
 
     pub fn extension_version(&self) -> Option<i64> {
         self.header
-            .get_keyword_value("EXTVER")
-            .and_then(|v| v.as_integer())
+            .get("EXTVER")
+            .as_i64()
     }
 }
 
@@ -109,9 +109,7 @@ mod tests {
 
         let header_ref = hdu.header();
         assert!(header_ref
-            .get_keyword_value("SIMPLE")
-            .unwrap()
-            .as_logical()
+            .get("SIMPLE").as_bool()
             .unwrap());
     }
 

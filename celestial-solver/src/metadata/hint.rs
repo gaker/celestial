@@ -1,6 +1,6 @@
 use celestial_coords::ICRSPosition;
 use celestial_core::angle::{parse_dms, parse_hms};
-use celestial_images::fits::header::Keyword;
+use celestial_images::fits::header::Field;
 use celestial_images::formats::Image;
 
 use super::error::MetadataError;
@@ -30,50 +30,35 @@ use super::error::MetadataError;
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub fn hint_from_image(img: &Image) -> Result<ICRSPosition, MetadataError> {
-    if let (Some(cr1), Some(cr2)) = (img.get_keyword("CRVAL1"), img.get_keyword("CRVAL2")) {
-        let ra = cr1
-            .value
-            .as_ref()
-            .and_then(|v| v.as_real())
-            .ok_or(MetadataError::InvalidHeaderType {
-                keyword: "CRVAL1",
-                kind: "numeric",
-            })?;
-        let dec = cr2
-            .value
-            .as_ref()
-            .and_then(|v| v.as_real())
-            .ok_or(MetadataError::InvalidHeaderType {
-                keyword: "CRVAL2",
-                kind: "numeric",
-            })?;
+    let (cr1, cr2) = (img.get("CRVAL1"), img.get("CRVAL2"));
+    if cr1.exists() && cr2.exists() {
+        let ra = cr1.as_f64().ok_or(MetadataError::InvalidHeaderType {
+            keyword: "CRVAL1",
+            kind: "numeric",
+        })?;
+        let dec = cr2.as_f64().ok_or(MetadataError::InvalidHeaderType {
+            keyword: "CRVAL2",
+            kind: "numeric",
+        })?;
         return Ok(ICRSPosition::from_degrees(ra, dec)?);
     }
 
-    if let (Some(ra_kw), Some(dec_kw)) = (img.get_keyword("RA"), img.get_keyword("DEC")) {
+    let (ra_kw, dec_kw) = (img.get("RA"), img.get("DEC"));
+    if ra_kw.exists() && dec_kw.exists() {
         let (ra, dec) = parse_ra_dec_keywords(ra_kw, dec_kw)?;
         return Ok(ICRSPosition::from_degrees(ra, dec)?);
     }
 
-    if let (Some(ra_kw), Some(dec_kw)) =
-        (img.get_keyword("OBJCTRA"), img.get_keyword("OBJCTDEC"))
-    {
-        let ra_str = ra_kw
-            .value
-            .as_ref()
-            .and_then(|v| v.as_string())
-            .ok_or(MetadataError::InvalidHeaderType {
-                keyword: "OBJCTRA",
-                kind: "string",
-            })?;
-        let dec_str = dec_kw
-            .value
-            .as_ref()
-            .and_then(|v| v.as_string())
-            .ok_or(MetadataError::InvalidHeaderType {
-                keyword: "OBJCTDEC",
-                kind: "string",
-            })?;
+    let (objctra, objctdec) = (img.get("OBJCTRA"), img.get("OBJCTDEC"));
+    if objctra.exists() && objctdec.exists() {
+        let ra_str = objctra.as_str().ok_or(MetadataError::InvalidHeaderType {
+            keyword: "OBJCTRA",
+            kind: "string",
+        })?;
+        let dec_str = objctdec.as_str().ok_or(MetadataError::InvalidHeaderType {
+            keyword: "OBJCTDEC",
+            kind: "string",
+        })?;
         let ra = parse_hms(ra_str)
             .map_err(|e| MetadataError::AngleParse {
                 value: ra_str.to_string(),
@@ -92,29 +77,11 @@ pub fn hint_from_image(img: &Image) -> Result<ICRSPosition, MetadataError> {
     Err(MetadataError::NoPositionHint)
 }
 
-fn parse_ra_dec_keywords(
-    ra_kw: &Keyword,
-    dec_kw: &Keyword,
-) -> Result<(f64, f64), MetadataError> {
-    let ra_val = ra_kw
-        .value
-        .as_ref()
-        .ok_or(MetadataError::InvalidHeaderType {
-            keyword: "RA",
-            kind: "any",
-        })?;
-    let dec_val = dec_kw
-        .value
-        .as_ref()
-        .ok_or(MetadataError::InvalidHeaderType {
-            keyword: "DEC",
-            kind: "any",
-        })?;
-
-    let ra = match ra_val.as_real() {
+fn parse_ra_dec_keywords(ra_kw: Field<'_>, dec_kw: Field<'_>) -> Result<(f64, f64), MetadataError> {
+    let ra = match ra_kw.as_f64() {
         Some(v) => v,
         None => {
-            let s = ra_val.as_string().ok_or(MetadataError::InvalidHeaderType {
+            let s = ra_kw.as_str().ok_or(MetadataError::InvalidHeaderType {
                 keyword: "RA",
                 kind: "numeric or string",
             })?;
@@ -126,10 +93,10 @@ fn parse_ra_dec_keywords(
                 .degrees()
         }
     };
-    let dec = match dec_val.as_real() {
+    let dec = match dec_kw.as_f64() {
         Some(v) => v,
         None => {
-            let s = dec_val.as_string().ok_or(MetadataError::InvalidHeaderType {
+            let s = dec_kw.as_str().ok_or(MetadataError::InvalidHeaderType {
                 keyword: "DEC",
                 kind: "numeric or string",
             })?;
@@ -147,6 +114,7 @@ fn parse_ra_dec_keywords(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use celestial_images::fits::header::Keyword;
     use celestial_images::formats::PixelData;
 
     fn stub_image() -> Image {

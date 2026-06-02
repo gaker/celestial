@@ -42,8 +42,8 @@ impl Header {
             .and_then(|&index| self.keywords.get(index))
     }
 
-    pub fn get_keyword_value(&self, name: &str) -> Option<&KeywordValue> {
-        self.get_keyword(name)?.value.as_ref()
+    pub fn get<'a>(&'a self, name: &str) -> Field<'a> {
+        Field::from_value(self.get_keyword(name).and_then(|k| k.value.as_ref()))
     }
 
     pub fn keywords(&self) -> &[Keyword] {
@@ -71,6 +71,40 @@ impl Header {
 impl Default for Header {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+pub struct Field<'a> {
+    value: Option<&'a KeywordValue>,
+}
+
+impl<'a> Field<'a> {
+    pub(crate) fn from_value(value: Option<&'a KeywordValue>) -> Self {
+        Self { value }
+    }
+
+    pub fn exists(&self) -> bool {
+        self.value.is_some()
+    }
+
+    pub fn value(&self) -> Option<&'a KeywordValue> {
+        self.value
+    }
+
+    pub fn as_bool(&self) -> Option<bool> {
+        self.value?.as_logical()
+    }
+
+    pub fn as_i64(&self) -> Option<i64> {
+        self.value?.as_integer()
+    }
+
+    pub fn as_f64(&self) -> Option<f64> {
+        self.value?.as_real()
+    }
+
+    pub fn as_str(&self) -> Option<&'a str> {
+        self.value?.as_string()
     }
 }
 
@@ -529,6 +563,87 @@ mod tests {
         assert_eq!(header.keyword_index.len(), 0);
     }
 
+    fn typed_header() -> Header {
+        let mut header = Header::new();
+        header.add_keyword(Keyword::logical("SIMPLE", true));
+        header.add_keyword(Keyword::integer("NAXIS", 2));
+        header.add_keyword(Keyword::real("EXPTIME", 30.0));
+        header.add_keyword(Keyword::string("OBJECT", "M31"));
+        header
+    }
+
+    #[test]
+    fn field_typed_accessors_match_value() {
+        let header = typed_header();
+        assert_eq!(header.get("SIMPLE").as_bool(), Some(true));
+        assert_eq!(header.get("NAXIS").as_i64(), Some(2));
+        assert_eq!(header.get("EXPTIME").as_f64(), Some(30.0));
+        assert_eq!(header.get("OBJECT").as_str(), Some("M31"));
+    }
+
+    #[test]
+    fn field_as_f64_coalesces_integer_card() {
+        let header = typed_header();
+        assert_eq!(header.get("NAXIS").as_f64(), Some(2.0));
+    }
+
+    #[test]
+    fn field_as_i64_stays_strict_on_real_card() {
+        let header = typed_header();
+        assert_eq!(header.get("EXPTIME").as_i64(), None);
+    }
+
+    #[test]
+    fn field_present_but_wrong_type_returns_none() {
+        let header = typed_header();
+        assert_eq!(header.get("OBJECT").as_i64(), None);
+        assert_eq!(header.get("OBJECT").as_f64(), None);
+        assert_eq!(header.get("OBJECT").as_bool(), None);
+        assert_eq!(header.get("NAXIS").as_str(), None);
+        assert_eq!(header.get("NAXIS").as_bool(), None);
+    }
+
+    #[test]
+    fn field_absent_keyword_returns_none_and_not_exists() {
+        let header = typed_header();
+        let missing = header.get("MISSING");
+        assert!(!missing.exists());
+        assert_eq!(missing.as_i64(), None);
+        assert_eq!(missing.as_f64(), None);
+        assert_eq!(missing.as_str(), None);
+        assert_eq!(missing.as_bool(), None);
+        assert_eq!(missing.value(), None);
+    }
+
+    #[test]
+    fn field_exists_distinguishes_present_from_absent() {
+        let header = typed_header();
+        assert!(header.get("OBJECT").exists());
+        assert!(!header.get("MISSING").exists());
+    }
+
+    #[test]
+    fn field_value_escape_hatch_returns_raw() {
+        let header = typed_header();
+        assert_eq!(
+            header.get("OBJECT").value(),
+            Some(&KeywordValue::String("M31".to_string()))
+        );
+        assert_eq!(
+            header.get("NAXIS").value(),
+            Some(&KeywordValue::Integer(2))
+        );
+    }
+
+    #[test]
+    fn field_valueless_keyword_does_not_exist() {
+        let mut header = Header::new();
+        header.add_keyword(Keyword::comment("just a comment"));
+        let field = header.get("COMMENT");
+        assert!(!field.exists());
+        assert_eq!(field.value(), None);
+    }
+
     #[test]
     fn validate_card_data_too_short() {
         let mut short_card = [0u8; 80];
@@ -650,7 +765,7 @@ mod tests {
         let result = HeaderParser::parse_header(&valid_data);
         assert!(result.is_ok());
         let header = result.unwrap();
-        let value = header.get_keyword_value("TESTKEY").unwrap();
+        let value = header.get("TESTKEY").value().unwrap();
         assert_eq!(
             value,
             &KeywordValue::String("'unterminated string".to_string())
@@ -749,7 +864,7 @@ mod tests {
         assert!(header.is_primary());
         assert!(!header.is_extension());
 
-        let simple_val = header.get_keyword_value("SIMPLE").unwrap();
+        let simple_val = header.get("SIMPLE").value().unwrap();
         assert!(simple_val.as_logical().unwrap());
 
         assert_eq!(header.keywords().len(), 2);
@@ -785,19 +900,19 @@ mod tests {
 
         assert_eq!(header.keywords().len(), 6);
 
-        let swcreate = header.get_keyword_value("SWCREATE").unwrap();
+        let swcreate = header.get("SWCREATE").value().unwrap();
         assert_eq!(
             swcreate,
             &KeywordValue::String("SharpCap 4.1.12395.0".to_string())
         );
 
-        let simple = header.get_keyword_value("SIMPLE").unwrap();
+        let simple = header.get("SIMPLE").value().unwrap();
         assert!(simple.as_logical().unwrap());
 
-        let bitpix = header.get_keyword_value("BITPIX").unwrap();
+        let bitpix = header.get("BITPIX").value().unwrap();
         assert_eq!(bitpix.as_integer().unwrap(), -32);
 
-        let naxis = header.get_keyword_value("NAXIS").unwrap();
+        let naxis = header.get("NAXIS").value().unwrap();
         assert_eq!(naxis.as_integer().unwrap(), 2);
     }
 }

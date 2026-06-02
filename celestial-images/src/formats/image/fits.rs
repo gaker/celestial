@@ -112,12 +112,12 @@ impl Image {
 
 fn is_u16_encoding(header: &crate::fits::header::Header) -> bool {
     let bzero = header
-        .get_keyword_value("BZERO")
-        .and_then(|v| v.as_real())
+        .get("BZERO")
+        .as_f64()
         .unwrap_or(0.0);
     let bscale = header
-        .get_keyword_value("BSCALE")
-        .and_then(|v| v.as_real())
+        .get("BSCALE")
+        .as_f64()
         .unwrap_or(1.0);
     bzero == 32768.0 && bscale == 1.0
 }
