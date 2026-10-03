@@ -19,27 +19,19 @@ impl AsciiTableHdu {
     }
 
     pub fn number_of_fields(&self) -> Option<i64> {
-        self.header
-            .get("TFIELDS")
-            .as_i64()
+        self.header.get("TFIELDS").as_i64()
     }
 
     pub fn number_of_rows(&self) -> Option<i64> {
-        self.header
-            .get("NAXIS2")
-            .as_i64()
+        self.header.get("NAXIS2").as_i64()
     }
 
     pub fn extension_name(&self) -> Option<&str> {
-        self.header
-            .get("EXTNAME")
-            .as_str()
+        self.header.get("EXTNAME").as_str()
     }
 
     pub fn extension_version(&self) -> Option<i64> {
-        self.header
-            .get("EXTVER")
-            .as_i64()
+        self.header.get("EXTVER").as_i64()
     }
 
     pub fn column_count(&self) -> Result<usize> {
@@ -74,51 +66,27 @@ impl AsciiTableHdu {
 
         let mut info = ColumnInfo::new(column, format.to_string());
 
-        if let Some(name) = self
-            .header
-            .get(&format!("TTYPE{}", column_index))
-            .as_str()
-        {
+        if let Some(name) = self.header.get(&format!("TTYPE{}", column_index)).as_str() {
             info = info.with_name(name.to_string());
         }
 
-        if let Some(unit) = self
-            .header
-            .get(&format!("TUNIT{}", column_index))
-            .as_str()
-        {
+        if let Some(unit) = self.header.get(&format!("TUNIT{}", column_index)).as_str() {
             info = info.with_unit(unit.to_string());
         }
 
-        if let Some(null_val) = self
-            .header
-            .get(&format!("TNULL{}", column_index))
-            .as_str()
-        {
+        if let Some(null_val) = self.header.get(&format!("TNULL{}", column_index)).as_str() {
             info = info.with_null_value(null_val.to_string());
         }
 
-        if let Some(scale) = self
-            .header
-            .get(&format!("TSCAL{}", column_index))
-            .as_f64()
-        {
+        if let Some(scale) = self.header.get(&format!("TSCAL{}", column_index)).as_f64() {
             info = info.with_scale(scale);
         }
 
-        if let Some(zero) = self
-            .header
-            .get(&format!("TZERO{}", column_index))
-            .as_f64()
-        {
+        if let Some(zero) = self.header.get(&format!("TZERO{}", column_index)).as_f64() {
             info = info.with_zero_offset(zero);
         }
 
-        if let Some(disp) = self
-            .header
-            .get(&format!("TDISP{}", column_index))
-            .as_str()
-        {
+        if let Some(disp) = self.header.get(&format!("TDISP{}", column_index)).as_str() {
             info.display_format = Some(disp.to_string());
         }
 
@@ -529,12 +497,7 @@ mod tests {
         let hdu = AsciiTableHdu::new(header, info);
 
         let header_ref = hdu.header();
-        assert_eq!(
-            header_ref
-                .get("XTENSION").as_str()
-                .unwrap(),
-            "TABLE"
-        );
+        assert_eq!(header_ref.get("XTENSION").as_str().unwrap(), "TABLE");
     }
 
     #[test]

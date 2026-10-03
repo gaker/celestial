@@ -198,13 +198,22 @@ mod tests {
 
     #[test]
     fn extract_projection_code_finds_known_code_after_dashes() {
-        assert_eq!(extract_projection_code("RA---TAN"), Some("Gnomonic".to_string()));
-        assert_eq!(extract_projection_code("DEC--SIN"), Some("Orthographic".to_string()));
+        assert_eq!(
+            extract_projection_code("RA---TAN"),
+            Some("Gnomonic".to_string())
+        );
+        assert_eq!(
+            extract_projection_code("DEC--SIN"),
+            Some("Orthographic".to_string())
+        );
     }
 
     #[test]
     fn extract_projection_code_returns_unknown_code_unchanged() {
-        assert_eq!(extract_projection_code("FOO---XYZ"), Some("XYZ".to_string()));
+        assert_eq!(
+            extract_projection_code("FOO---XYZ"),
+            Some("XYZ".to_string())
+        );
     }
 
     #[test]
@@ -257,14 +266,15 @@ mod tests {
         let props = wcs_to_xisf_properties(&[]);
         assert_eq!(props.len(), 2);
 
-        let native = find_prop(&props, "PCL:AstrometricSolution:ReferenceNativeCoordinates").unwrap();
-        assert_eq!(
-            native.value,
-            XisfPropertyValue::F64Vector(vec![0.0, 90.0])
-        );
+        let native =
+            find_prop(&props, "PCL:AstrometricSolution:ReferenceNativeCoordinates").unwrap();
+        assert_eq!(native.value, XisfPropertyValue::F64Vector(vec![0.0, 90.0]));
 
-        let pole = find_prop(&props, "PCL:AstrometricSolution:CelestialPoleNativeCoordinates")
-            .unwrap();
+        let pole = find_prop(
+            &props,
+            "PCL:AstrometricSolution:CelestialPoleNativeCoordinates",
+        )
+        .unwrap();
         assert_eq!(pole.value, XisfPropertyValue::F64Vector(vec![180.0, 0.0]));
     }
 
@@ -275,8 +285,11 @@ mod tests {
             WcsKeyword::real("CRVAL2", 30.0),
         ];
         let props = wcs_to_xisf_properties(&kws);
-        let celestial =
-            find_prop(&props, "PCL:AstrometricSolution:ReferenceCelestialCoordinates").unwrap();
+        let celestial = find_prop(
+            &props,
+            "PCL:AstrometricSolution:ReferenceCelestialCoordinates",
+        )
+        .unwrap();
         assert_eq!(
             celestial.value,
             XisfPropertyValue::F64Vector(vec![150.0, 30.0])
@@ -305,24 +318,29 @@ mod tests {
         let props = wcs_to_xisf_properties(&kws);
 
         let proj = find_prop(&props, "PCL:AstrometricSolution:ProjectionSystem").unwrap();
-        assert_eq!(proj.value, XisfPropertyValue::String("Gnomonic".to_string()));
+        assert_eq!(
+            proj.value,
+            XisfPropertyValue::String("Gnomonic".to_string())
+        );
 
-        let celestial =
-            find_prop(&props, "PCL:AstrometricSolution:ReferenceCelestialCoordinates").unwrap();
+        let celestial = find_prop(
+            &props,
+            "PCL:AstrometricSolution:ReferenceCelestialCoordinates",
+        )
+        .unwrap();
         assert_eq!(
             celestial.value,
             XisfPropertyValue::F64Vector(vec![10.0, 20.0])
         );
 
-        let image =
-            find_prop(&props, "PCL:AstrometricSolution:ReferenceImageCoordinates").unwrap();
+        let image = find_prop(&props, "PCL:AstrometricSolution:ReferenceImageCoordinates").unwrap();
         assert_eq!(
             image.value,
             XisfPropertyValue::F64Vector(vec![512.0, 512.0])
         );
 
-        let matrix = find_prop(&props, "PCL:AstrometricSolution:LinearTransformationMatrix")
-            .unwrap();
+        let matrix =
+            find_prop(&props, "PCL:AstrometricSolution:LinearTransformationMatrix").unwrap();
         match &matrix.value {
             XisfPropertyValue::F64Matrix { rows, cols, data } => {
                 assert_eq!(*rows, 2);
@@ -332,13 +350,13 @@ mod tests {
             _ => panic!("expected matrix"),
         }
 
-        let pole = find_prop(&props, "PCL:AstrometricSolution:CelestialPoleNativeCoordinates")
-            .unwrap();
+        let pole = find_prop(
+            &props,
+            "PCL:AstrometricSolution:CelestialPoleNativeCoordinates",
+        )
+        .unwrap();
         // CRVAL2=20 < 90 → phi_p=180, theta_p defaults to CRVAL2=20
-        assert_eq!(
-            pole.value,
-            XisfPropertyValue::F64Vector(vec![180.0, 20.0])
-        );
+        assert_eq!(pole.value, XisfPropertyValue::F64Vector(vec![180.0, 20.0]));
     }
 
     #[test]
@@ -348,8 +366,11 @@ mod tests {
             WcsKeyword::real("CRVAL2", 90.0),
         ];
         let props = wcs_to_xisf_properties(&kws);
-        let pole = find_prop(&props, "PCL:AstrometricSolution:CelestialPoleNativeCoordinates")
-            .unwrap();
+        let pole = find_prop(
+            &props,
+            "PCL:AstrometricSolution:CelestialPoleNativeCoordinates",
+        )
+        .unwrap();
         assert_eq!(pole.value, XisfPropertyValue::F64Vector(vec![0.0, 90.0]));
     }
 
@@ -357,12 +378,12 @@ mod tests {
     fn phi_p_defaults_to_180_below_pole() {
         let kws = vec![WcsKeyword::real("CRVAL2", -30.0)];
         let props = wcs_to_xisf_properties(&kws);
-        let pole = find_prop(&props, "PCL:AstrometricSolution:CelestialPoleNativeCoordinates")
-            .unwrap();
-        assert_eq!(
-            pole.value,
-            XisfPropertyValue::F64Vector(vec![180.0, -30.0])
-        );
+        let pole = find_prop(
+            &props,
+            "PCL:AstrometricSolution:CelestialPoleNativeCoordinates",
+        )
+        .unwrap();
+        assert_eq!(pole.value, XisfPropertyValue::F64Vector(vec![180.0, -30.0]));
     }
 
     #[test]
@@ -373,8 +394,11 @@ mod tests {
             WcsKeyword::real("LATPOLE", 75.0),
         ];
         let props = wcs_to_xisf_properties(&kws);
-        let pole = find_prop(&props, "PCL:AstrometricSolution:CelestialPoleNativeCoordinates")
-            .unwrap();
+        let pole = find_prop(
+            &props,
+            "PCL:AstrometricSolution:CelestialPoleNativeCoordinates",
+        )
+        .unwrap();
         assert_eq!(pole.value, XisfPropertyValue::F64Vector(vec![45.0, 75.0]));
     }
 
@@ -388,9 +412,11 @@ mod tests {
             WcsKeyword::real("CRVAL2", 10.0),
         ];
         let props = wcs_to_xisf_properties(&kws);
-        assert!(
-            find_prop(&props, "PCL:AstrometricSolution:ReferenceCelestialCoordinates").is_none()
-        );
+        assert!(find_prop(
+            &props,
+            "PCL:AstrometricSolution:ReferenceCelestialCoordinates"
+        )
+        .is_none());
     }
 
     #[test]
@@ -411,8 +437,11 @@ mod tests {
             WcsKeyword::real("CRVAL2", 20.0),
         ];
         let props = wcs_to_xisf_properties(&kws);
-        let celestial =
-            find_prop(&props, "PCL:AstrometricSolution:ReferenceCelestialCoordinates").unwrap();
+        let celestial = find_prop(
+            &props,
+            "PCL:AstrometricSolution:ReferenceCelestialCoordinates",
+        )
+        .unwrap();
         assert_eq!(
             celestial.value,
             XisfPropertyValue::F64Vector(vec![10.0, 20.0])

@@ -1,7 +1,5 @@
 use crate::fits::header::Keyword;
-use crate::xisf::header::{
-    ColorSpace, DataLocation, PixelStorage, SampleFormat, XisfCompression,
-};
+use crate::xisf::header::{ColorSpace, DataLocation, PixelStorage, SampleFormat, XisfCompression};
 
 #[derive(Debug, Clone)]
 pub struct XisfHeader {

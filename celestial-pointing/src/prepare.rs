@@ -9,8 +9,8 @@
 //! contract.
 
 use crate::observation::SiteParams;
-use celestial_core::{Angle, Location};
 use celestial_coords::frames::HourAnglePosition;
+use celestial_core::{Angle, Location};
 use celestial_time::TT;
 
 /// Adds atmospheric refraction to a sky direction.
@@ -109,7 +109,8 @@ mod tests {
         let lst = Angle::from_hours(0.0);
         let ra = lst;
         let dec = Angle::from_degrees(lat);
-        let (ra2, dec2) = refraction_shift(ra, dec, lst, &location_at(lat), &standard_site(), false);
+        let (ra2, dec2) =
+            refraction_shift(ra, dec, lst, &location_at(lat), &standard_site(), false);
         assert!(arcsec(ra, ra2) < 1e-6);
         assert!(arcsec(dec, dec2) < 1e-6);
     }
@@ -120,25 +121,16 @@ mod tests {
         let lst = Angle::from_hours(0.0);
         let ra = lst;
         let dec = Angle::from_degrees(lat - 60.0);
-        let (ra2, dec2) = refraction_shift(ra, dec, lst, &location_at(lat), &standard_site(), false);
+        let (ra2, dec2) =
+            refraction_shift(ra, dec, lst, &location_at(lat), &standard_site(), false);
 
         let epoch = TT::j2000();
-        let apparent = HourAnglePosition::new(
-            (lst - ra).wrapped(),
-            dec,
-            location_at(lat),
-            epoch,
-        )
-        .unwrap()
-        .to_topocentric()
-        .unwrap();
-        let true_hap = HourAnglePosition::new(
-            (lst - ra2).wrapped(),
-            dec2,
-            location_at(lat),
-            epoch,
-        )
-        .unwrap();
+        let apparent = HourAnglePosition::new((lst - ra).wrapped(), dec, location_at(lat), epoch)
+            .unwrap()
+            .to_topocentric()
+            .unwrap();
+        let true_hap =
+            HourAnglePosition::new((lst - ra2).wrapped(), dec2, location_at(lat), epoch).unwrap();
         let true_topo = true_hap.to_topocentric().unwrap();
         let elev_delta = (apparent.elevation() - true_topo.elevation())
             .wrapped()

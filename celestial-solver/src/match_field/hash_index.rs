@@ -9,7 +9,9 @@ use super::QuadMatch;
 pub(super) fn build_hash_index(quads: &[Quad]) -> HashMap<u64, Vec<usize>> {
     let mut map = HashMap::with_capacity(quads.len());
     for (i, q) in quads.iter().enumerate() {
-        map.entry(discrete_hash_key(&q.hash)).or_insert_with(Vec::new).push(i);
+        map.entry(discrete_hash_key(&q.hash))
+            .or_insert_with(Vec::new)
+            .push(i);
     }
     map
 }
@@ -41,7 +43,10 @@ mod tests {
     use super::*;
 
     fn quad(hash: [f64; 4]) -> Quad {
-        Quad { hash, star_indices: [0, 1, 2, 3] }
+        Quad {
+            hash,
+            star_indices: [0, 1, 2, 3],
+        }
     }
 
     #[test]
@@ -52,10 +57,7 @@ mod tests {
 
     #[test]
     fn build_hash_index_one_bucket_per_unique_hash() {
-        let quads = vec![
-            quad([0.1, 0.2, 0.3, 0.4]),
-            quad([0.5, 0.6, 0.7, 0.8]),
-        ];
+        let quads = vec![quad([0.1, 0.2, 0.3, 0.4]), quad([0.5, 0.6, 0.7, 0.8])];
         let idx = build_hash_index(&quads);
         assert_eq!(idx.len(), 2);
     }

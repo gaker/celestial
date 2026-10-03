@@ -8,7 +8,7 @@ impl Command for Use {
     fn name(&self) -> &str {
         "USE"
     }
-    
+
     fn description(&self) -> &str {
         "Add term(s) to model"
     }

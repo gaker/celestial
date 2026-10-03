@@ -7,8 +7,8 @@
 //! Used by the `image-solver` binary's `--debug` flag.
 
 use celestial_images::formats::Image;
+use celestial_images::stretch::{StfParams, Stretch};
 use celestial_images::PixelData;
-use celestial_images::stretch::{Stretch, StfParams};
 
 use crate::detect::DetectedStar;
 use crate::fit_wcs::WcsSolution;
@@ -82,7 +82,11 @@ impl Annotation {
             rgb.push(v);
             rgb.push(v);
         }
-        Some(Self { rgb, width: w, height: h })
+        Some(Self {
+            rgb,
+            width: w,
+            height: h,
+        })
     }
 
     /// Converts the buffer to an [`Image`] that can be saved as PNG / TIFF / etc.
@@ -122,12 +126,7 @@ impl Annotation {
     /// ann.draw_detections(&result.stars, &result.pairs, 8);
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
-    pub fn draw_detections(
-        &mut self,
-        stars: &[DetectedStar],
-        pairs: &[StarPair],
-        radius: i32,
-    ) {
+    pub fn draw_detections(&mut self, stars: &[DetectedStar], pairs: &[StarPair], radius: i32) {
         for s in stars {
             let color = if is_matched(s, pairs) {
                 COLOR_MATCHED
@@ -136,7 +135,15 @@ impl Annotation {
             };
             let cx = s.x.round() as i32;
             let cy = s.y.round() as i32;
-            draw_circle(&mut self.rgb, self.width, self.height, cx, cy, radius, color);
+            draw_circle(
+                &mut self.rgb,
+                self.width,
+                self.height,
+                cx,
+                cy,
+                radius,
+                color,
+            );
         }
     }
 
@@ -166,13 +173,28 @@ impl Annotation {
         for r in &wcs.residuals {
             let cat_x = (r.px_x - r.err_x).round() as i32;
             let cat_y = (r.px_y - r.err_y).round() as i32;
-            draw_crosshair(&mut self.rgb, self.width, self.height, cat_x, cat_y, 6, COLOR_CATALOG);
+            draw_crosshair(
+                &mut self.rgb,
+                self.width,
+                self.height,
+                cat_x,
+                cat_y,
+                6,
+                COLOR_CATALOG,
+            );
 
             let end_x = (r.px_x + r.err_x * (residual_scale - 1.0)).round() as i32;
             let end_y = (r.px_y + r.err_y * (residual_scale - 1.0)).round() as i32;
             let cx = r.px_x.round() as i32;
             let cy = r.px_y.round() as i32;
-            draw_line(&mut self.rgb, self.width, self.height, (cx, cy), (end_x, end_y), COLOR_RESIDUAL);
+            draw_line(
+                &mut self.rgb,
+                self.width,
+                self.height,
+                (cx, cy),
+                (end_x, end_y),
+                COLOR_RESIDUAL,
+            );
         }
     }
 }
@@ -229,11 +251,7 @@ fn draw_crosshair(rgb: &mut [u8], w: usize, h: usize, cx: i32, cy: i32, arm: i32
     }
 }
 
-fn draw_line(
-    rgb: &mut [u8], w: usize, h: usize,
-    p0: (i32, i32), p1: (i32, i32),
-    color: [u8; 3],
-) {
+fn draw_line(rgb: &mut [u8], w: usize, h: usize, p0: (i32, i32), p1: (i32, i32), color: [u8; 3]) {
     let (mut x, mut y) = p0;
     let (x1, y1) = p1;
     let dx = (x1 - x).abs();
@@ -243,10 +261,18 @@ fn draw_line(
     let mut err = dx + dy;
     loop {
         set_pixel(rgb, w, h, x, y, color);
-        if x == x1 && y == y1 { break; }
+        if x == x1 && y == y1 {
+            break;
+        }
         let e2 = 2 * err;
-        if e2 >= dy { err += dy; x += sx; }
-        if e2 <= dx { err += dx; y += sy; }
+        if e2 >= dy {
+            err += dy;
+            x += sx;
+        }
+        if e2 <= dx {
+            err += dx;
+            y += sy;
+        }
     }
 }
 
@@ -413,7 +439,10 @@ mod tests {
         long.draw_solve_overlay(&wcs_with_residuals(vec![residual]), 40.0);
 
         let count_magenta = |ann: &Annotation| {
-            ann.rgb.chunks_exact(3).filter(|c| *c == COLOR_RESIDUAL).count()
+            ann.rgb
+                .chunks_exact(3)
+                .filter(|c| *c == COLOR_RESIDUAL)
+                .count()
         };
         assert!(count_magenta(&long) > count_magenta(&short));
     }
@@ -430,7 +459,15 @@ mod tests {
     #[test]
     fn draw_circle_clips_near_edge() {
         let mut ann = blank_annotation(10, 10);
-        draw_circle(&mut ann.rgb, ann.width, ann.height, 0, 0, 5, [255, 255, 255]);
+        draw_circle(
+            &mut ann.rgb,
+            ann.width,
+            ann.height,
+            0,
+            0,
+            5,
+            [255, 255, 255],
+        );
         assert_eq!(pixel(&ann, 5, 0), [255, 255, 255]);
         assert_eq!(pixel(&ann, 0, 5), [255, 255, 255]);
     }

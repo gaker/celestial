@@ -11,7 +11,7 @@ impl Command for Gdist {
     fn name(&self) -> &str {
         "GDIST"
     }
-    
+
     fn description(&self) -> &str {
         "Histogram of residual distribution"
     }
@@ -105,12 +105,7 @@ mod tests {
         use crate::test_support::{FitResultBuilder, ObsBuilder};
 
         let mut session = Session::new();
-        session.last_fit = Some(
-            FitResultBuilder::new()
-                .sky_rms(5.0)
-                .popn_sd(5.0)
-                .build(),
-        );
+        session.last_fit = Some(FitResultBuilder::new().sky_rms(5.0).popn_sd(5.0).build());
         for i in 0..10 {
             let offset = (i as f64) * 10.0;
             session.observations.push(

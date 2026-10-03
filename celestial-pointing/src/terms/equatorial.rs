@@ -155,7 +155,8 @@ impl Term for TF {
     }
     fn jacobian_equatorial(&self, h: f64, dec: f64, lat: f64, _pier: f64) -> (f64, f64) {
         let dh = -libm::cos(lat) * libm::sin(h) / libm::cos(dec);
-        let dd = -(libm::cos(lat) * libm::cos(h) * libm::sin(dec) - libm::sin(lat) * libm::cos(dec));
+        let dd =
+            -(libm::cos(lat) * libm::cos(h) * libm::sin(dec) - libm::sin(lat) * libm::cos(dec));
         (dh, dd)
     }
     fn jacobian_altaz(&self, _az: f64, _el: f64, _lat: f64) -> (f64, f64) {
@@ -476,7 +477,8 @@ mod tests {
         let dec = 0.3;
         let (dh1, dd1) = TXN::new(1).jacobian_equatorial(h, dec, lat, 1.0);
         let (dh3, dd3) = TXN::new(3).jacobian_equatorial(h, dec, lat, 1.0);
-        let sin_alt = libm::sin(lat) * libm::sin(dec) + libm::cos(lat) * libm::cos(dec) * libm::cos(h);
+        let sin_alt =
+            libm::sin(lat) * libm::sin(dec) + libm::cos(lat) * libm::cos(dec) * libm::cos(h);
         let cos_z = sin_alt;
         let sin_z = libm::sqrt(1.0 - cos_z * cos_z);
         let tan_z = sin_z / cos_z;

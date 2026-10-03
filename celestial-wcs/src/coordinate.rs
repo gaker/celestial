@@ -136,8 +136,14 @@ mod tests {
         assert_eq!(PixelCoord::new(10.0, 20.0).to_array_index(), (19, 9));
 
         // Inverse direction: (row, col) -> FITS pixel.
-        assert_eq!(PixelCoord::from_array_index(0, 0), PixelCoord::new(1.0, 1.0));
-        assert_eq!(PixelCoord::from_array_index(19, 9), PixelCoord::new(10.0, 20.0));
+        assert_eq!(
+            PixelCoord::from_array_index(0, 0),
+            PixelCoord::new(1.0, 1.0)
+        );
+        assert_eq!(
+            PixelCoord::from_array_index(19, 9),
+            PixelCoord::new(10.0, 20.0)
+        );
 
         // Round trip preserves the original pixel.
         let p = PixelCoord::new(50.0, 100.0);

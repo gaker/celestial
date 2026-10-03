@@ -210,8 +210,7 @@ mod tests {
         let o = obs(100.0, 30.0);
         let observations: Vec<&Observation> = vec![&o, &o, &o];
         let terms = vec![create_term("IH").unwrap()];
-        let result =
-            fit_model(&observations, &terms, &[false], &[0.0], 0.0, 1.0e-9).unwrap();
+        let result = fit_model(&observations, &terms, &[false], &[0.0], 0.0, 1.0e-9).unwrap();
         assert!((result.coefficients[0] - (-100.0)).abs() < 1e-6);
     }
 

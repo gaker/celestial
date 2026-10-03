@@ -76,7 +76,8 @@ pub enum EopQuality {
 fn validate_range(value: f64, limit: f64, label: &str, unit: &str) -> CoordResult<()> {
     if value.abs() > limit {
         return Err(CoordError::invalid_coordinate(format!(
-            "{} out of range: {} {}", label, value, unit,
+            "{} out of range: {} {}",
+            label, value, unit,
         )));
     }
     Ok(())
@@ -433,9 +434,14 @@ mod tests {
     fn sample_params(mjd: f64) -> EopParameters {
         EopParameters {
             mjd,
-            x_p: 0.0, y_p: 0.0,
-            ut1_utc: 0.0, lod: 0.0,
-            dx: None, dy: None, xrt: None, yrt: None,
+            x_p: 0.0,
+            y_p: 0.0,
+            ut1_utc: 0.0,
+            lod: 0.0,
+            dx: None,
+            dy: None,
+            xrt: None,
+            yrt: None,
             s_prime: 0.0,
             flags: EopFlags::default(),
         }

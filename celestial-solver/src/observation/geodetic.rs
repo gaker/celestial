@@ -41,15 +41,9 @@ pub struct Geodetic {
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub fn geodetic_from_image(img: &Image) -> Option<Geodetic> {
-    let lat_deg = img
-        .get("OBSGEO-B")
-        .as_f64()?;
-    let lon_deg = img
-        .get("OBSGEO-L")
-        .as_f64()?;
-    let alt_m = img
-        .get("OBSGEO-H")
-        .as_f64();
+    let lat_deg = img.get("OBSGEO-B").as_f64()?;
+    let lon_deg = img.get("OBSGEO-L").as_f64()?;
+    let alt_m = img.get("OBSGEO-H").as_f64();
     Some(Geodetic {
         lon_deg,
         lat_deg,

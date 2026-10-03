@@ -97,8 +97,7 @@ mod tests {
 
         // Round trip back to the pixel.
         let original = PixelCoord::new(256.0, 768.0);
-        let recovered =
-            transform.intermediate_to_pixel(transform.pixel_to_intermediate(original));
+        let recovered = transform.intermediate_to_pixel(transform.pixel_to_intermediate(original));
         assert_eq!(original.x(), recovered.x());
         assert_eq!(original.y(), recovered.y());
 
@@ -141,8 +140,7 @@ mod tests {
         let transform = LinearTransform::from_cd(crpix, cd).unwrap();
 
         let original = PixelCoord::new(100.0, 400.0);
-        let recovered =
-            transform.intermediate_to_pixel(transform.pixel_to_intermediate(original));
+        let recovered = transform.intermediate_to_pixel(transform.pixel_to_intermediate(original));
         assert_eq!(original.x(), recovered.x());
         assert_eq!(original.y(), recovered.y());
     }

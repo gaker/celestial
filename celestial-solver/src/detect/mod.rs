@@ -169,12 +169,19 @@ pub fn find_bright_stars<T: Pixel>(
 ) -> Vec<DetectedStar> {
     let t = std::time::Instant::now();
     let bg = estimate_background(image, width, height, params.mesh_size);
-    log::info!("[detect]   background: {:?} (noise={:.2})", t.elapsed(), bg.noise);
+    log::info!(
+        "[detect]   background: {:?} (noise={:.2})",
+        t.elapsed(),
+        bg.noise
+    );
 
     let t = std::time::Instant::now();
     let mask = structure::build_structure_map(image, &bg, params.structure_layers);
     let mask_count: usize = mask.par_iter().map(|&v| v as usize).sum();
-    log::info!("[detect]   structure:  {:?} ({mask_count} px set)", t.elapsed());
+    log::info!(
+        "[detect]   structure:  {:?} ({mask_count} px set)",
+        t.elapsed()
+    );
 
     let t = std::time::Instant::now();
     let regions = components::find_connected_components(
@@ -185,7 +192,11 @@ pub fn find_bright_stars<T: Pixel>(
         params.max_structure_size,
         params.min_coverage,
     );
-    log::info!("[detect]   components: {:?} ({} regions)", t.elapsed(), regions.len());
+    log::info!(
+        "[detect]   components: {:?} ({} regions)",
+        t.elapsed(),
+        regions.len()
+    );
 
     let t = std::time::Instant::now();
     let saturation_limit = match params.saturation_adu {
@@ -231,16 +242,27 @@ pub fn find_bright_stars<T: Pixel>(
             CentroidOutcome::RejectedSat => rejected_sat += 1,
         }
     }
-    log::info!("[detect]   centroid:   {:?} ({} passed, {} rej_snr, {} rej_sat)",
-        t.elapsed(), stars.len(), rejected_snr, rejected_sat);
+    log::info!(
+        "[detect]   centroid:   {:?} ({} passed, {} rej_snr, {} rej_sat)",
+        t.elapsed(),
+        stars.len(),
+        rejected_snr,
+        rejected_sat
+    );
 
     let t = std::time::Instant::now();
     stars.sort_by(|a, b| {
-        b.flux.partial_cmp(&a.flux).unwrap_or(std::cmp::Ordering::Equal)
+        b.flux
+            .partial_cmp(&a.flux)
+            .unwrap_or(std::cmp::Ordering::Equal)
     });
 
     deduplicate(&mut stars, params.min_spacing);
-    log::info!("[detect]   sort+dedup: {:?} ({} after dedup)", t.elapsed(), stars.len());
+    log::info!(
+        "[detect]   sort+dedup: {:?} ({} after dedup)",
+        t.elapsed(),
+        stars.len()
+    );
 
     stars
 }
@@ -358,7 +380,11 @@ mod tests {
         let h = 128;
         let image = vec![100.0_f32; w * h];
         let stars = find_bright_stars(&image, w, h, &DetectionParams::default());
-        assert!(stars.is_empty(), "flat field should produce no stars, got {}", stars.len());
+        assert!(
+            stars.is_empty(),
+            "flat field should produce no stars, got {}",
+            stars.len()
+        );
     }
 
     #[test]
@@ -392,7 +418,8 @@ mod tests {
             assert!(
                 pair[0].flux >= pair[1].flux,
                 "stars must be sorted by descending flux: {} then {}",
-                pair[0].flux, pair[1].flux,
+                pair[0].flux,
+                pair[1].flux,
             );
         }
     }
@@ -408,7 +435,10 @@ mod tests {
             ..DetectionParams::default()
         };
         let stars = find_bright_stars(&image, w, h, &strict);
-        assert!(stars.is_empty(), "impossibly high min_snr should reject all stars");
+        assert!(
+            stars.is_empty(),
+            "impossibly high min_snr should reject all stars"
+        );
     }
 
     #[test]
@@ -424,7 +454,11 @@ mod tests {
             ..DetectionParams::default()
         };
         let stars = find_bright_stars(&image, w, h, &params);
-        assert_eq!(stars.len(), 1, "stars within min_spacing should be deduplicated");
+        assert_eq!(
+            stars.len(),
+            1,
+            "stars within min_spacing should be deduplicated"
+        );
     }
 
     #[test]

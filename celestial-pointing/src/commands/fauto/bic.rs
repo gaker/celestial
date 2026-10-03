@@ -67,7 +67,12 @@ mod tests {
         let rms = 2.0_f64;
         let expected = (n as f64) * libm::log(rms * rms) + libm::log(n as f64);
         let got = compute_bic(n, 1, rms);
-        assert!((got - expected).abs() < 1e-9, "got {}, expected {}", got, expected);
+        assert!(
+            (got - expected).abs() < 1e-9,
+            "got {}, expected {}",
+            got,
+            expected
+        );
     }
 
     #[test]

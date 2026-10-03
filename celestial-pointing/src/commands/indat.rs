@@ -83,7 +83,12 @@ mod tests {
     fn write_tmp(contents: &str, tag: &str) -> PathBuf {
         let n = SEQ.fetch_add(1, Ordering::Relaxed);
         let mut path = std::env::temp_dir();
-        path.push(format!("celpoint-indat-{}-{}-{}.dat", tag, std::process::id(), n));
+        path.push(format!(
+            "celpoint-indat-{}-{}-{}.dat",
+            tag,
+            std::process::id(),
+            n
+        ));
         std::fs::write(&path, contents).expect("write temp indat");
         path
     }
@@ -108,10 +113,12 @@ mod tests {
 
     fn run(path: &Path) -> Result<String> {
         let mut session = Session::new();
-        Indat.execute(&mut session, &[path.to_str().unwrap()]).map(|out| match out {
-            CommandOutput::Text(s) => s,
-            other => panic!("expected Text, got {:?}", other),
-        })
+        Indat
+            .execute(&mut session, &[path.to_str().unwrap()])
+            .map(|out| match out {
+                CommandOutput::Text(s) => s,
+                other => panic!("expected Text, got {:?}", other),
+            })
     }
 
     #[test]
@@ -134,7 +141,10 @@ mod tests {
     fn missing_file_returns_io_error() {
         let mut session = Session::new();
         let err = Indat
-            .execute(&mut session, &["/nonexistent/path/that/should/not/exist.dat"])
+            .execute(
+                &mut session,
+                &["/nonexistent/path/that/should/not/exist.dat"],
+            )
             .unwrap_err();
         assert!(matches!(err, Error::Io(_)), "expected Io, got {:?}", err);
     }
@@ -168,9 +178,8 @@ mod tests {
 
     #[test]
     fn session_state_is_populated_on_success() {
-        let body = minimal_indat(&[
-            "21 43 18.4460 +72 29 08.368 09 28 59.9527 +109 20 06.469  16 23.130",
-        ]);
+        let body =
+            minimal_indat(&["21 43 18.4460 +72 29 08.368 09 28 59.9527 +109 20 06.469  16 23.130"]);
         let p = write_tmp(&body, "session");
         let mut session = Session::new();
         Indat.execute(&mut session, &[p.to_str().unwrap()]).unwrap();

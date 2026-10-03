@@ -27,27 +27,19 @@ impl BinaryTableHdu {
     }
 
     pub fn number_of_fields(&self) -> Option<i64> {
-        self.header
-            .get("TFIELDS")
-            .as_i64()
+        self.header.get("TFIELDS").as_i64()
     }
 
     pub fn number_of_rows(&self) -> Option<i64> {
-        self.header
-            .get("NAXIS2")
-            .as_i64()
+        self.header.get("NAXIS2").as_i64()
     }
 
     pub fn extension_name(&self) -> Option<&str> {
-        self.header
-            .get("EXTNAME")
-            .as_str()
+        self.header.get("EXTNAME").as_str()
     }
 
     pub fn extension_version(&self) -> Option<i64> {
-        self.header
-            .get("EXTVER")
-            .as_i64()
+        self.header.get("EXTVER").as_i64()
     }
 }
 
@@ -119,12 +111,7 @@ mod tests {
         let hdu = BinaryTableHdu::new(header, info);
 
         let header_ref = hdu.header();
-        assert_eq!(
-            header_ref
-                .get("XTENSION").as_str()
-                .unwrap(),
-            "BINTABLE"
-        );
+        assert_eq!(header_ref.get("XTENSION").as_str().unwrap(), "BINTABLE");
     }
 
     #[test]

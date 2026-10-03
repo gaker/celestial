@@ -12,7 +12,7 @@ impl Command for Gdec {
     fn name(&self) -> &str {
         "GDEC"
     }
-    
+
     fn description(&self) -> &str {
         "Residuals vs declination"
     }

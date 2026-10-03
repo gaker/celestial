@@ -42,7 +42,7 @@ impl Command for Chain {
     fn name(&self) -> &str {
         "CHAIN"
     }
-    
+
     fn description(&self) -> &str {
         "Apply terms sequentially (chained)"
     }

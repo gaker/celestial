@@ -92,28 +92,57 @@ impl<'a> fmt::Display for SolveDisplay<'a> {
         let sep = "=".repeat(80);
         writeln!(f, "{sep}")?;
 
-        writeln!(f, "Creation time ............ {} UTC", Utc::now().format("%Y-%m-%d %H:%M:%S"))?;
+        writeln!(
+            f,
+            "Creation time ............ {} UTC",
+            Utc::now().format("%Y-%m-%d %H:%M:%S")
+        )?;
         if let Some(sw) = self.software {
             writeln!(f, "Creation software ........ {}", sw)?;
         }
-        writeln!(f, "Reference catalog ........ Gaia DR3 - Celestial Catalog v{}", celestial_catalog::VERSION)?;
+        writeln!(
+            f,
+            "Reference catalog ........ Gaia DR3 - Celestial Catalog v{}",
+            celestial_catalog::VERSION
+        )?;
 
         writeln!(f, "Linear transformation matrix (sky = matrix * pixel):")?;
-        writeln!(f, " {:+.8e}  {:+.8e}  {:+.8e}",
-            wcs.cd1_1, wcs.cd1_2,
-            wcs.cd1_1 * (-wcs.crpix1) + wcs.cd1_2 * (-wcs.crpix2))?;
-        writeln!(f, " {:+.8e}  {:+.8e}  {:+.8e}",
-            wcs.cd2_1, wcs.cd2_2,
-            wcs.cd2_1 * (-wcs.crpix1) + wcs.cd2_2 * (-wcs.crpix2))?;
+        writeln!(
+            f,
+            " {:+.8e}  {:+.8e}  {:+.8e}",
+            wcs.cd1_1,
+            wcs.cd1_2,
+            wcs.cd1_1 * (-wcs.crpix1) + wcs.cd1_2 * (-wcs.crpix2)
+        )?;
+        writeln!(
+            f,
+            " {:+.8e}  {:+.8e}  {:+.8e}",
+            wcs.cd2_1,
+            wcs.cd2_2,
+            wcs.cd2_1 * (-wcs.crpix1) + wcs.cd2_2 * (-wcs.crpix2)
+        )?;
 
-        let projection = if self.sip.is_some() { "Gnomonic (TAN-SIP)" } else { "Gnomonic (TAN)" };
+        let projection = if self.sip.is_some() {
+            "Gnomonic (TAN-SIP)"
+        } else {
+            "Gnomonic (TAN)"
+        };
         writeln!(f, "Projection ............... {}", projection)?;
-        writeln!(f, "Projection origin ........ [{:.6} {:.6}] px -> [RA: {}  Dec: {}]",
-            wcs.crpix1, wcs.crpix2,
-            fmt_ra(wcs.crval1), fmt_dec(wcs.crval2))?;
+        writeln!(
+            f,
+            "Projection origin ........ [{:.6} {:.6}] px -> [RA: {}  Dec: {}]",
+            wcs.crpix1,
+            wcs.crpix2,
+            fmt_ra(wcs.crval1),
+            fmt_dec(wcs.crval2)
+        )?;
         writeln!(f, "Resolution ............... {:.3} arcsec/px", scale_avg)?;
         let flip_suffix = if wcs.is_flipped() { " (flipped)" } else { "" };
-        writeln!(f, "Rotation ................. {:.3} deg{}", rotation, flip_suffix)?;
+        writeln!(
+            f,
+            "Rotation ................. {:.3} deg{}",
+            rotation, flip_suffix
+        )?;
         writeln!(f, "Reference system ......... ICRS")?;
 
         if let Some(time) = self.observation_time {
@@ -124,7 +153,9 @@ impl<'a> fmt::Display for SolveDisplay<'a> {
             writeln!(
                 f,
                 "Geodetic coordinates ..... {}  {}{}",
-                format_lon_deg(lon), format_lat_deg(lat), alt_str,
+                format_lon_deg(lon),
+                format_lat_deg(lat),
+                alt_str,
             )?;
         }
 
@@ -134,19 +165,36 @@ impl<'a> fmt::Display for SolveDisplay<'a> {
             writeln!(f, "Pixel size ............... {:.2} um", px)?;
         }
 
-        writeln!(f, "Field of view ............ {} x {}",
-            fmt_fov_component(fov_x), fmt_fov_component(fov_y))?;
-        writeln!(f, "Image dimensions ......... {} x {} px", wcs.width, wcs.height)?;
+        writeln!(
+            f,
+            "Field of view ............ {} x {}",
+            fmt_fov_component(fov_x),
+            fmt_fov_component(fov_y)
+        )?;
+        writeln!(
+            f,
+            "Image dimensions ......... {} x {} px",
+            wcs.width, wcs.height
+        )?;
 
         let (ex, ey) = wcs.nearest_residual(wcs.crpix1, wcs.crpix2, 5);
-        writeln!(f, "Image center ............. RA: {}  Dec: {}  ex: {:+.6} px  ey: {:+.6} px",
-            fmt_ra(wcs.crval1), fmt_dec(wcs.crval2),
-            ex, ey)?;
+        writeln!(
+            f,
+            "Image center ............. RA: {}  Dec: {}  ex: {:+.6} px  ey: {:+.6} px",
+            fmt_ra(wcs.crval1),
+            fmt_dec(wcs.crval2),
+            ex,
+            ey
+        )?;
 
         wcs.fmt_bounds(f)?;
 
         if let Some(sip) = self.sip {
-            writeln!(f, "SIP distortion order ..... A={}, B={}", sip.a_order, sip.b_order)?;
+            writeln!(
+                f,
+                "SIP distortion order ..... A={}, B={}",
+                sip.a_order, sip.b_order
+            )?;
             fmt_sip_coeffs(f, "A", &sip.a_coeffs)?;
             fmt_sip_coeffs(f, "B", &sip.b_coeffs)?;
         }
@@ -156,7 +204,11 @@ impl<'a> fmt::Display for SolveDisplay<'a> {
         if let Some(sip) = self.sip {
             writeln!(f, "Linear RMS ............... {:.4} px", sip.linear_rms_px)?;
             writeln!(f, "SIP RMS .................. {:.4} px", sip.rms_px)?;
-            writeln!(f, "Weighted SIP RMS ......... {:.4} px", sip.weighted_rms_px)?;
+            writeln!(
+                f,
+                "Weighted SIP RMS ......... {:.4} px",
+                sip.weighted_rms_px
+            )?;
             let improvement = if sip.linear_rms_px > 0.0 {
                 (1.0 - sip.rms_px / sip.linear_rms_px) * 100.0
             } else {
@@ -165,7 +217,11 @@ impl<'a> fmt::Display for SolveDisplay<'a> {
             writeln!(f, "Improvement .............. {:.1}%", improvement)?;
         } else {
             writeln!(f, "RMS error ................ {:.3} px", wcs.rms_px)?;
-            writeln!(f, "Weighted RMS ............. {:.3} px", wcs.weighted_rms_px)?;
+            writeln!(
+                f,
+                "Weighted RMS ............. {:.3} px",
+                wcs.weighted_rms_px
+            )?;
         }
         write!(f, "{sep}")
     }
@@ -204,9 +260,9 @@ fn format_lon_deg(deg: f64) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use super::super::solution::{StarResidual, WcsSolution};
     use super::super::sip::SipSolution;
+    use super::super::solution::{StarResidual, WcsSolution};
+    use super::*;
 
     fn sample_wcs() -> WcsSolution {
         WcsSolution {
@@ -226,7 +282,11 @@ mod tests {
             rms_px: 0.3,
             weighted_rms_px: 0.2,
             residuals: vec![StarResidual {
-                px_x: 1024.0, px_y: 768.0, err_x: 0.01, err_y: -0.02, err_px: 0.022,
+                px_x: 1024.0,
+                px_y: 768.0,
+                err_x: 0.01,
+                err_y: -0.02,
+                err_px: 0.022,
             }],
         }
     }
@@ -238,11 +298,20 @@ mod tests {
         a_coeffs.insert((1, 1), 3e-6);
         b_coeffs.insert((0, 2), 2e-6);
         SipSolution {
-            crpix1: 1024.0, crpix2: 768.0, crval1: 180.0, crval2: 0.0,
-            cd1_1: 0.001, cd1_2: 0.0, cd2_1: 0.0, cd2_2: 0.001,
-            width: 2048, height: 1536,
-            a_order: 3, b_order: 3,
-            a_coeffs, b_coeffs,
+            crpix1: 1024.0,
+            crpix2: 768.0,
+            crval1: 180.0,
+            crval2: 0.0,
+            cd1_1: 0.001,
+            cd1_2: 0.0,
+            cd2_1: 0.0,
+            cd2_2: 0.001,
+            width: 2048,
+            height: 1536,
+            a_order: 3,
+            b_order: 3,
+            a_coeffs,
+            b_coeffs,
             n_stars: 50,
             linear_rms_px: 1.2,
             rms_px: 0.3,
@@ -292,8 +361,7 @@ mod tests {
     #[test]
     fn display_with_observation_time_shows_time() {
         let wcs = sample_wcs();
-        let display = SolveDisplay::new(&wcs, None)
-            .with_observation_time("2026-04-21 20:00:00");
+        let display = SolveDisplay::new(&wcs, None).with_observation_time("2026-04-21 20:00:00");
         let text = format!("{}", display);
         assert!(text.contains("Observation start time"));
         assert!(text.contains("2026-04-21 20:00:00"));
@@ -302,8 +370,7 @@ mod tests {
     #[test]
     fn display_with_geodetic_shows_formatted_location() {
         let wcs = sample_wcs();
-        let display = SolveDisplay::new(&wcs, None)
-            .with_geodetic(-117.0, 33.0, Some(150.0));
+        let display = SolveDisplay::new(&wcs, None).with_geodetic(-117.0, 33.0, Some(150.0));
         let text = format!("{}", display);
         assert!(text.contains("Geodetic coordinates"));
         assert!(text.contains("W")); // west longitude
@@ -314,8 +381,7 @@ mod tests {
     #[test]
     fn display_without_altitude_omits_altitude_field() {
         let wcs = sample_wcs();
-        let display = SolveDisplay::new(&wcs, None)
-            .with_geodetic(-117.0, 33.0, None);
+        let display = SolveDisplay::new(&wcs, None).with_geodetic(-117.0, 33.0, None);
         let text = format!("{}", display);
         assert!(text.contains("Geodetic coordinates"));
         // no "m " altitude suffix
@@ -352,12 +418,18 @@ mod tests {
         let mut wcs = sample_wcs();
         wcs.pixel_um = Some(3.76);
         let sip = SipSolution {
-            crpix1: wcs.crpix1, crpix2: wcs.crpix2,
-            crval1: wcs.crval1, crval2: wcs.crval2,
-            cd1_1: wcs.cd1_1, cd1_2: wcs.cd1_2,
-            cd2_1: wcs.cd2_1, cd2_2: wcs.cd2_2,
-            width: wcs.width, height: wcs.height,
-            a_order: 2, b_order: 2,
+            crpix1: wcs.crpix1,
+            crpix2: wcs.crpix2,
+            crval1: wcs.crval1,
+            crval2: wcs.crval2,
+            cd1_1: wcs.cd1_1,
+            cd1_2: wcs.cd1_2,
+            cd2_1: wcs.cd2_1,
+            cd2_2: wcs.cd2_2,
+            width: wcs.width,
+            height: wcs.height,
+            a_order: 2,
+            b_order: 2,
             a_coeffs: coeffs.clone(),
             b_coeffs: coeffs,
             n_stars: 10,

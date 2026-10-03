@@ -316,8 +316,12 @@ mod tests {
         // A constant function has a zero Jacobian and must surface a
         // ConvergenceFailure rather than divide by zero.
         let constant = |_x: f64, _y: f64| (5.0, 5.0);
-        let err = newton_raphson_2d((0.0, 0.0), (0.0, 0.0), constant, 20, 1e-12, "test")
-            .unwrap_err();
-        assert!(matches!(err, WcsError::ConvergenceFailure { .. }), "got: {:?}", err);
+        let err =
+            newton_raphson_2d((0.0, 0.0), (0.0, 0.0), constant, 20, 1e-12, "test").unwrap_err();
+        assert!(
+            matches!(err, WcsError::ConvergenceFailure { .. }),
+            "got: {:?}",
+            err
+        );
     }
 }

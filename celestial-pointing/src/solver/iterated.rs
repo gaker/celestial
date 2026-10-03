@@ -1,6 +1,8 @@
 use super::design::{cos_dec_per_obs, extract_columns};
 use super::linalg::solve_damped;
-use super::stats::{compute_diagnostics, compute_sigma_from_covariance, compute_sky_rms, compute_popn_sd};
+use super::stats::{
+    compute_diagnostics, compute_popn_sd, compute_sigma_from_covariance, compute_sky_rms,
+};
 use super::validate::{collect_indices, validate_fit_inputs};
 use super::{FitInputs, FitResult, IterOptions, IterReport, RankInfo};
 use crate::error::Result;
@@ -63,7 +65,11 @@ pub(crate) fn fit_model_iterated(
     let actual_residuals_ha =
         residuals_under_state(inputs.observations, inputs.terms, &state, inputs.latitude);
     let sky_rms = compute_sky_rms(&actual_residuals_ha, inputs.observations);
-    let popn_sd = compute_popn_sd(&actual_residuals_ha, inputs.observations, free_indices.len());
+    let popn_sd = compute_popn_sd(
+        &actual_residuals_ha,
+        inputs.observations,
+        free_indices.len(),
+    );
     let sigma = compute_sigma_from_covariance(
         &final_solved,
         &free_residuals,
@@ -71,11 +77,8 @@ pub(crate) fn fit_model_iterated(
         inputs.terms.len(),
         inputs.observations.len(),
     );
-    let diagnostics = compute_diagnostics(
-        &free_residuals,
-        &final_solved.leverage,
-        final_solved.rank,
-    );
+    let diagnostics =
+        compute_diagnostics(&free_residuals, &final_solved.leverage, final_solved.rank);
     let term_names = inputs.terms.iter().map(|t| t.name().to_string()).collect();
     let rank_info = RankInfo {
         n_free: free_indices.len(),
@@ -129,8 +132,7 @@ fn run_lm_loop(
 
     while iterations < options.max_iter {
         iterations += 1;
-        let (a_free, b) =
-            build_lm_system(inputs, state, cos_dec, free_indices, options, prev_chi2);
+        let (a_free, b) = build_lm_system(inputs, state, cos_dec, free_indices, options, prev_chi2);
         let solved = solve_damped(&a_free, &b, lambda, inputs.fit_tol)?;
         let delta = &solved.x;
 
@@ -372,9 +374,18 @@ mod tests {
         let o3 = obs(100.0, 60.0);
         let observations: Vec<&Observation> = vec![&o1, &o2, &o3];
         let terms = vec![create_term("IH").unwrap()];
-        let result = run_iter(&observations, &terms, &[false], &[0.0], &IterOptions::default());
+        let result = run_iter(
+            &observations,
+            &terms,
+            &[false],
+            &[0.0],
+            &IterOptions::default(),
+        );
         assert!((result.coefficients[0] - (-100.0)).abs() < 1e-4);
-        assert!(result.iter_report.converged, "LM should converge on linear data");
+        assert!(
+            result.iter_report.converged,
+            "LM should converge on linear data"
+        );
     }
 
     #[test]
@@ -397,11 +408,15 @@ mod tests {
         let o = obs(100.0, 30.0);
         let observations: Vec<&Observation> = vec![&o, &o, &o];
         let terms = vec![create_term("IH").unwrap()];
-        let result = run_iter(&observations, &terms, &[false], &[25.0], &IterOptions::default());
-        // change = final - 25
-        assert!(
-            (result.change[0] - (result.coefficients[0] - 25.0)).abs() < 1e-9,
+        let result = run_iter(
+            &observations,
+            &terms,
+            &[false],
+            &[25.0],
+            &IterOptions::default(),
         );
+        // change = final - 25
+        assert!((result.change[0] - (result.coefficients[0] - 25.0)).abs() < 1e-9,);
     }
 
     // max_iter=0 → loop never runs → no improvement, iterations=0.
@@ -410,7 +425,10 @@ mod tests {
         let o = obs(100.0, 30.0);
         let observations: Vec<&Observation> = vec![&o, &o, &o];
         let terms = vec![create_term("IH").unwrap()];
-        let opts = IterOptions { max_iter: 0, ..IterOptions::default() };
+        let opts = IterOptions {
+            max_iter: 0,
+            ..IterOptions::default()
+        };
         let result = run_iter(&observations, &terms, &[false], &[0.0], &opts);
         assert_eq!(result.iter_report.iterations, 0);
         assert!(!result.iter_report.converged);
@@ -438,7 +456,10 @@ mod tests {
         let o = obs(100.0, 30.0);
         let observations: Vec<&Observation> = vec![&o, &o, &o];
         let terms = vec![create_term("IH").unwrap()];
-        let opts = IterOptions { robust: true, ..IterOptions::default() };
+        let opts = IterOptions {
+            robust: true,
+            ..IterOptions::default()
+        };
         let result = run_iter(&observations, &terms, &[false], &[0.0], &opts);
         assert!((result.coefficients[0] - (-100.0)).abs() < 1.0);
     }
@@ -521,7 +542,10 @@ mod tests {
         let o2 = obs(100.0, 45.0);
         let observations: Vec<&Observation> = vec![&o1, &o2];
         let terms = vec![create_term("IH").unwrap()];
-        let cos_dec = vec![libm::cos(30.0_f64.to_radians()), libm::cos(45.0_f64.to_radians())];
+        let cos_dec = vec![
+            libm::cos(30.0_f64.to_radians()),
+            libm::cos(45.0_f64.to_radians()),
+        ];
         let chi2 = chi2_at_state(&observations, &terms, &[-100.0], 0.0, &cos_dec);
         assert!(chi2 < 1e-6, "chi2 at optimum should be ~0, got {}", chi2);
     }

@@ -22,9 +22,8 @@ use celestial_core::constants::{DEG_TO_RAD, RAD_TO_DEG};
 use crate::match_field::StarPair;
 
 use cd_matrix::{
-    WcsParams,
-    ransac_fit, fit_cd_weighted, sigma_clip_loop_weighted,
-    compute_residuals, rms_error, weighted_rms_error,
+    compute_residuals, fit_cd_weighted, ransac_fit, rms_error, sigma_clip_loop_weighted,
+    weighted_rms_error, WcsParams,
 };
 
 /// Fits a TAN (gnomonic) WCS from matched star pairs.
@@ -60,7 +59,11 @@ pub fn fit_wcs(
     focal_mm: Option<f64>,
     pixel_um: Option<f64>,
 ) -> Result<WcsSolution> {
-    ensure!(pairs.len() >= 3, "need at least 3 matched pairs, got {}", pairs.len());
+    ensure!(
+        pairs.len() >= 3,
+        "need at least 3 matched pairs, got {}",
+        pairs.len()
+    );
 
     let crpix1 = width as f64 / 2.0;
     let crpix2 = height as f64 / 2.0;
@@ -68,14 +71,21 @@ pub fn fit_wcs(
     let projected: Vec<(f64, f64, f64, f64)> = pairs
         .iter()
         .filter_map(|p| {
-            tan_project_star(p.ra_deg, p.dec_deg, crval_ra_deg, crval_dec_deg)
-                .map(|(xi, eta)| {
-                    (p.px_x - crpix1, p.px_y - crpix2, xi * RAD_TO_DEG, eta * RAD_TO_DEG)
-                })
+            tan_project_star(p.ra_deg, p.dec_deg, crval_ra_deg, crval_dec_deg).map(|(xi, eta)| {
+                (
+                    p.px_x - crpix1,
+                    p.px_y - crpix2,
+                    xi * RAD_TO_DEG,
+                    eta * RAD_TO_DEG,
+                )
+            })
         })
         .collect();
 
-    ensure!(projected.len() >= 3, "too few stars projected onto tangent plane");
+    ensure!(
+        projected.len() >= 3,
+        "too few stars projected onto tangent plane"
+    );
 
     let snr_weights: Vec<f64> = pairs
         .iter()
@@ -89,7 +99,11 @@ pub fn fit_wcs(
     let mut mask = ransac_fit(&projected, pairs, inlier_px)?;
 
     let n_ransac = mask.iter().filter(|&&m| m).count();
-    log::debug!("fit_wcs ransac: {} inliers within {:.1}px", n_ransac, inlier_px);
+    log::debug!(
+        "fit_wcs ransac: {} inliers within {:.1}px",
+        n_ransac,
+        inlier_px
+    );
 
     let mut cd = fit_cd_weighted(&projected, &mask, &snr_weights)?;
 
@@ -98,14 +112,18 @@ pub fn fit_wcs(
     cd = fit_cd_weighted(&projected, &mask, &snr_weights)?;
 
     let (crval1, crval2) = tan_deproject_star(
-        cd.xi0 * DEG_TO_RAD, cd.eta0 * DEG_TO_RAD,
-        crval_ra_deg, crval_dec_deg,
+        cd.xi0 * DEG_TO_RAD,
+        cd.eta0 * DEG_TO_RAD,
+        crval_ra_deg,
+        crval_dec_deg,
     );
 
     let mut kept_pairs = Vec::new();
     let mut kept_weights = Vec::new();
     for (i, (p, &m)) in pairs.iter().zip(mask.iter()).enumerate() {
-        if !m { continue; }
+        if !m {
+            continue;
+        }
         if i < snr_weights.len() {
             kept_pairs.push(p);
             kept_weights.push(snr_weights[i]);
@@ -113,19 +131,32 @@ pub fn fit_wcs(
     }
 
     let wcs_params = WcsParams {
-        crpix1, crpix2, crval_ra: crval1, crval_dec: crval2,
-        cd1_1: cd.cd1_1, cd1_2: cd.cd1_2, cd2_1: cd.cd2_1, cd2_2: cd.cd2_2,
+        crpix1,
+        crpix2,
+        crval_ra: crval1,
+        crval_dec: crval2,
+        cd1_1: cd.cd1_1,
+        cd1_2: cd.cd1_2,
+        cd2_1: cd.cd2_1,
+        cd2_2: cd.cd2_2,
     };
     let residuals = compute_residuals(&kept_pairs, wcs_params);
     let rms_px = rms_error(&residuals);
     let weighted_rms_px = weighted_rms_error(&residuals, &kept_weights);
 
     Ok(WcsSolution {
-        crpix1, crpix2,
-        crval1, crval2,
-        cd1_1: cd.cd1_1, cd1_2: cd.cd1_2, cd2_1: cd.cd2_1, cd2_2: cd.cd2_2,
-        width, height,
-        focal_mm, pixel_um,
+        crpix1,
+        crpix2,
+        crval1,
+        crval2,
+        cd1_1: cd.cd1_1,
+        cd1_2: cd.cd1_2,
+        cd2_1: cd.cd2_1,
+        cd2_2: cd.cd2_2,
+        width,
+        height,
+        focal_mm,
+        pixel_um,
         n_stars: residuals.len(),
         rms_px,
         weighted_rms_px,
@@ -233,8 +264,22 @@ mod tests {
     #[test]
     fn fit_wcs_rejects_fewer_than_three_pairs() {
         let pairs = vec![
-            StarPair { px_x: 0.0, px_y: 0.0, ra_deg: 0.0, dec_deg: 0.0, votes: 4, snr: 10.0 },
-            StarPair { px_x: 1.0, px_y: 0.0, ra_deg: 0.1, dec_deg: 0.0, votes: 4, snr: 10.0 },
+            StarPair {
+                px_x: 0.0,
+                px_y: 0.0,
+                ra_deg: 0.0,
+                dec_deg: 0.0,
+                votes: 4,
+                snr: 10.0,
+            },
+            StarPair {
+                px_x: 1.0,
+                px_y: 0.0,
+                ra_deg: 0.1,
+                dec_deg: 0.0,
+                votes: 4,
+                snr: 10.0,
+            },
         ];
         let err = fit_wcs(&pairs, 100, 100, 0.0, 0.0, None, None).unwrap_err();
         assert!(err.to_string().contains("at least 3 matched pairs"));

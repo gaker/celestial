@@ -14,9 +14,7 @@ use std::io::{self, Write};
 use celestial_core::Angle;
 use celestial_time::scales::conversions::utc_tai::julian_to_calendar;
 
-use crate::observation::{
-    IndatFile, IndatOption, MountType, Observation, PierSide, SiteParams,
-};
+use crate::observation::{IndatFile, IndatOption, MountType, Observation, PierSide, SiteParams};
 
 /// Writes `file` to `w` in TPOINT INDAT format. The result round-trips through
 /// [`crate::parser::parse_indat`] back to a structurally-identical `IndatFile`
@@ -87,12 +85,7 @@ fn write_mount_type_option(w: &mut impl Write, mount: MountType) -> io::Result<(
     }
 }
 
-fn write_site_line(
-    w: &mut impl Write,
-    site: &SiteParams,
-    jd1: f64,
-    jd2: f64,
-) -> io::Result<()> {
+fn write_site_line(w: &mut impl Write, site: &SiteParams, jd1: f64, jd2: f64) -> io::Result<()> {
     let (year, month, day) = jd_to_ymd(jd1, jd2);
     let (lat_d, lat_m, lat_s) = angle_to_dms_components(site.latitude);
     writeln!(
@@ -331,10 +324,7 @@ mod tests {
 
     #[test]
     fn options_are_emitted_in_order() {
-        let file = make_file(
-            vec![IndatOption::NoDA, IndatOption::Equatorial],
-            Vec::new(),
-        );
+        let file = make_file(vec![IndatOption::NoDA, IndatOption::Equatorial], Vec::new());
         let out = write_to_string(&file);
         let noda_pos = out.find(":NODA").unwrap();
         let equat_pos = out.find(":EQUAT").unwrap();
@@ -343,10 +333,7 @@ mod tests {
 
     #[test]
     fn noda_option_survives_round_trip() {
-        let file = make_file(
-            vec![IndatOption::NoDA, IndatOption::Equatorial],
-            Vec::new(),
-        );
+        let file = make_file(vec![IndatOption::NoDA, IndatOption::Equatorial], Vec::new());
         let parsed = parse_indat(&write_to_string(&file)).expect("parse");
         assert!(parsed.options.contains(&IndatOption::NoDA));
     }

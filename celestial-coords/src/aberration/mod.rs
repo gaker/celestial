@@ -418,8 +418,16 @@ mod tests {
         let dec = Angle::from_degrees(30.0);
         let (ra2, dec2) = apply_annual_aberration(ra, dec, &tt);
         let (ra3, dec3) = remove_annual_aberration(ra2, dec2, &tt);
-        assert!(arcsec_diff(ra, ra3) < 0.01, "ra drift {}", arcsec_diff(ra, ra3));
-        assert!(arcsec_diff(dec, dec3) < 0.01, "dec drift {}", arcsec_diff(dec, dec3));
+        assert!(
+            arcsec_diff(ra, ra3) < 0.01,
+            "ra drift {}",
+            arcsec_diff(ra, ra3)
+        );
+        assert!(
+            arcsec_diff(dec, dec3) < 0.01,
+            "dec drift {}",
+            arcsec_diff(dec, dec3)
+        );
     }
 
     #[test]

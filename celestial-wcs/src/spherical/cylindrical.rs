@@ -160,10 +160,8 @@ mod tests {
         // CAR is an identity in degrees, so the roundtrip must be byte-exact.
         for phi_deg in [-180.0, -90.0, 0.0, 45.0, 90.0, 135.0, 180.0] {
             for theta_deg in [-85.0, -45.0, 0.0, 45.0, 85.0] {
-                let original = NativeCoord::new(
-                    Angle::from_degrees(phi_deg),
-                    Angle::from_degrees(theta_deg),
-                );
+                let original =
+                    NativeCoord::new(Angle::from_degrees(phi_deg), Angle::from_degrees(theta_deg));
                 let inter = proj.project(original).unwrap();
                 let recovered = proj.deproject(inter).unwrap();
                 assert_eq!(original.phi().degrees(), recovered.phi().degrees());
@@ -185,10 +183,8 @@ mod tests {
 
         for phi_deg in [-180.0, -90.0, 0.0, 45.0, 90.0, 135.0, 180.0] {
             for theta_deg in [-80.0, -45.0, 0.0, 45.0, 80.0] {
-                let original = NativeCoord::new(
-                    Angle::from_degrees(phi_deg),
-                    Angle::from_degrees(theta_deg),
-                );
+                let original =
+                    NativeCoord::new(Angle::from_degrees(phi_deg), Angle::from_degrees(theta_deg));
                 let inter = proj.project(original).unwrap();
                 let recovered = proj.deproject(inter).unwrap();
                 assert_ulp_lt!(original.phi().degrees(), recovered.phi().degrees(), 2);
@@ -210,10 +206,8 @@ mod tests {
 
         for phi_deg in [-180.0, -90.0, 0.0, 45.0, 90.0, 135.0, 180.0] {
             for theta_deg in [-85.0, -45.0, 0.0, 45.0, 85.0] {
-                let original = NativeCoord::new(
-                    Angle::from_degrees(phi_deg),
-                    Angle::from_degrees(theta_deg),
-                );
+                let original =
+                    NativeCoord::new(Angle::from_degrees(phi_deg), Angle::from_degrees(theta_deg));
                 let inter = proj.project(original).unwrap();
                 let recovered = proj.deproject(inter).unwrap();
                 assert_ulp_lt!(original.phi().degrees(), recovered.phi().degrees(), 2);
@@ -250,10 +244,8 @@ mod tests {
         let proj = Projection::cyp(1.0, 1.0);
         for phi_deg in [-180.0, -90.0, 0.0, 45.0, 90.0, 135.0, 180.0] {
             for theta_deg in [-60.0, -30.0, 0.0, 30.0, 60.0] {
-                let original = NativeCoord::new(
-                    Angle::from_degrees(phi_deg),
-                    Angle::from_degrees(theta_deg),
-                );
+                let original =
+                    NativeCoord::new(Angle::from_degrees(phi_deg), Angle::from_degrees(theta_deg));
                 let inter = proj.project(original).unwrap();
                 let recovered = proj.deproject(inter).unwrap();
                 assert_ulp_lt!(original.phi().degrees(), recovered.phi().degrees(), 5);
@@ -268,7 +260,11 @@ mod tests {
         let mer = Projection::mer();
         for theta in [90.0, -90.0] {
             let native = NativeCoord::new(Angle::from_degrees(0.0), Angle::from_degrees(theta));
-            assert!(mer.project(native).is_err(), "MER theta = {} should error", theta);
+            assert!(
+                mer.project(native).is_err(),
+                "MER theta = {} should error",
+                theta
+            );
         }
 
         // CEA deproject: |lambda * y| > 1 is out of range.
@@ -287,6 +283,8 @@ mod tests {
 
         // CYP deproject with lambda = 0 is an invalid parameter.
         let cyp_zero = Projection::cyp(1.0, 0.0);
-        assert!(cyp_zero.deproject(IntermediateCoord::new(10.0, 10.0)).is_err());
+        assert!(cyp_zero
+            .deproject(IntermediateCoord::new(10.0, 10.0))
+            .is_err());
     }
 }

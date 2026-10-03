@@ -83,17 +83,11 @@ pub trait HduTrait: std::fmt::Debug {
     fn hdu_type(&self) -> HduType;
 
     fn bzero(&self) -> f64 {
-        self.header()
-            .get("BZERO")
-            .as_f64()
-            .unwrap_or(0.0)
+        self.header().get("BZERO").as_f64().unwrap_or(0.0)
     }
 
     fn bscale(&self) -> f64 {
-        self.header()
-            .get("BSCALE")
-            .as_f64()
-            .unwrap_or(1.0)
+        self.header().get("BSCALE").as_f64().unwrap_or(1.0)
     }
 
     fn needs_scaling(&self) -> bool {
@@ -103,28 +97,16 @@ pub trait HduTrait: std::fmt::Debug {
     }
 
     fn has_data(&self) -> bool {
-        self.header()
-            .get("NAXIS")
-            .as_i64()
-            .unwrap_or(0)
-            > 0
+        self.header().get("NAXIS").as_i64().unwrap_or(0) > 0
     }
 
     fn data_dimensions(&self) -> Vec<usize> {
-        let naxis = self
-            .header()
-            .get("NAXIS")
-            .as_i64()
-            .unwrap_or(0) as usize;
+        let naxis = self.header().get("NAXIS").as_i64().unwrap_or(0) as usize;
 
         let mut dims = Vec::with_capacity(naxis);
         for i in 1..=naxis {
             let axis_name = format!("NAXIS{}", i);
-            let axis_size = self
-                .header()
-                .get(&axis_name)
-                .as_i64()
-                .unwrap_or(0) as usize;
+            let axis_size = self.header().get(&axis_name).as_i64().unwrap_or(0) as usize;
             dims.push(axis_size);
         }
         dims

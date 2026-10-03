@@ -48,7 +48,6 @@ pub(crate) fn deproject_sin(inter: IntermediateCoord, xi: f64, eta: f64) -> WcsR
     Ok(native_coord_from_radians(phi, theta))
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -70,10 +69,22 @@ mod tests {
             let original = NativeCoord::new(Angle::from_degrees(*phi), Angle::from_degrees(*theta));
             let inter = proj.project(original).unwrap();
             let recovered = proj.deproject(inter).unwrap();
-            assert_ulp_lt!(original.phi().degrees(), recovered.phi().degrees(), *ulp,
-                "phi (xi={}, eta={})", xi, eta);
-            assert_ulp_lt!(original.theta().degrees(), recovered.theta().degrees(), *ulp,
-                "theta (xi={}, eta={})", xi, eta);
+            assert_ulp_lt!(
+                original.phi().degrees(),
+                recovered.phi().degrees(),
+                *ulp,
+                "phi (xi={}, eta={})",
+                xi,
+                eta
+            );
+            assert_ulp_lt!(
+                original.theta().degrees(),
+                recovered.theta().degrees(),
+                *ulp,
+                "theta (xi={}, eta={})",
+                xi,
+                eta
+            );
         }
     }
 
@@ -81,10 +92,18 @@ mod tests {
     fn test_sin_out_of_bounds() {
         // Standard SIN: point outside projection boundary.
         let err = deproject_sin(IntermediateCoord::new(100.0, 100.0), 0.0, 0.0).unwrap_err();
-        assert!(matches!(err, WcsError::OutOfBounds { .. }), "standard: {:?}", err);
+        assert!(
+            matches!(err, WcsError::OutOfBounds { .. }),
+            "standard: {:?}",
+            err
+        );
 
         // Slant SIN: parameter combo that drives sin_theta out of [-1, 1].
         let err = deproject_sin(IntermediateCoord::new(100.0, 100.0), 0.5, 0.5).unwrap_err();
-        assert!(matches!(err, WcsError::OutOfBounds { .. }), "slant: {:?}", err);
+        assert!(
+            matches!(err, WcsError::OutOfBounds { .. }),
+            "slant: {:?}",
+            err
+        );
     }
 }

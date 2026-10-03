@@ -155,11 +155,26 @@ mod tests {
 
     #[test]
     fn sample_format_constants_match_each_impl() {
-        assert!(matches!(<u8 as XisfDataType>::SAMPLE_FORMAT, SampleFormat::UInt8));
-        assert!(matches!(<u16 as XisfDataType>::SAMPLE_FORMAT, SampleFormat::UInt16));
-        assert!(matches!(<u32 as XisfDataType>::SAMPLE_FORMAT, SampleFormat::UInt32));
-        assert!(matches!(<f32 as XisfDataType>::SAMPLE_FORMAT, SampleFormat::Float32));
-        assert!(matches!(<f64 as XisfDataType>::SAMPLE_FORMAT, SampleFormat::Float64));
+        assert!(matches!(
+            <u8 as XisfDataType>::SAMPLE_FORMAT,
+            SampleFormat::UInt8
+        ));
+        assert!(matches!(
+            <u16 as XisfDataType>::SAMPLE_FORMAT,
+            SampleFormat::UInt16
+        ));
+        assert!(matches!(
+            <u32 as XisfDataType>::SAMPLE_FORMAT,
+            SampleFormat::UInt32
+        ));
+        assert!(matches!(
+            <f32 as XisfDataType>::SAMPLE_FORMAT,
+            SampleFormat::Float32
+        ));
+        assert!(matches!(
+            <f64 as XisfDataType>::SAMPLE_FORMAT,
+            SampleFormat::Float64
+        ));
     }
 
     #[test]
@@ -249,10 +264,19 @@ mod tests {
         assert_eq!(<u8 as XisfDataType>::calculate_bounds(&[42]), (0.0, 255.0));
 
         assert_eq!(<u16 as XisfDataType>::calculate_bounds(&[]), (0.0, 65535.0));
-        assert_eq!(<u16 as XisfDataType>::calculate_bounds(&[7]), (0.0, 65535.0));
+        assert_eq!(
+            <u16 as XisfDataType>::calculate_bounds(&[7]),
+            (0.0, 65535.0)
+        );
 
-        assert_eq!(<u32 as XisfDataType>::calculate_bounds(&[]), (0.0, 4294967295.0));
-        assert_eq!(<u32 as XisfDataType>::calculate_bounds(&[1, 2]), (0.0, 4294967295.0));
+        assert_eq!(
+            <u32 as XisfDataType>::calculate_bounds(&[]),
+            (0.0, 4294967295.0)
+        );
+        assert_eq!(
+            <u32 as XisfDataType>::calculate_bounds(&[1, 2]),
+            (0.0, 4294967295.0)
+        );
     }
 
     #[test]
@@ -276,7 +300,14 @@ mod tests {
 
     #[test]
     fn f32_calculate_bounds_mixed_finite_and_nan_ignores_nan() {
-        let data = [1.0f32, f32::NAN, -2.0, f32::INFINITY, f32::NEG_INFINITY, 3.0];
+        let data = [
+            1.0f32,
+            f32::NAN,
+            -2.0,
+            f32::INFINITY,
+            f32::NEG_INFINITY,
+            3.0,
+        ];
         let (min, max) = <f32 as XisfDataType>::calculate_bounds(&data);
         assert_eq!(min, -2.0);
         assert_eq!(max, 3.0);

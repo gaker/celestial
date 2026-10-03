@@ -45,37 +45,59 @@ impl Image {
 }
 
 fn parse_png_data(buf: &[u8], info: &png::OutputInfo) -> Result<(PixelData, Vec<usize>)> {
+    let stored = stored_samples(info.color_type)?;
+    let channels = kept_samples(stored);
+
+    // An alpha channel has no meaning downstream, where `channels()` is read
+    // as 1 (gray) or 3 (RGB). Drop it at load, the way the TIFF reader drops
+    // extra samples, so a GrayA/RGBA PNG never reaches code that would treat
+    // its samples as extra pixels.
+    let pixels = decode_png_samples(buf, info.bit_depth)?.keep_leading_samples(stored, channels);
+
+    Ok((pixels, build_png_dimensions(info, channels)))
+}
+
+/// Samples per pixel stored in the decoded buffer for a PNG color type.
+fn stored_samples(color_type: png::ColorType) -> Result<usize> {
     use png::ColorType;
 
-    let channels = match info.color_type {
-        ColorType::Grayscale => 1,
-        ColorType::Rgb => 3,
-        ColorType::GrayscaleAlpha => 2,
-        ColorType::Rgba => 4,
-        ColorType::Indexed => {
-            return Err(ImageError::UnsupportedFormat);
-        }
-    };
+    match color_type {
+        ColorType::Grayscale => Ok(1),
+        ColorType::GrayscaleAlpha => Ok(2),
+        ColorType::Rgb => Ok(3),
+        ColorType::Rgba => Ok(4),
+        ColorType::Indexed => Err(ImageError::UnsupportedFormat),
+    }
+}
 
-    let dimensions = if channels == 1 {
-        vec![info.width as usize, info.height as usize]
-    } else {
-        vec![info.width as usize, info.height as usize, channels]
-    };
+/// Channels kept in memory: gray+alpha collapses to gray, RGBA to RGB.
+fn kept_samples(stored: usize) -> usize {
+    match stored {
+        2 => 1,
+        4 => 3,
+        other => other,
+    }
+}
 
-    let pixels = match info.bit_depth {
-        png::BitDepth::Eight => PixelData::U8(buf.to_vec()),
-        png::BitDepth::Sixteen => {
-            let data: Vec<u16> = buf
-                .chunks_exact(2)
+fn decode_png_samples(buf: &[u8], bit_depth: png::BitDepth) -> Result<PixelData> {
+    match bit_depth {
+        png::BitDepth::Eight => Ok(PixelData::U8(buf.to_vec())),
+        png::BitDepth::Sixteen => Ok(PixelData::U16(
+            buf.chunks_exact(2)
                 .map(|b| u16::from_be_bytes([b[0], b[1]]))
-                .collect();
-            PixelData::U16(data)
-        }
-        _ => return Err(ImageError::UnsupportedFormat),
-    };
+                .collect(),
+        )),
+        _ => Err(ImageError::UnsupportedFormat),
+    }
+}
 
-    Ok((pixels, dimensions))
+fn build_png_dimensions(info: &png::OutputInfo, channels: usize) -> Vec<usize> {
+    let (width, height) = (info.width as usize, info.height as usize);
+    if channels == 1 {
+        vec![width, height]
+    } else {
+        vec![width, height, channels]
+    }
 }
 
 fn channels_to_png_color_type(channels: usize) -> Result<png::ColorType> {
@@ -130,10 +152,7 @@ mod tests {
     use super::*;
 
     fn tmp_png() -> tempfile::NamedTempFile {
-        tempfile::Builder::new()
-            .suffix(".png")
-            .tempfile()
-            .unwrap()
+        tempfile::Builder::new().suffix(".png").tempfile().unwrap()
     }
 
     #[test]
@@ -158,6 +177,51 @@ mod tests {
         let restored = Image::open_png(tmp.path()).unwrap();
         assert_eq!(restored.dimensions, vec![4usize, 4, 3]);
         assert_eq!(restored.pixels.as_u8().unwrap(), &original);
+    }
+
+    #[test]
+    fn open_rgba_drops_alpha_to_three_channels() {
+        let tmp = tmp_png();
+        // Two RGBA pixels; the alpha samples must not survive the load.
+        let rgba: Vec<u8> = vec![10, 20, 30, 200, 40, 50, 60, 100];
+        let img = Image::new(PixelData::U8(rgba), vec![2usize, 1, 4]);
+        img.save(tmp.path()).unwrap();
+
+        let restored = Image::open_png(tmp.path()).unwrap();
+        assert_eq!(restored.dimensions, vec![2usize, 1, 3]);
+        assert!(restored.is_rgb());
+        assert_eq!(
+            restored.pixels.as_u8().unwrap(),
+            &vec![10, 20, 30, 40, 50, 60]
+        );
+    }
+
+    #[test]
+    fn open_rgba_u16_drops_alpha_to_three_channels() {
+        let tmp = tmp_png();
+        let rgba: Vec<u16> = vec![1000, 2000, 3000, 65535, 4000, 5000, 6000, 65535];
+        let img = Image::new(PixelData::U16(rgba), vec![2usize, 1, 4]);
+        img.save(tmp.path()).unwrap();
+
+        let restored = Image::open_png(tmp.path()).unwrap();
+        assert_eq!(restored.dimensions, vec![2usize, 1, 3]);
+        assert_eq!(
+            restored.pixels.as_u16().unwrap(),
+            &vec![1000, 2000, 3000, 4000, 5000, 6000]
+        );
+    }
+
+    #[test]
+    fn open_gray_alpha_drops_alpha_to_one_channel() {
+        let tmp = tmp_png();
+        let gray_alpha: Vec<u8> = vec![10, 255, 20, 128, 30, 0, 40, 255];
+        let img = Image::new(PixelData::U8(gray_alpha), vec![4usize, 1, 2]);
+        img.save(tmp.path()).unwrap();
+
+        let restored = Image::open_png(tmp.path()).unwrap();
+        assert_eq!(restored.dimensions, vec![4usize, 1]);
+        assert_eq!(restored.channels(), 1);
+        assert_eq!(restored.pixels.as_u8().unwrap(), &vec![10, 20, 30, 40]);
     }
 
     #[test]

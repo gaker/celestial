@@ -75,9 +75,7 @@ pub(crate) fn deproject_cop(
 
     let cos_eta = libm::cos(eta);
     if cos_eta.abs() < 1e-15 {
-        return Err(WcsError::invalid_parameter(
-            "COP projection: eta = +/-90",
-        ));
+        return Err(WcsError::invalid_parameter("COP projection: eta = +/-90"));
     }
     let cot_theta_a = libm::cos(theta_a) / libm::sin(theta_a);
     let y0 = cos_eta * cot_theta_a;
@@ -329,13 +327,26 @@ mod tests {
     }
 
     fn assert_roundtrip(proj: &Projection, phi_deg: f64, theta_deg: f64, ulp: u64) {
-        let original = NativeCoord::new(Angle::from_degrees(phi_deg), Angle::from_degrees(theta_deg));
+        let original =
+            NativeCoord::new(Angle::from_degrees(phi_deg), Angle::from_degrees(theta_deg));
         let inter = proj.project(original).unwrap();
         let recovered = proj.deproject(inter).unwrap();
-        assert_ulp_lt!(original.phi().degrees(), recovered.phi().degrees(), ulp,
-            "phi mismatch at ({}, {})", phi_deg, theta_deg);
-        assert_ulp_lt!(original.theta().degrees(), recovered.theta().degrees(), ulp,
-            "theta mismatch at ({}, {})", phi_deg, theta_deg);
+        assert_ulp_lt!(
+            original.phi().degrees(),
+            recovered.phi().degrees(),
+            ulp,
+            "phi mismatch at ({}, {})",
+            phi_deg,
+            theta_deg
+        );
+        assert_ulp_lt!(
+            original.theta().degrees(),
+            recovered.theta().degrees(),
+            ulp,
+            "theta mismatch at ({}, {})",
+            phi_deg,
+            theta_deg
+        );
     }
 
     #[test]
@@ -428,7 +439,11 @@ mod tests {
             Projection::coo(0.0, 0.0),
         ] {
             let native = NativeCoord::new(Angle::from_degrees(0.0), Angle::from_degrees(45.0));
-            assert!(proj.project(native).is_err(), "{:?} theta_a=0 should error", proj);
+            assert!(
+                proj.project(native).is_err(),
+                "{:?} theta_a=0 should error",
+                proj
+            );
         }
 
         // COP: theta - theta_a = +/-90 is singular (cos(delta) = 0).  With
@@ -451,18 +466,40 @@ mod tests {
         let theta_a = 45.0;
         let pt = NativeCoord::new(Angle::from_degrees(30.0), Angle::from_degrees(55.0));
         let pairs = [
-            (Projection::cop(theta_a, 0.0), Projection::cop(theta_a, 1e-8)),
-            (Projection::coe(theta_a, 0.0), Projection::coe(theta_a, 1e-8)),
-            (Projection::cod(theta_a, 0.0), Projection::cod(theta_a, 1e-8)),
-            (Projection::coo(theta_a, 0.0), Projection::coo(theta_a, 1e-8)),
+            (
+                Projection::cop(theta_a, 0.0),
+                Projection::cop(theta_a, 1e-8),
+            ),
+            (
+                Projection::coe(theta_a, 0.0),
+                Projection::coe(theta_a, 1e-8),
+            ),
+            (
+                Projection::cod(theta_a, 0.0),
+                Projection::cod(theta_a, 1e-8),
+            ),
+            (
+                Projection::coo(theta_a, 0.0),
+                Projection::coo(theta_a, 1e-8),
+            ),
         ];
         for (zero, small) in pairs {
             let a = zero.project(pt).unwrap();
             let b = small.project(pt).unwrap();
-            assert!((a.x_deg() - b.x_deg()).abs() < 1e-6,
-                "{:?}: x diverges at eta -> 0: {} vs {}", zero, a.x_deg(), b.x_deg());
-            assert!((a.y_deg() - b.y_deg()).abs() < 1e-6,
-                "{:?}: y diverges at eta -> 0: {} vs {}", zero, a.y_deg(), b.y_deg());
+            assert!(
+                (a.x_deg() - b.x_deg()).abs() < 1e-6,
+                "{:?}: x diverges at eta -> 0: {} vs {}",
+                zero,
+                a.x_deg(),
+                b.x_deg()
+            );
+            assert!(
+                (a.y_deg() - b.y_deg()).abs() < 1e-6,
+                "{:?}: y diverges at eta -> 0: {} vs {}",
+                zero,
+                a.y_deg(),
+                b.y_deg()
+            );
         }
     }
 }

@@ -321,7 +321,12 @@ mod tests {
         session.model.add_term("HDCH").unwrap();
         let seed = seed_terms_from_session(&session);
         for base in BASE_TERMS {
-            assert!(seed.iter().any(|t| t == base), "missing base {}: {:?}", base, seed);
+            assert!(
+                seed.iter().any(|t| t == base),
+                "missing base {}: {:?}",
+                base,
+                seed
+            );
         }
         assert!(seed.iter().any(|t| t == "HDCH"));
     }

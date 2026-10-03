@@ -8,8 +8,8 @@ pub mod linear;
 pub mod spherical;
 
 pub use builder::{CoordType, Wcs, WcsBuilder, WcsKeyword, WcsKeywordValue};
-pub use distortion::{DistortionModel, SipDistortion};
 pub use coordinate::{CelestialCoord, IntermediateCoord, NativeCoord, PixelCoord};
+pub use distortion::{DistortionModel, SipDistortion};
 pub use error::{WcsError, WcsResult};
 pub use header::{KeywordMap, KeywordProvider};
 pub use linear::LinearTransform;

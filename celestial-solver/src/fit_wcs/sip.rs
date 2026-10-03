@@ -100,30 +100,34 @@ pub struct SipSolution {
 /// let sip = fit_sip(&pairs, &wcs, 4)?;
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
-pub fn fit_sip(
-    pairs: &[StarPair],
-    wcs: &WcsSolution,
-    order: u32,
-) -> Result<SipSolution> {
+pub fn fit_sip(pairs: &[StarPair], wcs: &WcsSolution, order: u32) -> Result<SipSolution> {
     ensure!(order >= 2, "SIP order must be >= 2, got {}", order);
-    ensure!(pairs.len() >= 6, "need at least 6 pairs for SIP fit, got {}", pairs.len());
+    ensure!(
+        pairs.len() >= 6,
+        "need at least 6 pairs for SIP fit, got {}",
+        pairs.len()
+    );
 
     let terms = sip_monomial_terms(order);
     let n_terms = terms.len();
     ensure!(
         pairs.len() >= n_terms,
         "need at least {} pairs for order {} SIP, got {}",
-        n_terms, order, pairs.len()
+        n_terms,
+        order,
+        pairs.len()
     );
 
     let positions = compute_ideal_positions(pairs, wcs);
-    ensure!(positions.len() >= n_terms, "too few projectable stars for SIP fit");
+    ensure!(
+        positions.len() >= n_terms,
+        "too few projectable stars for SIP fit"
+    );
 
     let sip_weights: Vec<f64> = pairs
         .iter()
         .filter_map(|p| {
-            tan_project_star(p.ra_deg, p.dec_deg, wcs.crval1, wcs.crval2)
-                .map(|_| p.snr * p.snr)
+            tan_project_star(p.ra_deg, p.dec_deg, wcs.crval1, wcs.crval2).map(|_| p.snr * p.snr)
         })
         .collect();
 
@@ -136,21 +140,34 @@ pub fn fit_sip(
     let max_iters = 10;
     for iter in 0..max_iters {
         a_coeffs = solve_sip_coefficients(
-            &positions, &mask, &sip_weights, wcs.crpix1, wcs.crpix2, &terms, 0,
+            &positions,
+            &mask,
+            &sip_weights,
+            wcs.crpix1,
+            wcs.crpix2,
+            &terms,
+            0,
         )?;
         b_coeffs = solve_sip_coefficients(
-            &positions, &mask, &sip_weights, wcs.crpix1, wcs.crpix2, &terms, 1,
+            &positions,
+            &mask,
+            &sip_weights,
+            wcs.crpix1,
+            wcs.crpix2,
+            &terms,
+            1,
         )?;
 
         let errs = compute_sip_residuals(
-            &positions, &mask, wcs.crpix1, wcs.crpix2,
-            &a_coeffs, &b_coeffs,
+            &positions, &mask, wcs.crpix1, wcs.crpix2, &a_coeffs, &b_coeffs,
         );
 
         let mut sum_sr2 = 0.0_f64;
         let mut n_active = 0_usize;
         for (i, &e) in errs.iter().enumerate() {
-            if !mask[i] { continue; }
+            if !mask[i] {
+                continue;
+            }
             sum_sr2 += sip_weights[i] * e * e;
             n_active += 1;
         }
@@ -170,32 +187,64 @@ pub fn fit_sip(
 
         let n_active = mask.iter().filter(|&&m| m).count();
         let rms = libm::sqrt(
-            errs.iter().enumerate()
+            errs.iter()
+                .enumerate()
                 .filter(|(i, _)| mask[*i])
                 .map(|(_, &e)| e * e)
-                .sum::<f64>() / n_active.max(1) as f64
+                .sum::<f64>()
+                / n_active.max(1) as f64,
         );
         log::debug!(
             "fit_sip iter {}: {} stars, rms={:.4} px, rejected {}",
-            iter, n_active, rms, rejected,
+            iter,
+            n_active,
+            rms,
+            rejected,
         );
 
         if rejected == 0 {
             return build_sip_solution(
-                wcs, order, a_coeffs, b_coeffs,
-                &positions, &mask, &sip_weights, linear_rms,
+                wcs,
+                order,
+                a_coeffs,
+                b_coeffs,
+                &positions,
+                &mask,
+                &sip_weights,
+                linear_rms,
             );
         }
     }
 
     a_coeffs = solve_sip_coefficients(
-        &positions, &mask, &sip_weights, wcs.crpix1, wcs.crpix2, &terms, 0,
+        &positions,
+        &mask,
+        &sip_weights,
+        wcs.crpix1,
+        wcs.crpix2,
+        &terms,
+        0,
     )?;
     b_coeffs = solve_sip_coefficients(
-        &positions, &mask, &sip_weights, wcs.crpix1, wcs.crpix2, &terms, 1,
+        &positions,
+        &mask,
+        &sip_weights,
+        wcs.crpix1,
+        wcs.crpix2,
+        &terms,
+        1,
     )?;
 
-    build_sip_solution(wcs, order, a_coeffs, b_coeffs, &positions, &mask, &sip_weights, linear_rms)
+    build_sip_solution(
+        wcs,
+        order,
+        a_coeffs,
+        b_coeffs,
+        &positions,
+        &mask,
+        &sip_weights,
+        linear_rms,
+    )
 }
 
 fn sip_monomial_terms(order: u32) -> Vec<(u32, u32)> {
@@ -215,21 +264,22 @@ fn eval_sip_poly(coeffs: &HashMap<(u32, u32), f64>, u: f64, v: f64) -> f64 {
         .sum()
 }
 
-fn compute_ideal_positions(
-    pairs: &[StarPair],
-    wcs: &WcsSolution,
-) -> Vec<Position> {
+fn compute_ideal_positions(pairs: &[StarPair], wcs: &WcsSolution) -> Vec<Position> {
     pairs
         .iter()
         .filter_map(|p| {
-            let (xi_rad, eta_rad) =
-                tan_project_star(p.ra_deg, p.dec_deg, wcs.crval1, wcs.crval2)?;
+            let (xi_rad, eta_rad) = tan_project_star(p.ra_deg, p.dec_deg, wcs.crval1, wcs.crval2)?;
             let xi = xi_rad * RAD_TO_DEG;
             let eta = eta_rad * RAD_TO_DEG;
             let det = wcs.cd1_1 * wcs.cd2_2 - wcs.cd1_2 * wcs.cd2_1;
             let x_ideal = (wcs.cd2_2 * xi - wcs.cd1_2 * eta) / det + wcs.crpix1;
             let y_ideal = (-wcs.cd2_1 * xi + wcs.cd1_1 * eta) / det + wcs.crpix2;
-            Some(Position { px_x: p.px_x, px_y: p.px_y, x_ideal, y_ideal })
+            Some(Position {
+                px_x: p.px_x,
+                px_y: p.px_y,
+                x_ideal,
+                y_ideal,
+            })
         })
         .collect()
 }
@@ -261,7 +311,11 @@ fn solve_sip_coefficients(
         let w = weights[idx];
         let u = row.px_x - crpix1;
         let v = row.px_y - crpix2;
-        let residual = if axis == 0 { row.px_x - row.x_ideal } else { row.px_y - row.y_ideal };
+        let residual = if axis == 0 {
+            row.px_x - row.x_ideal
+        } else {
+            row.px_y - row.y_ideal
+        };
 
         let basis: Vec<f64> = terms
             .iter()
@@ -327,7 +381,9 @@ fn compute_linear_rms(positions: &[Position], mask: &[bool]) -> f64 {
         sum_sq += du * du + dv * dv;
         n += 1;
     }
-    if n == 0 { return 0.0; }
+    if n == 0 {
+        return 0.0;
+    }
     libm::sqrt(sum_sq / n as f64)
 }
 
@@ -343,23 +399,32 @@ fn build_sip_solution(
     linear_rms: f64,
 ) -> Result<SipSolution> {
     let errs = compute_sip_residuals(
-        positions, mask, wcs.crpix1, wcs.crpix2,
-        &a_coeffs, &b_coeffs,
+        positions, mask, wcs.crpix1, wcs.crpix2, &a_coeffs, &b_coeffs,
     );
     let mut n = 0_usize;
     let mut sum_sq = 0.0_f64;
     let mut sum_w = 0.0_f64;
     let mut sum_we2 = 0.0_f64;
     for (i, &e) in errs.iter().enumerate() {
-        if !mask[i] { continue; }
+        if !mask[i] {
+            continue;
+        }
         n += 1;
         sum_sq += e * e;
         let w = weights[i];
         sum_w += w;
         sum_we2 += w * e * e;
     }
-    let rms = if n > 0 { libm::sqrt(sum_sq / n as f64) } else { 0.0 };
-    let wrms = if sum_w > 0.0 { libm::sqrt(sum_we2 / sum_w) } else { 0.0 };
+    let rms = if n > 0 {
+        libm::sqrt(sum_sq / n as f64)
+    } else {
+        0.0
+    };
+    let wrms = if sum_w > 0.0 {
+        libm::sqrt(sum_we2 / sum_w)
+    } else {
+        0.0
+    };
 
     Ok(SipSolution {
         crpix1: wcs.crpix1,
@@ -385,8 +450,8 @@ fn build_sip_solution(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::solution::WcsSolution;
+    use super::*;
 
     fn sample_wcs() -> WcsSolution {
         WcsSolution {
@@ -412,7 +477,14 @@ mod tests {
     fn pair_at_pixel(wcs: &WcsSolution, px_x: f64, px_y: f64) -> StarPair {
         // Invert the WCS to get the sky position that would project exactly to (px_x, px_y).
         let (ra, dec) = wcs.pixel_to_sky(px_x, px_y);
-        StarPair { px_x, px_y, ra_deg: ra, dec_deg: dec, votes: 4, snr: 50.0 }
+        StarPair {
+            px_x,
+            px_y,
+            ra_deg: ra,
+            dec_deg: dec,
+            votes: 4,
+            snr: 50.0,
+        }
     }
 
     #[test]
@@ -502,20 +574,23 @@ mod tests {
         // For each undistorted pixel, compute its catalog sky position, then
         // create the pair with the distorted pixel but the same sky position.
         // That's what a real detection looks like when the optics warp positions.
-        let pairs: Vec<StarPair> = grid.iter().map(|&(u, v)| {
-            let ideal_x = u;
-            let ideal_y = v;
-            let (ra, dec) = wcs.pixel_to_sky(ideal_x, ideal_y);
-            let distorted_x = ideal_x + a20 * u * u;
-            StarPair {
-                px_x: distorted_x,
-                px_y: ideal_y,
-                ra_deg: ra,
-                dec_deg: dec,
-                votes: 4,
-                snr: 50.0,
-            }
-        }).collect();
+        let pairs: Vec<StarPair> = grid
+            .iter()
+            .map(|&(u, v)| {
+                let ideal_x = u;
+                let ideal_y = v;
+                let (ra, dec) = wcs.pixel_to_sky(ideal_x, ideal_y);
+                let distorted_x = ideal_x + a20 * u * u;
+                StarPair {
+                    px_x: distorted_x,
+                    px_y: ideal_y,
+                    ra_deg: ra,
+                    dec_deg: dec,
+                    votes: 4,
+                    snr: 50.0,
+                }
+            })
+            .collect();
 
         let sip = fit_sip(&pairs, &wcs, 2).unwrap();
         assert_eq!(sip.a_order, 2);
@@ -527,14 +602,16 @@ mod tests {
         assert!(
             (recovered - a20).abs() < 1e-10,
             "A_2_0 recovered as {:e}, expected {:e}",
-            recovered, a20
+            recovered,
+            a20
         );
 
         // SIP RMS should be much smaller than linear RMS
         assert!(
             sip.rms_px < sip.linear_rms_px,
             "rms {} should be < linear_rms {}",
-            sip.rms_px, sip.linear_rms_px
+            sip.rms_px,
+            sip.linear_rms_px
         );
     }
 }

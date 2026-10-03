@@ -47,7 +47,7 @@ impl Div<f64> for Angle {
 /// -Angle → Angle
 impl Neg for Angle {
     type Output = Self;
-    
+
     #[inline]
     fn neg(self) -> Self {
         Self::from_radians(-self.radians())

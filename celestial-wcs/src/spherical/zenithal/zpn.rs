@@ -83,7 +83,6 @@ fn solve_zpn_inverse(r: f64, coeffs: &[f64]) -> WcsResult<f64> {
     Ok(HALF_PI - s)
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -103,10 +102,8 @@ mod tests {
             (-30.0, 10.0),
             (120.0, -45.0),
         ] {
-            let native = NativeCoord::new(
-                Angle::from_degrees(phi_deg),
-                Angle::from_degrees(theta_deg),
-            );
+            let native =
+                NativeCoord::new(Angle::from_degrees(phi_deg), Angle::from_degrees(theta_deg));
 
             let zpn_inter = zpn.project(native).unwrap();
             let arc_inter = arc.project(native).unwrap();
@@ -136,10 +133,24 @@ mod tests {
                     );
                     let inter = proj.project(original).unwrap();
                     let recovered = proj.deproject(inter).unwrap();
-                    assert_ulp_lt!(original.phi().degrees(), recovered.phi().degrees(), *ulp,
-                        "phi (coeffs={:?}, phi={}, theta={})", coeffs, phi_deg, theta_deg);
-                    assert_ulp_lt!(original.theta().degrees(), recovered.theta().degrees(), *ulp,
-                        "theta (coeffs={:?}, phi={}, theta={})", coeffs, phi_deg, theta_deg);
+                    assert_ulp_lt!(
+                        original.phi().degrees(),
+                        recovered.phi().degrees(),
+                        *ulp,
+                        "phi (coeffs={:?}, phi={}, theta={})",
+                        coeffs,
+                        phi_deg,
+                        theta_deg
+                    );
+                    assert_ulp_lt!(
+                        original.theta().degrees(),
+                        recovered.theta().degrees(),
+                        *ulp,
+                        "theta (coeffs={:?}, phi={}, theta={})",
+                        coeffs,
+                        phi_deg,
+                        theta_deg
+                    );
                 }
             }
         }
@@ -154,7 +165,11 @@ mod tests {
 
         // Deproject: empty coefficients
         let err = deproject_zpn(IntermediateCoord::new(10.0, 10.0), &[]).unwrap_err();
-        assert!(matches!(err, WcsError::InvalidParameter { .. }), "empty: {:?}", err);
+        assert!(
+            matches!(err, WcsError::InvalidParameter { .. }),
+            "empty: {:?}",
+            err
+        );
 
         // Deproject: single (constant) coefficient — matching r maps to pole
         let r_deg = 0.5 * RAD_TO_DEG;
@@ -163,10 +178,18 @@ mod tests {
 
         // Deproject: single coefficient — non-matching r is out of bounds
         let err = deproject_zpn(IntermediateCoord::new(10.0, 10.0), &[0.5]).unwrap_err();
-        assert!(matches!(err, WcsError::OutOfBounds { .. }), "single mismatch: {:?}", err);
+        assert!(
+            matches!(err, WcsError::OutOfBounds { .. }),
+            "single mismatch: {:?}",
+            err
+        );
 
         // Deproject: derivative too small triggers convergence failure
         let err = deproject_zpn(IntermediateCoord::new(10.0, 10.0), &[0.5, 1e-20]).unwrap_err();
-        assert!(matches!(err, WcsError::ConvergenceFailure { .. }), "tiny deriv: {:?}", err);
+        assert!(
+            matches!(err, WcsError::ConvergenceFailure { .. }),
+            "tiny deriv: {:?}",
+            err
+        );
     }
 }

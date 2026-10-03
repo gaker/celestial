@@ -40,7 +40,8 @@ pub fn jd_from_image(img: &Image) -> Result<JulianDate, MetadataError> {
 
     let date_obs = img
         .get("DATE-OBS")
-        .as_str().map(|s| s.to_owned())
+        .as_str()
+        .map(|s| s.to_owned())
         .ok_or(MetadataError::MissingHeader("DATE-OBS or MJD-OBS"))?;
 
     let dt = parse_date_obs(img, &date_obs)?;
@@ -73,14 +74,14 @@ fn parse_date_obs(img: &Image, date_obs: &str) -> Result<NaiveDateTime, Metadata
         })?;
     let time = img
         .get("TIME-OBS")
-        .as_str().map(|s| s.to_owned())
+        .as_str()
+        .map(|s| s.to_owned())
         .ok_or(MetadataError::MissingTimeOfDay)?;
-    let t = NaiveTime::parse_from_str(&time, "%H:%M:%S%.f").map_err(|e| {
-        MetadataError::TimeParse {
+    let t =
+        NaiveTime::parse_from_str(&time, "%H:%M:%S%.f").map_err(|e| MetadataError::TimeParse {
             value: time,
             source: e,
-        }
-    })?;
+        })?;
     Ok(date.and_time(t))
 }
 
@@ -109,7 +110,13 @@ mod tests {
         img.set_keyword(Keyword::string("MJD-OBS", "bogus"));
         let err = jd_from_image(&img).unwrap_err();
         assert!(
-            matches!(err, MetadataError::InvalidHeaderType { keyword: "MJD-OBS", .. }),
+            matches!(
+                err,
+                MetadataError::InvalidHeaderType {
+                    keyword: "MJD-OBS",
+                    ..
+                }
+            ),
             "unexpected error: {err}"
         );
     }

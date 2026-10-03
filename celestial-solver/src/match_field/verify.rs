@@ -122,7 +122,14 @@ mod tests {
     use celestial_catalog::query::tan_deproject_star;
 
     fn pair(px: f64, py: f64, ra: f64, dec: f64) -> StarPair {
-        StarPair { px_x: px, px_y: py, ra_deg: ra, dec_deg: dec, votes: 2, snr: 10.0 }
+        StarPair {
+            px_x: px,
+            px_y: py,
+            ra_deg: ra,
+            dec_deg: dec,
+            votes: 2,
+            snr: 10.0,
+        }
     }
 
     #[test]
@@ -186,9 +193,9 @@ mod tests {
     fn count_affine_inliers_excludes_far_points() {
         // Identity maps px→xi, py→eta. Any offset in xi/eta shows up equally in pixel units.
         let pts = vec![
-            (0.0, 0.0, 0.0, 0.0),                // on-model → in
-            (10.0, 0.0, 10.0, 0.0),               // on-model → in
-            (20.0, 0.0, 20.0 + 5.0, 0.0),         // 5-px offset → out at threshold 1.0
+            (0.0, 0.0, 0.0, 0.0),         // on-model → in
+            (10.0, 0.0, 10.0, 0.0),       // on-model → in
+            (20.0, 0.0, 20.0 + 5.0, 0.0), // 5-px offset → out at threshold 1.0
         ];
         let identity = [1.0, 0.0, 0.0, 0.0, 1.0, 0.0];
         assert_eq!(count_affine_inliers(&pts, &identity, 1.0), 2);
@@ -242,6 +249,9 @@ mod tests {
         ];
         let score = verify_pairs(&pairs, 180.0, 30.0);
         // Fixed RNG, so this is deterministic. Scrambled → score below inlier ceiling.
-        assert!(score < pairs.len(), "scrambled pairs should not all be inliers; got {score}");
+        assert!(
+            score < pairs.len(),
+            "scrambled pairs should not all be inliers; got {score}"
+        );
     }
 }

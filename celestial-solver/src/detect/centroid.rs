@@ -10,11 +10,11 @@ pub fn centroid_region<T: Pixel>(
     min_snr: f64,
     allow_clustered: bool,
 ) -> Option<DetectedStar> {
-    let (local_bg, noise) = iterative_local_background(
-        image, width, height, region,
-    );
+    let (local_bg, noise) = iterative_local_background(image, width, height, region);
 
-    let has_saturated = region.pixels.iter()
+    let has_saturated = region
+        .pixels
+        .iter()
         .any(|&(px, py)| image[py * width + px].to_f64() >= saturation_limit);
 
     if !allow_clustered && !has_saturated && region.pixels.len() > 20 {
@@ -30,17 +30,14 @@ pub fn centroid_region<T: Pixel>(
         return None;
     }
 
-    let (cx, cy, weight) = thresholded_barycenter(
-        image, width, region, local_bg,
-    );
+    let (cx, cy, weight) = thresholded_barycenter(image, width, region, local_bg);
     if weight <= 0.0 {
         log::warn!("[centroid] REJECT zero weight npix={}", region.pixels.len());
         return None;
     }
 
-    let (flux, saturated, saturated_count) = measure_region(
-        image, width, region, local_bg, saturation_limit,
-    );
+    let (flux, saturated, saturated_count) =
+        measure_region(image, width, region, local_bg, saturation_limit);
 
     Some(DetectedStar {
         x: cx,
@@ -63,9 +60,7 @@ fn iterative_local_background<T: Pixel>(
     let mut prev_median = f64::NAN;
 
     for _ in 0..200 {
-        let samples = sample_annular_frame(
-            image, width, height, region, inflate,
-        );
+        let samples = sample_annular_frame(image, width, height, region, inflate);
         if samples.is_empty() {
             break;
         }
@@ -85,9 +80,7 @@ fn iterative_local_background<T: Pixel>(
     }
 
     if prev_median.is_finite() {
-        let samples = sample_annular_frame(
-            image, width, height, region, inflate.saturating_sub(1),
-        );
+        let samples = sample_annular_frame(image, width, height, region, inflate.saturating_sub(1));
         let mad = if samples.is_empty() {
             1.0
         } else {
@@ -246,10 +239,7 @@ fn thresholded_barycenter<T: Pixel>(
     }
 }
 
-fn flux_weighted_center(
-    values: &[f64],
-    coords: &[(usize, usize)],
-) -> (f64, f64, f64) {
+fn flux_weighted_center(values: &[f64], coords: &[(usize, usize)]) -> (f64, f64, f64) {
     let mut sum_x = 0.0_f64;
     let mut sum_y = 0.0_f64;
     let mut sum_w = 0.0_f64;
@@ -381,8 +371,16 @@ mod tests {
         let star = centroid_region(&image, w, h, &regions[0], f64::INFINITY, 5.0, false);
         assert!(star.is_some());
         let star = star.unwrap();
-        assert!((star.x - true_x).abs() < 0.5, "cx={}, expected ~{true_x}", star.x);
-        assert!((star.y - true_y).abs() < 0.5, "cy={}, expected ~{true_y}", star.y);
+        assert!(
+            (star.x - true_x).abs() < 0.5,
+            "cx={}, expected ~{true_x}",
+            star.x
+        );
+        assert!(
+            (star.y - true_y).abs() < 0.5,
+            "cy={}, expected ~{true_y}",
+            star.y
+        );
     }
 
     #[test]
@@ -392,7 +390,9 @@ mod tests {
         let mut image = gaussian_image(w, h, 64.0, 64.0, 50.0, 2.0, 100.0);
         let mut rng_state = 12345_u64;
         for px in &mut image {
-            rng_state = rng_state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            rng_state = rng_state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
             let noise = ((rng_state >> 33) as f64 / u32::MAX as f64 - 0.5) * 20.0;
             *px += noise as f32;
         }

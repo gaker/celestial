@@ -8,7 +8,10 @@ pub struct Timer {
 
 impl Timer {
     fn new() -> Self {
-        Self { start: None, elapsed: Duration::ZERO }
+        Self {
+            start: None,
+            elapsed: Duration::ZERO,
+        }
     }
 
     pub fn start(&mut self) {
@@ -51,10 +54,11 @@ impl Timings {
     }
 
     fn total(&self) -> Timer {
-        let elapsed = self.open.elapsed
-            + self.solve.elapsed
-            + self.save.elapsed;
-        Timer { start: None, elapsed }
+        let elapsed = self.open.elapsed + self.solve.elapsed + self.save.elapsed;
+        Timer {
+            start: None,
+            elapsed,
+        }
     }
 }
 

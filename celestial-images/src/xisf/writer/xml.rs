@@ -1,14 +1,14 @@
 use super::{PropertyDataBlock, XisfWriter};
 use crate::fits::header::KeywordValue;
-use crate::xisf::header::{format_geometry_with_channels, ImageInfo, PixelStorage, XisfPropertyValue};
+use crate::xisf::header::{
+    format_geometry_with_channels, ImageInfo, PixelStorage, XisfPropertyValue,
+};
 use crate::xisf::{Result, XisfError};
 use quick_xml::events::{BytesDecl, BytesEnd, BytesStart, BytesText, Event};
 use quick_xml::Writer;
 use std::io::{Cursor, Seek, Write};
 
-pub(super) fn generate_xml_content<W: Write + Seek>(
-    state: &XisfWriter<W>,
-) -> Result<Vec<u8>> {
+pub(super) fn generate_xml_content<W: Write + Seek>(state: &XisfWriter<W>) -> Result<Vec<u8>> {
     let mut buffer = Cursor::new(Vec::new());
     let mut writer = Writer::new_with_indent(&mut buffer, b' ', 2);
 
@@ -324,35 +324,59 @@ mod tests {
 
     #[test]
     fn fits_keyword_logical_renders_as_t_or_f() {
-        assert_eq!(keyword_value_to_string(&Some(KeywordValue::Logical(true))), "T");
-        assert_eq!(keyword_value_to_string(&Some(KeywordValue::Logical(false))), "F");
+        assert_eq!(
+            keyword_value_to_string(&Some(KeywordValue::Logical(true))),
+            "T"
+        );
+        assert_eq!(
+            keyword_value_to_string(&Some(KeywordValue::Logical(false))),
+            "F"
+        );
     }
 
     #[test]
     fn fits_keyword_integer_renders_as_decimal_string() {
-        assert_eq!(keyword_value_to_string(&Some(KeywordValue::Integer(42))), "42");
-        assert_eq!(keyword_value_to_string(&Some(KeywordValue::Integer(-7))), "-7");
+        assert_eq!(
+            keyword_value_to_string(&Some(KeywordValue::Integer(42))),
+            "42"
+        );
+        assert_eq!(
+            keyword_value_to_string(&Some(KeywordValue::Integer(-7))),
+            "-7"
+        );
     }
 
     #[test]
     fn fits_keyword_real_keeps_decimal_when_already_present() {
-        assert_eq!(keyword_value_to_string(&Some(KeywordValue::Real(1.25))), "1.25");
+        assert_eq!(
+            keyword_value_to_string(&Some(KeywordValue::Real(1.25))),
+            "1.25"
+        );
     }
 
     #[test]
     fn fits_keyword_real_preserves_decimal_for_whole_numbers() {
-        assert_eq!(keyword_value_to_string(&Some(KeywordValue::Real(5.0))), "5.0");
-        assert_eq!(keyword_value_to_string(&Some(KeywordValue::Real(-12.0))), "-12.0");
-        assert_eq!(keyword_value_to_string(&Some(KeywordValue::Real(0.0))), "0.0");
+        assert_eq!(
+            keyword_value_to_string(&Some(KeywordValue::Real(5.0))),
+            "5.0"
+        );
+        assert_eq!(
+            keyword_value_to_string(&Some(KeywordValue::Real(-12.0))),
+            "-12.0"
+        );
+        assert_eq!(
+            keyword_value_to_string(&Some(KeywordValue::Real(0.0))),
+            "0.0"
+        );
     }
 
     #[test]
     fn fits_keyword_real_roundtrips_through_parse() {
         for v in [0.1, -1.5, 1234.5, 1.0e-10, 1.234567890123456e-9] {
             let rendered = keyword_value_to_string(&Some(KeywordValue::Real(v)));
-            let parsed: f64 = rendered.parse().unwrap_or_else(|_| {
-                panic!("could not reparse '{rendered}' (from {v})")
-            });
+            let parsed: f64 = rendered
+                .parse()
+                .unwrap_or_else(|_| panic!("could not reparse '{rendered}' (from {v})"));
             assert_eq!(parsed, v);
         }
     }
@@ -493,6 +517,9 @@ mod tests {
             }
         }
         // First match is the Image location, remaining are property locations.
-        assert!(locations.len() >= 3, "expected Image + 2 property locations, got {locations:?}");
+        assert!(
+            locations.len() >= 3,
+            "expected Image + 2 property locations, got {locations:?}"
+        );
     }
 }

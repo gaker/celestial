@@ -186,10 +186,7 @@ mod tests {
     fn elimination_groups_deduplicates_when_both_pair_members_seen() {
         // Even with multiple pair declarations, each name should only appear once.
         let active = s(&["IH", "ID", "CH", "NP", "MA", "ME", "HDSH", "HDCH"]);
-        let groups = elimination_groups(
-            &active,
-            &[pair("HDSH", "HDCH"), pair("HDCH", "HDSH")],
-        );
+        let groups = elimination_groups(&active, &[pair("HDSH", "HDCH"), pair("HDCH", "HDSH")]);
         assert_eq!(groups.len(), 1);
     }
 

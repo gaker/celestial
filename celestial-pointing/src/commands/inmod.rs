@@ -67,7 +67,12 @@ mod tests {
     fn write_tmp(contents: &str, tag: &str) -> PathBuf {
         let n = SEQ.fetch_add(1, Ordering::Relaxed);
         let mut path = std::env::temp_dir();
-        path.push(format!("celpoint-inmod-{}-{}-{}.mod", tag, std::process::id(), n));
+        path.push(format!(
+            "celpoint-inmod-{}-{}-{}.mod",
+            tag,
+            std::process::id(),
+            n
+        ));
         std::fs::write(&path, contents).expect("write temp model");
         path
     }

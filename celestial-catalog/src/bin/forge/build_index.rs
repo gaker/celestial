@@ -356,7 +356,12 @@ struct StatsInputs<'a> {
 
 fn compute_stats(inputs: StatsInputs<'_>) -> anyhow::Result<IndexStats> {
     let total_after: u64 = inputs.final_counts.iter().map(|&c| c as u64).sum();
-    let non_empty: Vec<u32> = inputs.final_counts.iter().copied().filter(|&c| c > 0).collect();
+    let non_empty: Vec<u32> = inputs
+        .final_counts
+        .iter()
+        .copied()
+        .filter(|&c| c > 0)
+        .collect();
     let empty_pixels = inputs.npix - non_empty.len() as u64;
     let (min_stars, max_stars) = if non_empty.is_empty() {
         (0, 0)

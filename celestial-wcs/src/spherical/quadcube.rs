@@ -463,24 +463,26 @@ mod tests {
         let proj = Projection::tsc();
         for phi_deg in [-135.0, -90.0, -45.0, 0.0, 45.0, 90.0, 135.0] {
             for theta_deg in [-60.0, -30.0, 0.0, 30.0, 60.0] {
-                let original = NativeCoord::new(
-                    Angle::from_degrees(phi_deg),
-                    Angle::from_degrees(theta_deg),
-                );
+                let original =
+                    NativeCoord::new(Angle::from_degrees(phi_deg), Angle::from_degrees(theta_deg));
                 let inter = proj.project(original).unwrap();
                 let recovered = proj.deproject(inter).unwrap();
                 assert!(
                     (original.phi().degrees() - recovered.phi().degrees()).abs() < 1e-8
                         || (original.phi().degrees().abs() - 180.0).abs() < 1e-8,
                     "phi mismatch at ({}, {}): {} vs {}",
-                    phi_deg, theta_deg,
-                    original.phi().degrees(), recovered.phi().degrees(),
+                    phi_deg,
+                    theta_deg,
+                    original.phi().degrees(),
+                    recovered.phi().degrees(),
                 );
                 assert!(
                     (original.theta().degrees() - recovered.theta().degrees()).abs() < 1e-8,
                     "theta mismatch at ({}, {}): {} vs {}",
-                    phi_deg, theta_deg,
-                    original.theta().degrees(), recovered.theta().degrees(),
+                    phi_deg,
+                    theta_deg,
+                    original.theta().degrees(),
+                    recovered.theta().degrees(),
                 );
             }
         }
@@ -493,19 +495,21 @@ mod tests {
         let proj = Projection::csc();
         for phi_deg in [-90.0, -45.0, 0.0, 45.0, 90.0] {
             for theta_deg in [-60.0, -30.0, 0.0, 30.0, 60.0] {
-                let original = NativeCoord::new(
-                    Angle::from_degrees(phi_deg),
-                    Angle::from_degrees(theta_deg),
-                );
+                let original =
+                    NativeCoord::new(Angle::from_degrees(phi_deg), Angle::from_degrees(theta_deg));
                 let inter = proj.project(original).unwrap();
                 let recovered = proj.deproject(inter).unwrap();
                 assert!(
                     (original.phi().degrees() - recovered.phi().degrees()).abs() < 0.01,
-                    "phi at ({}, {})", phi_deg, theta_deg,
+                    "phi at ({}, {})",
+                    phi_deg,
+                    theta_deg,
                 );
                 assert!(
                     (original.theta().degrees() - recovered.theta().degrees()).abs() < 0.01,
-                    "theta at ({}, {})", phi_deg, theta_deg,
+                    "theta at ({}, {})",
+                    phi_deg,
+                    theta_deg,
                 );
             }
         }
@@ -516,19 +520,21 @@ mod tests {
         let proj = Projection::qsc();
         for phi_deg in [-90.0, -45.0, 0.0, 45.0, 90.0] {
             for theta_deg in [-60.0, -30.0, 0.0, 30.0, 60.0] {
-                let original = NativeCoord::new(
-                    Angle::from_degrees(phi_deg),
-                    Angle::from_degrees(theta_deg),
-                );
+                let original =
+                    NativeCoord::new(Angle::from_degrees(phi_deg), Angle::from_degrees(theta_deg));
                 let inter = proj.project(original).unwrap();
                 let recovered = proj.deproject(inter).unwrap();
                 assert!(
                     (original.phi().degrees() - recovered.phi().degrees()).abs() < 1e-6,
-                    "phi at ({}, {})", phi_deg, theta_deg,
+                    "phi at ({}, {})",
+                    phi_deg,
+                    theta_deg,
                 );
                 assert!(
                     (original.theta().degrees() - recovered.theta().degrees()).abs() < 1e-6,
-                    "theta at ({}, {})", phi_deg, theta_deg,
+                    "theta at ({}, {})",
+                    phi_deg,
+                    theta_deg,
                 );
             }
         }
@@ -556,17 +562,24 @@ mod tests {
             (Projection::qsc(), "QSC"),
         ] {
             for sign in [1.0, -1.0] {
-                let native = NativeCoord::new(
-                    Angle::from_degrees(0.0),
-                    Angle::from_degrees(90.0 * sign),
-                );
+                let native =
+                    NativeCoord::new(Angle::from_degrees(0.0), Angle::from_degrees(90.0 * sign));
                 let inter = proj.project(native).unwrap();
                 assert!(
                     inter.x_deg().abs() < 1e-10,
-                    "{} pole x not 0 (sign={}): {}", name, sign, inter.x_deg(),
+                    "{} pole x not 0 (sign={}): {}",
+                    name,
+                    sign,
+                    inter.x_deg(),
                 );
-                assert_ulp_lt!(inter.y_deg(), 90.0 * sign, 2,
-                    "{} pole y (sign={})", name, sign);
+                assert_ulp_lt!(
+                    inter.y_deg(),
+                    90.0 * sign,
+                    2,
+                    "{} pole y (sign={})",
+                    name,
+                    sign
+                );
             }
         }
     }

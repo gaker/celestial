@@ -14,27 +14,19 @@ impl RandomGroupsHdu {
     }
 
     pub fn group_count(&self) -> Option<i64> {
-        self.header
-            .get("GCOUNT")
-            .as_i64()
+        self.header.get("GCOUNT").as_i64()
     }
 
     pub fn parameter_count(&self) -> Option<i64> {
-        self.header
-            .get("PCOUNT")
-            .as_i64()
+        self.header.get("PCOUNT").as_i64()
     }
 
     pub fn extension_name(&self) -> Option<&str> {
-        self.header
-            .get("EXTNAME")
-            .as_str()
+        self.header.get("EXTNAME").as_str()
     }
 
     pub fn extension_version(&self) -> Option<i64> {
-        self.header
-            .get("EXTVER")
-            .as_i64()
+        self.header.get("EXTVER").as_i64()
     }
 }
 
@@ -108,9 +100,7 @@ mod tests {
         let hdu = RandomGroupsHdu::new(header, info);
 
         let header_ref = hdu.header();
-        assert!(header_ref
-            .get("SIMPLE").as_bool()
-            .unwrap());
+        assert!(header_ref.get("SIMPLE").as_bool().unwrap());
     }
 
     #[test]

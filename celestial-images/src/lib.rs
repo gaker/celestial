@@ -4,8 +4,8 @@ pub mod fits;
 pub mod formats;
 pub mod ricecomp;
 pub mod ser;
-pub mod xisf;
 pub mod stretch;
+pub mod xisf;
 
 pub use core::{BitPix, ByteOrder, ImageError, Result};
 pub use debayer::{debayer_bilinear_u16, debayer_bilinear_u8, BayerPattern};
@@ -15,7 +15,7 @@ pub use fits::{
 };
 pub use formats::{AstroImage, Image, ImageFormat, ImageKind, PixelData};
 pub use ser::{SerError, SerFile, SerHeader, SerReader, SerWriter};
-pub use stretch::{Stretch, StfParams};
+pub use stretch::{StfParams, Stretch};
 pub use xisf::{XisfError, XisfFile};
 
 #[cfg(test)]

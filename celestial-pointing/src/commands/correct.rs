@@ -11,7 +11,7 @@ impl Command for Correct {
     fn name(&self) -> &str {
         "CORRECT"
     }
-    
+
     fn description(&self) -> &str {
         "Compute actual sky position from encoder reading"
     }

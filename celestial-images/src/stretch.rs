@@ -30,9 +30,7 @@ impl Stretch for Image {
             return Err(ImageError::UnsupportedFormat);
         }
         let channels = self.channels();
-        let stretched = apply_per_channel_f64(&data, channels, |ch| {
-            apply_stf(ch, params)
-        });
+        let stretched = apply_per_channel_f64(&data, channels, |ch| apply_stf(ch, params));
         let mut img = Self::new(PixelData::F64(stretched), self.dimensions.clone());
         img.keywords = self.keywords.clone();
         Ok(img)
@@ -69,11 +67,7 @@ fn apply_per_channel_f64(
     }
     let pixel_count = data.len() / channels;
     let mut channel_bufs: Vec<Vec<f64>> = (0..channels)
-        .map(|ch| {
-            (0..pixel_count)
-                .map(|i| data[i * channels + ch])
-                .collect()
-        })
+        .map(|ch| (0..pixel_count).map(|i| data[i * channels + ch]).collect())
         .collect();
     for buf in &mut channel_bufs {
         *buf = f(buf);
@@ -87,11 +81,7 @@ fn apply_per_channel_f64(
     result
 }
 
-fn apply_per_channel_f32_mut(
-    data: &mut [f32],
-    channels: usize,
-    f: impl Fn(&mut [f32]),
-) {
+fn apply_per_channel_f32_mut(data: &mut [f32], channels: usize, f: impl Fn(&mut [f32])) {
     if channels <= 1 {
         f(data);
         return;
@@ -194,10 +184,7 @@ pub fn mad_normalize(image: &mut [f32]) {
     let mut sorted: Vec<f32> = image.to_vec();
     sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(Ordering::Equal));
     let median = sorted[len / 2];
-    let mut deviations: Vec<f32> = image
-        .iter()
-        .map(|&x| libm::fabsf(x - median))
-        .collect();
+    let mut deviations: Vec<f32> = image.iter().map(|&x| libm::fabsf(x - median)).collect();
     deviations.sort_by(|a, b| a.partial_cmp(b).unwrap_or(Ordering::Equal));
     let mad = deviations[len / 2];
     let sigma = (mad * 1.4826).max(1e-10);
@@ -318,12 +305,7 @@ mod tests {
         image[9999] = 1.0;
         let result = apply_stf(&image, &StfParams::default());
         for (i, &v) in result.iter().enumerate() {
-            assert!(
-                (0.0..=1.0).contains(&v),
-                "pixel {} out of range: {}",
-                i,
-                v
-            );
+            assert!((0.0..=1.0).contains(&v), "pixel {} out of range: {}", i, v);
         }
     }
 
@@ -463,18 +445,14 @@ mod tests {
     #[test]
     fn per_channel_f64_mono_passthrough() {
         let data = vec![1.0, 2.0, 3.0];
-        let result = apply_per_channel_f64(&data, 1, |ch| {
-            ch.iter().map(|&v| v * 2.0).collect()
-        });
+        let result = apply_per_channel_f64(&data, 1, |ch| ch.iter().map(|&v| v * 2.0).collect());
         assert_eq!(result, vec![2.0, 4.0, 6.0]);
     }
 
     #[test]
     fn per_channel_f64_rgb_splits_correctly() {
         let data = vec![1.0, 10.0, 100.0, 2.0, 20.0, 200.0];
-        let result = apply_per_channel_f64(&data, 3, |ch| {
-            ch.iter().map(|&v| v * 2.0).collect()
-        });
+        let result = apply_per_channel_f64(&data, 3, |ch| ch.iter().map(|&v| v * 2.0).collect());
         assert_eq!(result, vec![2.0, 20.0, 200.0, 4.0, 40.0, 400.0]);
     }
 

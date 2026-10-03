@@ -1,7 +1,7 @@
 use super::Image;
 use crate::core::{ImageError, Result};
 use crate::formats::pixel_data::PixelData;
-use crate::xisf::writer::{XisfWriter, wcs_to_xisf_properties};
+use crate::xisf::writer::{wcs_to_xisf_properties, XisfWriter};
 use celestial_wcs::{WcsKeyword, WcsKeywordValue};
 use std::path::Path;
 
@@ -155,10 +155,7 @@ mod tests {
     use crate::fits::header::Keyword;
 
     fn tmp_xisf() -> tempfile::NamedTempFile {
-        tempfile::Builder::new()
-            .suffix(".xisf")
-            .tempfile()
-            .unwrap()
+        tempfile::Builder::new().suffix(".xisf").tempfile().unwrap()
     }
 
     #[test]
@@ -232,7 +229,9 @@ mod tests {
         let restored = Image::open(tmp.path()).unwrap();
         assert_eq!(
             restored.get_keyword("OBJECT").unwrap().value,
-            Some(crate::fits::header::KeywordValue::String("NGC1234".to_string()))
+            Some(crate::fits::header::KeywordValue::String(
+                "NGC1234".to_string()
+            ))
         );
     }
 

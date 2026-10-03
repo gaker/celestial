@@ -111,7 +111,12 @@ impl WcsSolution {
         let v = px_y - self.crpix2;
         let xi_deg = self.cd1_1 * u + self.cd1_2 * v;
         let eta_deg = self.cd2_1 * u + self.cd2_2 * v;
-        tan_deproject_star(xi_deg * DEG_TO_RAD, eta_deg * DEG_TO_RAD, self.crval1, self.crval2)
+        tan_deproject_star(
+            xi_deg * DEG_TO_RAD,
+            eta_deg * DEG_TO_RAD,
+            self.crval1,
+            self.crval2,
+        )
     }
 
     /// Transforms sky coordinates to pixel coordinates.
@@ -239,7 +244,8 @@ impl WcsSolution {
         if self.residuals.is_empty() {
             return (0.0, 0.0);
         }
-        let mut distances: Vec<(usize, f64)> = self.residuals
+        let mut distances: Vec<(usize, f64)> = self
+            .residuals
             .iter()
             .enumerate()
             .map(|(i, r)| {
@@ -272,8 +278,15 @@ impl WcsSolution {
         for (label, px, py) in &corners {
             let (ra, dec) = self.pixel_to_sky(*px, *py);
             let (ex, ey) = self.nearest_residual(*px, *py, 5);
-            writeln!(f, "   {:<17} RA: {}  Dec: {}  ex: {:+.6} px  ey: {:+.6} px",
-                label, fmt_ra(ra), fmt_dec(dec), ex, ey)?;
+            writeln!(
+                f,
+                "   {:<17} RA: {}  Dec: {}  ex: {:+.6} px  ey: {:+.6} px",
+                label,
+                fmt_ra(ra),
+                fmt_dec(dec),
+                ex,
+                ey
+            )?;
         }
         Ok(())
     }
@@ -336,7 +349,12 @@ mod tests {
     #[test]
     fn pixel_sky_round_trip_recovers_input() {
         let wcs = sample_wcs();
-        let test_points = [(1024.0, 768.0), (1100.0, 800.0), (900.0, 700.0), (1024.0, 900.0)];
+        let test_points = [
+            (1024.0, 768.0),
+            (1100.0, 800.0),
+            (900.0, 700.0),
+            (1024.0, 900.0),
+        ];
         for (px_x, px_y) in test_points {
             let (ra, dec) = wcs.pixel_to_sky(px_x, px_y);
             let (px_x2, px_y2) = wcs.sky_to_pixel(ra, dec).unwrap();
@@ -444,9 +462,27 @@ mod tests {
     fn nearest_residual_averages_k_nearest_errors() {
         let mut wcs = sample_wcs();
         wcs.residuals = vec![
-            StarResidual { px_x: 100.0, px_y: 100.0, err_x: 1.0, err_y: 0.0, err_px: 1.0 },
-            StarResidual { px_x: 200.0, px_y: 100.0, err_x: 0.0, err_y: 2.0, err_px: 2.0 },
-            StarResidual { px_x: 500.0, px_y: 500.0, err_x: 100.0, err_y: 100.0, err_px: 141.4 },
+            StarResidual {
+                px_x: 100.0,
+                px_y: 100.0,
+                err_x: 1.0,
+                err_y: 0.0,
+                err_px: 1.0,
+            },
+            StarResidual {
+                px_x: 200.0,
+                px_y: 100.0,
+                err_x: 0.0,
+                err_y: 2.0,
+                err_px: 2.0,
+            },
+            StarResidual {
+                px_x: 500.0,
+                px_y: 500.0,
+                err_x: 100.0,
+                err_y: 100.0,
+                err_px: 141.4,
+            },
         ];
         // Query near the first two residuals; k=2 should exclude the far one
         let (ex, ey) = wcs.nearest_residual(150.0, 100.0, 2);
@@ -467,7 +503,11 @@ mod tests {
     fn nearest_residual_clamps_k_to_available_count() {
         let mut wcs = sample_wcs();
         wcs.residuals = vec![StarResidual {
-            px_x: 0.0, px_y: 0.0, err_x: 4.0, err_y: 6.0, err_px: 7.2,
+            px_x: 0.0,
+            px_y: 0.0,
+            err_x: 4.0,
+            err_y: 6.0,
+            err_px: 7.2,
         }];
         // request 10 nearest but only 1 exists
         let (ex, ey) = wcs.nearest_residual(0.0, 0.0, 10);

@@ -361,7 +361,8 @@ mod tests {
     fn add_image_with_bounds_uses_explicit_bounds() {
         let data: Vec<f32> = vec![0.5; 4];
         let mut w = XisfWriter::new(Cursor::new(Vec::new()));
-        w.add_image_with_bounds(&data, 2, 2, 1, (-10.0, 10.0)).unwrap();
+        w.add_image_with_bounds(&data, 2, 2, 1, (-10.0, 10.0))
+            .unwrap();
         let bytes = w.write_to_vec().unwrap();
         let reader = XisfFile::new(Cursor::new(bytes)).unwrap();
         assert_eq!(reader.image_info(0).unwrap().bounds, (-10.0, 10.0));

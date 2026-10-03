@@ -29,7 +29,12 @@ pub fn estimate_background<T: Pixel>(
     let mesh = build_mesh(image, width, height, mesh_size, cols, rows);
     let map = interpolate_mesh(&mesh, width, height, mesh_size, cols, rows);
     let noise = estimate_noise(image, &map);
-    BackgroundMap { map, noise, width, height }
+    BackgroundMap {
+        map,
+        noise,
+        width,
+        height,
+    }
 }
 
 fn build_mesh<T: Pixel>(
@@ -42,32 +47,34 @@ fn build_mesh<T: Pixel>(
 ) -> Vec<f64> {
     let mut mesh = vec![0.0_f64; rows * cols];
 
-    mesh.par_chunks_mut(cols).enumerate().for_each(|(row, mesh_row)| {
-        let y0 = row * mesh_size;
-        let y1 = (y0 + mesh_size).min(height);
-        let mut cell_buf: Vec<f64> = Vec::with_capacity(mesh_size * mesh_size);
+    mesh.par_chunks_mut(cols)
+        .enumerate()
+        .for_each(|(row, mesh_row)| {
+            let y0 = row * mesh_size;
+            let y1 = (y0 + mesh_size).min(height);
+            let mut cell_buf: Vec<f64> = Vec::with_capacity(mesh_size * mesh_size);
 
-        for (col, cell) in mesh_row.iter_mut().enumerate() {
-            let x0 = col * mesh_size;
-            let x1 = (x0 + mesh_size).min(width);
+            for (col, cell) in mesh_row.iter_mut().enumerate() {
+                let x0 = col * mesh_size;
+                let x1 = (x0 + mesh_size).min(width);
 
-            cell_buf.clear();
-            for y in y0..y1 {
-                for x in x0..x1 {
-                    let v = image[y * width + x].to_f64();
-                    if v.is_finite() {
-                        cell_buf.push(v);
+                cell_buf.clear();
+                for y in y0..y1 {
+                    for x in x0..x1 {
+                        let v = image[y * width + x].to_f64();
+                        if v.is_finite() {
+                            cell_buf.push(v);
+                        }
                     }
                 }
-            }
 
-            *cell = if cell_buf.is_empty() {
-                0.0
-            } else {
-                median(&mut cell_buf)
-            };
-        }
-    });
+                *cell = if cell_buf.is_empty() {
+                    0.0
+                } else {
+                    median(&mut cell_buf)
+                };
+            }
+        });
     mesh
 }
 
@@ -83,26 +90,24 @@ fn interpolate_mesh(
     let inv_mesh = 1.0 / mesh_size as f64;
     let mut map = vec![0.0_f64; width * height];
 
-    map.par_chunks_mut(width)
-        .enumerate()
-        .for_each(|(y, row)| {
-            let fy = (y as f64 - half + 0.5) * inv_mesh;
-            let (ry, ty) = clamp_grid(fy, rows);
+    map.par_chunks_mut(width).enumerate().for_each(|(y, row)| {
+        let fy = (y as f64 - half + 0.5) * inv_mesh;
+        let (ry, ty) = clamp_grid(fy, rows);
 
-            for (x, cell) in row.iter_mut().enumerate() {
-                let fx = (x as f64 - half + 0.5) * inv_mesh;
-                let (rx, tx) = clamp_grid(fx, cols);
+        for (x, cell) in row.iter_mut().enumerate() {
+            let fx = (x as f64 - half + 0.5) * inv_mesh;
+            let (rx, tx) = clamp_grid(fx, cols);
 
-                let v00 = mesh[ry * cols + rx];
-                let v10 = mesh[ry * cols + rx + 1];
-                let v01 = mesh[(ry + 1) * cols + rx];
-                let v11 = mesh[(ry + 1) * cols + rx + 1];
+            let v00 = mesh[ry * cols + rx];
+            let v10 = mesh[ry * cols + rx + 1];
+            let v01 = mesh[(ry + 1) * cols + rx];
+            let v11 = mesh[(ry + 1) * cols + rx + 1];
 
-                let top = v00 + tx * (v10 - v00);
-                let bot = v01 + tx * (v11 - v01);
-                *cell = top + ty * (bot - top);
-            }
-        });
+            let top = v00 + tx * (v10 - v00);
+            let bot = v01 + tx * (v11 - v01);
+            *cell = top + ty * (bot - top);
+        }
+    });
     map
 }
 

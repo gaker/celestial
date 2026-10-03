@@ -449,10 +449,7 @@ impl<R: Read + Seek> FitsFile<R> {
     }
 
     fn calculate_data_size(&self, header: &Header) -> Result<usize> {
-        let naxis = header
-            .get("NAXIS")
-            .as_i64()
-            .unwrap_or(0) as usize;
+        let naxis = header.get("NAXIS").as_i64().unwrap_or(0) as usize;
 
         if naxis == 0 {
             return Ok(0);
@@ -472,10 +469,7 @@ impl<R: Read + Seek> FitsFile<R> {
         let mut total_pixels = 1usize;
         for i in 1..=naxis {
             let axis_name = format!("NAXIS{}", i);
-            let axis_size = header
-                .get(&axis_name)
-                .as_i64()
-                .unwrap_or(1) as usize;
+            let axis_size = header.get(&axis_name).as_i64().unwrap_or(1) as usize;
             total_pixels = total_pixels
                 .checked_mul(axis_size)
                 .ok_or_else(|| FitsError::InvalidFormat("Data dimensions too large".to_string()))?;
@@ -490,12 +484,13 @@ impl<R: Read + Seek> FitsFile<R> {
     }
 
     fn create_extension_hdu(&self, header: Header, hdu_info: HduInfo) -> Result<Hdu> {
-        let xtension = header
-            .get("XTENSION")
-            .as_str()
-            .ok_or_else(|| FitsError::KeywordNotFound {
-                keyword: "XTENSION".to_string(),
-            })?;
+        let xtension =
+            header
+                .get("XTENSION")
+                .as_str()
+                .ok_or_else(|| FitsError::KeywordNotFound {
+                    keyword: "XTENSION".to_string(),
+                })?;
 
         match xtension {
             "IMAGE" => Ok(Hdu::Image(Box::new(crate::fits::hdu::ImageHdu::new(

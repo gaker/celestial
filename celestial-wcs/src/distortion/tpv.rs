@@ -52,7 +52,14 @@ impl TpvDistortion {
     pub fn apply_inverse(&self, xi: f64, eta: f64) -> WcsResult<(f64, f64)> {
         let distort_fn = |x: f64, y: f64| self.apply(x, y);
 
-        newton_raphson_2d((xi, eta), (xi, eta), distort_fn, 20, 1e-12, "TPV inverse distortion")
+        newton_raphson_2d(
+            (xi, eta),
+            (xi, eta),
+            distort_fn,
+            20,
+            1e-12,
+            "TPV inverse distortion",
+        )
     }
 
     fn eval_polynomial(coeffs: &[f64; 40], x: f64, y: f64, r: f64) -> f64 {
@@ -166,29 +173,41 @@ mod tests {
         // the per-term roundtrip cases.  Five sign-pattern points cover every
         // quadrant of the projection plane.
         let mut tpv = TpvDistortion::identity();
-        tpv.set_pv1(3, 0.001);   // r
-        tpv.set_pv1(4, 0.002);   // x^2
-        tpv.set_pv1(5, 0.001);   // xy
-        tpv.set_pv1(7, 0.001);   // x^3
+        tpv.set_pv1(3, 0.001); // r
+        tpv.set_pv1(4, 0.002); // x^2
+        tpv.set_pv1(5, 0.001); // xy
+        tpv.set_pv1(7, 0.001); // x^3
         tpv.set_pv1(11, 0.0005); // r^3
         tpv.set_pv2(3, 0.001);
         tpv.set_pv2(5, 0.001);
-        tpv.set_pv2(6, 0.002);   // y^2
-        tpv.set_pv2(10, 0.001);  // y^3
+        tpv.set_pv2(6, 0.002); // y^2
+        tpv.set_pv2(10, 0.001); // y^3
         tpv.set_pv2(11, 0.0005);
 
-        for (x_orig, y_orig) in
-            [(0.1, 0.1), (0.5, 0.3), (-0.2, 0.4), (0.3, -0.5), (-0.4, -0.4)]
-        {
+        for (x_orig, y_orig) in [
+            (0.1, 0.1),
+            (0.5, 0.3),
+            (-0.2, 0.4),
+            (0.3, -0.5),
+            (-0.4, -0.4),
+        ] {
             let (xi, eta) = tpv.apply(x_orig, y_orig);
             let (x_back, y_back) = tpv.apply_inverse(xi, eta).unwrap();
             assert!(
                 (x_back - x_orig).abs() < 1e-12,
-                "x at ({}, {}): {} vs {}", x_orig, y_orig, x_back, x_orig,
+                "x at ({}, {}): {} vs {}",
+                x_orig,
+                y_orig,
+                x_back,
+                x_orig,
             );
             assert!(
                 (y_back - y_orig).abs() < 1e-12,
-                "y at ({}, {}): {} vs {}", x_orig, y_orig, y_back, y_orig,
+                "y at ({}, {}): {} vs {}",
+                x_orig,
+                y_orig,
+                y_back,
+                y_orig,
             );
         }
     }

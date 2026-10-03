@@ -73,10 +73,7 @@ mod tests {
 
     #[test]
     fn removes_dimmer_duplicate() {
-        let mut stars = vec![
-            star(10.0, 10.0, 1000.0),
-            star(15.0, 10.0, 500.0),
-        ];
+        let mut stars = vec![star(10.0, 10.0, 1000.0), star(15.0, 10.0, 500.0)];
         deduplicate(&mut stars, 20.0);
         assert_eq!(stars.len(), 1);
         assert_eq!(stars[0].flux, 1000.0);
@@ -84,10 +81,7 @@ mod tests {
 
     #[test]
     fn keeps_brighter_of_pair() {
-        let mut stars = vec![
-            star(50.0, 50.0, 2000.0),
-            star(55.0, 50.0, 3000.0),
-        ];
+        let mut stars = vec![star(50.0, 50.0, 2000.0), star(55.0, 50.0, 3000.0)];
         stars.sort_by(|a, b| b.flux.partial_cmp(&a.flux).unwrap());
         deduplicate(&mut stars, 20.0);
         assert_eq!(stars.len(), 1);
@@ -110,12 +104,13 @@ mod tests {
 
     #[test]
     fn respects_spacing_boundary() {
-        let mut stars = vec![
-            star(0.0, 0.0, 1000.0),
-            star(20.0, 0.0, 800.0),
-        ];
+        let mut stars = vec![star(0.0, 0.0, 1000.0), star(20.0, 0.0, 800.0)];
         deduplicate(&mut stars, 20.0);
-        assert_eq!(stars.len(), 2, "stars exactly at min_spacing should both survive");
+        assert_eq!(
+            stars.len(),
+            2,
+            "stars exactly at min_spacing should both survive"
+        );
     }
 
     #[test]

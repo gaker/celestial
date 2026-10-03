@@ -98,7 +98,15 @@ mod tests {
 
     #[test]
     fn parse_rejects_unsupported_types() {
-        for bad in ["", "Int8", "Int16", "Complex64", "Float16", "Bool", "UInt64"] {
+        for bad in [
+            "",
+            "Int8",
+            "Int16",
+            "Complex64",
+            "Float16",
+            "Bool",
+            "UInt64",
+        ] {
             let err = SampleFormat::parse(bad).expect_err("should fail");
             assert!(
                 err.to_string().contains(bad) || bad.is_empty(),

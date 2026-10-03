@@ -83,7 +83,15 @@ fn compute_row(obs: &Observation, model: &PointingModel, lat: f64) -> Row {
     let (az, zd) = compute_az_zd(h, dec, lat);
     let (ds, dz) = rotate_to_horizon(dx, dd, h, dec, lat);
     let dr = libm::sqrt(dx * dx + dd * dd);
-    Row { az, zd, dx, dd, ds, dz, dr }
+    Row {
+        az,
+        zd,
+        dx,
+        dd,
+        ds,
+        dz,
+        dr,
+    }
 }
 
 fn format_row(num: usize, obs: &Observation, r: &Row) -> String {
@@ -112,15 +120,22 @@ fn format_footer(sums: &RmsSums, n: usize) -> String {
     format!(
         "\n{:>54}{:>9}{:>9}{:>9}{:>9}{:>9}\n{:>54}{:>9.2}{:>9.2}{:>9.2}{:>9.2}{:>9.2}\n",
         "",
-        "dX", "dD", "dS", "dZ", "dR",
+        "dX",
+        "dD",
+        "dS",
+        "dZ",
+        "dR",
         "RMS",
-        rms(sums.dx), rms(sums.dd), rms(sums.ds), rms(sums.dz), rms(sums.dr),
+        rms(sums.dx),
+        rms(sums.dd),
+        rms(sums.ds),
+        rms(sums.dz),
+        rms(sums.dr),
     )
 }
 
 fn rotate_to_horizon(dx: f64, dd: f64, h: f64, dec: f64, lat: f64) -> (f64, f64) {
-    let sin_alt =
-        libm::sin(lat) * libm::sin(dec) + libm::cos(lat) * libm::cos(dec) * libm::cos(h);
+    let sin_alt = libm::sin(lat) * libm::sin(dec) + libm::cos(lat) * libm::cos(dec) * libm::cos(h);
     let cos_alt = libm::sqrt((1.0 - sin_alt * sin_alt).max(0.0));
     if cos_alt < 1e-10 || libm::cos(dec).abs() < 1e-10 {
         return (0.0, 0.0);
@@ -297,7 +312,11 @@ mod tests {
         let body = text(Slist.execute(&mut s, &[]).unwrap());
         // RMS computed from a single point with dX≈86.6 should be ≈86.60,
         // not influenced by the masked 9999" obs.
-        assert!(body.contains("86.60"), "RMS line missing or wrong:\n{}", body);
+        assert!(
+            body.contains("86.60"),
+            "RMS line missing or wrong:\n{}",
+            body
+        );
     }
 
     #[test]

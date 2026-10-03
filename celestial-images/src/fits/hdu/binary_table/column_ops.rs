@@ -63,61 +63,37 @@ impl BinaryTableHdu {
     }
 
     fn set_column_name(&self, info: &mut ColumnInfo, column_index: usize) {
-        if let Some(name) = self
-            .header
-            .get(&format!("TTYPE{}", column_index))
-            .as_str()
-        {
+        if let Some(name) = self.header.get(&format!("TTYPE{}", column_index)).as_str() {
             *info = info.clone().with_name(name.to_string());
         }
     }
 
     fn set_column_unit(&self, info: &mut ColumnInfo, column_index: usize) {
-        if let Some(unit) = self
-            .header
-            .get(&format!("TUNIT{}", column_index))
-            .as_str()
-        {
+        if let Some(unit) = self.header.get(&format!("TUNIT{}", column_index)).as_str() {
             *info = info.clone().with_unit(unit.to_string());
         }
     }
 
     fn set_column_null_value(&self, info: &mut ColumnInfo, column_index: usize) {
-        if let Some(null_val) = self
-            .header
-            .get(&format!("TNULL{}", column_index))
-            .as_str()
-        {
+        if let Some(null_val) = self.header.get(&format!("TNULL{}", column_index)).as_str() {
             *info = info.clone().with_null_value(null_val.to_string());
         }
     }
 
     fn set_column_scale(&self, info: &mut ColumnInfo, column_index: usize) {
-        if let Some(scale) = self
-            .header
-            .get(&format!("TSCAL{}", column_index))
-            .as_f64()
-        {
+        if let Some(scale) = self.header.get(&format!("TSCAL{}", column_index)).as_f64() {
             *info = info.clone().with_scale(scale);
         }
     }
 
     fn set_column_zero_offset(&self, info: &mut ColumnInfo, column_index: usize) {
-        if let Some(zero) = self
-            .header
-            .get(&format!("TZERO{}", column_index))
-            .as_f64()
-        {
+        if let Some(zero) = self.header.get(&format!("TZERO{}", column_index)).as_f64() {
             *info = info.clone().with_zero_offset(zero);
         }
     }
 
     fn set_column_display_format(&self, info: &mut ColumnInfo, column_index: usize) {
-        if let Some(disp) = self
-            .header
-            .get(&format!("TDISP{}", column_index))
-            .as_str()
-        {
+        if let Some(disp) = self.header.get(&format!("TDISP{}", column_index)).as_str() {
             info.display_format = Some(disp.to_string());
         }
     }
@@ -1016,10 +992,7 @@ mod tests {
         };
         let hdu = BinaryTableHdu::new(header, info);
 
-        let data = vec![
-            0x00, 0x00, 0x00, 0x01,
-            0x00, 0x00, 0x00, 0x02,
-        ];
+        let data = vec![0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x02];
         let mut cursor = Cursor::new(data);
 
         let result = hdu.get_column_by_name(&mut cursor, "VALUES");

@@ -46,7 +46,12 @@ mod tests {
     fn tmp_path(tag: &str) -> PathBuf {
         let n = SEQ.fetch_add(1, Ordering::Relaxed);
         let mut p = std::env::temp_dir();
-        p.push(format!("celpoint-outmod-{}-{}-{}.mod", tag, std::process::id(), n));
+        p.push(format!(
+            "celpoint-outmod-{}-{}-{}.mod",
+            tag,
+            std::process::id(),
+            n
+        ));
         p
     }
 

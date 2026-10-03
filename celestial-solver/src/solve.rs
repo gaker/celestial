@@ -12,10 +12,7 @@ use celestial_time::JulianDate;
 use celestial_images::formats::{Image, PixelData};
 
 use crate::detect::{find_bright_stars, DetectedStar, DetectionParams};
-use crate::fit_wcs::{
-    fit_sip, fit_wcs, refine_wcs,
-    RefineParams, SipSolution, WcsSolution,
-};
+use crate::fit_wcs::{fit_sip, fit_wcs, refine_wcs, RefineParams, SipSolution, WcsSolution};
 use crate::match_field::{match_field, FieldMatch, MatchParams, StarPair};
 
 pub(crate) struct RefineOutcome {
@@ -405,7 +402,9 @@ fn run_pipeline(
         fit_sip_optional(&outcome.pairs, &outcome.wcs, params.sip_order));
 
     Ok(SolveResult {
-        stars, field_match, initial_wcs,
+        stars,
+        field_match,
+        initial_wcs,
         wcs: outcome.wcs,
         sip,
         refined: outcome.refined,
@@ -413,10 +412,7 @@ fn run_pipeline(
     })
 }
 
-pub(crate) fn detect_stars(
-    image: &Image,
-    params: &DetectionParams,
-) -> Result<Vec<DetectedStar>> {
+pub(crate) fn detect_stars(image: &Image, params: &DetectionParams) -> Result<Vec<DetectedStar>> {
     let w = image.width();
     let h = image.height();
     let stars = match &image.pixels {
@@ -439,9 +435,13 @@ pub(crate) fn fit_initial_wcs(
     params: &SolveParams,
 ) -> Result<WcsSolution> {
     let wcs = fit_wcs(
-        pairs, width, height,
-        meta.hint.ra().degrees(), meta.hint.dec().degrees(),
-        meta.focal_mm, meta.pixel_um,
+        pairs,
+        width,
+        height,
+        meta.hint.ra().degrees(),
+        meta.hint.dec().degrees(),
+        meta.focal_mm,
+        meta.pixel_um,
     )?;
     check_scale_sanity(&wcs, meta, params, "initial")?;
     check_center_offset_sanity(&wcs, meta, width, height, params, "initial")?;
@@ -457,7 +457,11 @@ pub(crate) fn refine_or_fallback(
     refine_params: &RefineParams,
 ) -> RefineOutcome {
     match refine_wcs(initial_wcs, stars, catalog, epoch, refine_params) {
-        Ok(r) => RefineOutcome { wcs: r.wcs, pairs: r.pairs, refined: true },
+        Ok(r) => RefineOutcome {
+            wcs: r.wcs,
+            pairs: r.pairs,
+            refined: true,
+        },
         Err(e) => {
             log::warn!("refine_wcs failed: {e:#}");
             RefineOutcome {
@@ -525,10 +529,13 @@ fn wcs_to_hint_separation_deg(wcs: &WcsSolution, meta: &ImageMetadata) -> f64 {
     let hint_dec = meta.hint.dec().radians();
     let wcs_dec = wcs.crval2.to_radians();
     vincenty_angular_separation(
-        libm::sin(hint_dec), libm::cos(hint_dec),
-        libm::sin(wcs_dec), libm::cos(wcs_dec),
+        libm::sin(hint_dec),
+        libm::cos(hint_dec),
+        libm::sin(wcs_dec),
+        libm::cos(wcs_dec),
         wcs.crval1.to_radians() - meta.hint.ra().radians(),
-    ).to_degrees()
+    )
+    .to_degrees()
 }
 
 fn fov_diagonal_deg(wcs: &WcsSolution, width: usize, height: usize) -> f64 {
@@ -583,11 +590,12 @@ mod tests {
     }
 
     fn build_catalog_keep_alive() -> (Catalog, tempfile::NamedTempFile) {
-        let stars = vec![
-            crate::match_field::test_catalog::SynthStar {
-                source_id: 1, ra: 0.0, dec: 0.0, mag: 9.0,
-            },
-        ];
+        let stars = vec![crate::match_field::test_catalog::SynthStar {
+            source_id: 1,
+            ra: 0.0,
+            dec: 0.0,
+            mag: 9.0,
+        }];
         let file = crate::match_field::test_catalog::build(4, &stars);
         let cat = Catalog::open(file.path()).unwrap();
         (cat, file)
@@ -619,8 +627,10 @@ mod tests {
             .params(SolveParams::default())
             .run();
         let err = result.err().expect("zero image must error");
-        assert!(err.to_string().contains("no stars detected"),
-            "expected 'no stars detected', got: {err}");
+        assert!(
+            err.to_string().contains("no stars detected"),
+            "expected 'no stars detected', got: {err}"
+        );
     }
 
     #[test]
@@ -716,7 +726,15 @@ mod tests {
         assert!(check_center_offset_sanity(&wcs, &meta, 1024, 1024, &params, "x").is_ok());
     }
 
-    fn gaussian_image_f32(w: usize, h: usize, cx: f64, cy: f64, peak: f32, sigma: f64, bg: f32) -> Vec<f32> {
+    fn gaussian_image_f32(
+        w: usize,
+        h: usize,
+        cx: f64,
+        cy: f64,
+        peak: f32,
+        sigma: f64,
+        bg: f32,
+    ) -> Vec<f32> {
         let mut out = vec![bg; w * h];
         for y in 0..h {
             for x in 0..w {
@@ -752,22 +770,39 @@ mod tests {
 
         // (variant_name, pixel_data) — built so each variant carries a detectable star.
         let cases: Vec<(&str, PixelData)> = vec![
-            ("U8", PixelData::from(
-                base.iter().map(|&v| (v / 25.0).clamp(0.0, 255.0) as u8).collect::<Vec<_>>()
-            )),
-            ("U16", PixelData::from(
-                base.iter().map(|&v| v.clamp(0.0, 65535.0) as u16).collect::<Vec<_>>()
-            )),
-            ("I16", PixelData::from(
-                base.iter().map(|&v| v.clamp(0.0, 32767.0) as i16).collect::<Vec<_>>()
-            )),
-            ("I32", PixelData::from(
-                base.iter().map(|&v| v as i32).collect::<Vec<_>>()
-            )),
+            (
+                "U8",
+                PixelData::from(
+                    base.iter()
+                        .map(|&v| (v / 25.0).clamp(0.0, 255.0) as u8)
+                        .collect::<Vec<_>>(),
+                ),
+            ),
+            (
+                "U16",
+                PixelData::from(
+                    base.iter()
+                        .map(|&v| v.clamp(0.0, 65535.0) as u16)
+                        .collect::<Vec<_>>(),
+                ),
+            ),
+            (
+                "I16",
+                PixelData::from(
+                    base.iter()
+                        .map(|&v| v.clamp(0.0, 32767.0) as i16)
+                        .collect::<Vec<_>>(),
+                ),
+            ),
+            (
+                "I32",
+                PixelData::from(base.iter().map(|&v| v as i32).collect::<Vec<_>>()),
+            ),
             ("F32", PixelData::from(base.clone())),
-            ("F64", PixelData::from(
-                base.iter().map(|&v| v as f64).collect::<Vec<_>>()
-            )),
+            (
+                "F64",
+                PixelData::from(base.iter().map(|&v| v as f64).collect::<Vec<_>>()),
+            ),
         ];
 
         for (name, pixels) in cases {
@@ -793,17 +828,33 @@ mod tests {
         let s_deg = scale_arcsec / 3600.0;
         let mut pairs = Vec::new();
         for &(dx, dy) in &[
-            (-200.0, -200.0), (200.0, -200.0), (-200.0, 200.0), (200.0, 200.0),
-            (-100.0, 50.0), (100.0, -50.0), (0.0, 0.0), (150.0, 150.0),
+            (-200.0, -200.0),
+            (200.0, -200.0),
+            (-200.0, 200.0),
+            (200.0, 200.0),
+            (-100.0, 50.0),
+            (100.0, -50.0),
+            (0.0, 0.0),
+            (150.0, 150.0),
         ] {
             let px_x = crpix + dx;
             let px_y = crpix + dy;
             // Match the (-s, 0, 0, +s) CD matrix used by wcs_at().
             let xi_deg = -s_deg * dx;
             let eta_deg = s_deg * dy;
-            let (ra, dec) = tan_deproject_star(xi_deg * DEG_TO_RAD, eta_deg * DEG_TO_RAD, center_ra, center_dec);
+            let (ra, dec) = tan_deproject_star(
+                xi_deg * DEG_TO_RAD,
+                eta_deg * DEG_TO_RAD,
+                center_ra,
+                center_dec,
+            );
             pairs.push(StarPair {
-                px_x, px_y, ra_deg: ra, dec_deg: dec, votes: 4, snr: 20.0,
+                px_x,
+                px_y,
+                ra_deg: ra,
+                dec_deg: dec,
+                votes: 4,
+                snr: 20.0,
             });
         }
         pairs
@@ -822,12 +873,25 @@ mod tests {
             .expect("clean pairs must produce a valid WCS");
 
         // CRVAL should land within a fraction of a degree of the hint.
-        assert!((wcs.crval1 - center_ra).abs() < 0.1, "crval1={} (hint {})", wcs.crval1, center_ra);
-        assert!((wcs.crval2 - center_dec).abs() < 0.1, "crval2={} (hint {})", wcs.crval2, center_dec);
+        assert!(
+            (wcs.crval1 - center_ra).abs() < 0.1,
+            "crval1={} (hint {})",
+            wcs.crval1,
+            center_ra
+        );
+        assert!(
+            (wcs.crval2 - center_dec).abs() < 0.1,
+            "crval2={} (hint {})",
+            wcs.crval2,
+            center_dec
+        );
         // And the fitted scale should track the hint scale.
         let (sx, sy) = wcs.scale_arcsec();
         let fitted = (sx + sy) * 0.5;
-        assert!((fitted - scale).abs() < 0.05, "fitted scale {fitted} vs hint {scale}");
+        assert!(
+            (fitted - scale).abs() < 0.05,
+            "fitted scale {fitted} vs hint {scale}"
+        );
     }
 
     #[test]
@@ -835,8 +899,22 @@ mod tests {
         // fit_wcs requires >=3 pairs; pass 2 and check the error surfaces from
         // fit_initial_wcs rather than panicking or returning a bogus WCS.
         let pairs = vec![
-            StarPair { px_x: 0.0, px_y: 0.0, ra_deg: 180.0, dec_deg: 30.0, votes: 1, snr: 10.0 },
-            StarPair { px_x: 10.0, px_y: 10.0, ra_deg: 180.01, dec_deg: 30.01, votes: 1, snr: 10.0 },
+            StarPair {
+                px_x: 0.0,
+                px_y: 0.0,
+                ra_deg: 180.0,
+                dec_deg: 30.0,
+                votes: 1,
+                snr: 10.0,
+            },
+            StarPair {
+                px_x: 10.0,
+                px_y: 10.0,
+                ra_deg: 180.01,
+                dec_deg: 30.01,
+                votes: 1,
+                snr: 10.0,
+            },
         ];
         let meta = meta_at(180.0, 30.0, 1.5);
         let params = SolveParams::default();
@@ -854,8 +932,22 @@ mod tests {
         let (cat, _file) = build_catalog_keep_alive();
         let initial = wcs_at(180.0, 30.0, 1.5);
         let fallback = vec![
-            StarPair { px_x: 1.0, px_y: 2.0, ra_deg: 180.0, dec_deg: 30.0, votes: 3, snr: 50.0 },
-            StarPair { px_x: 5.0, px_y: 6.0, ra_deg: 180.01, dec_deg: 30.01, votes: 2, snr: 30.0 },
+            StarPair {
+                px_x: 1.0,
+                px_y: 2.0,
+                ra_deg: 180.0,
+                dec_deg: 30.0,
+                votes: 3,
+                snr: 50.0,
+            },
+            StarPair {
+                px_x: 5.0,
+                px_y: 6.0,
+                ra_deg: 180.01,
+                dec_deg: 30.01,
+                votes: 2,
+                snr: 30.0,
+            },
         ];
         let epoch = JulianDate::new(2451545.0, 0.0);
         let refine_params = RefineParams::default();
@@ -884,8 +976,22 @@ mod tests {
         // logs and returns None. Must not propagate the error.
         let wcs = wcs_at(180.0, 30.0, 1.5);
         let pairs = vec![
-            StarPair { px_x: 0.0, px_y: 0.0, ra_deg: 180.0, dec_deg: 30.0, votes: 1, snr: 10.0 },
-            StarPair { px_x: 10.0, px_y: 10.0, ra_deg: 180.01, dec_deg: 30.01, votes: 1, snr: 10.0 },
+            StarPair {
+                px_x: 0.0,
+                px_y: 0.0,
+                ra_deg: 180.0,
+                dec_deg: 30.0,
+                votes: 1,
+                snr: 10.0,
+            },
+            StarPair {
+                px_x: 10.0,
+                px_y: 10.0,
+                ra_deg: 180.01,
+                dec_deg: 30.01,
+                votes: 1,
+                snr: 10.0,
+            },
         ];
         let out = fit_sip_optional(&pairs, &wcs, Some(3));
         assert!(out.is_none(), "fit_sip on 2 pairs must yield None");
@@ -901,10 +1007,12 @@ mod tests {
         let pairs = pairs_on_tangent_plane(center_ra, center_dec, scale);
         let meta = meta_at(center_ra, center_dec, scale);
         let params = SolveParams::default();
-        let wcs = fit_initial_wcs(&pairs, 1024, 1024, &meta, &params)
-            .expect("wcs setup");
+        let wcs = fit_initial_wcs(&pairs, 1024, 1024, &meta, &params).expect("wcs setup");
 
         let out = fit_sip_optional(&pairs, &wcs, Some(2));
-        assert!(out.is_some(), "8 clean pairs at order 2 should yield Some(SipSolution)");
+        assert!(
+            out.is_some(),
+            "8 clean pairs at order 2 should yield Some(SipSolution)"
+        );
     }
 }

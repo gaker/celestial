@@ -8,7 +8,7 @@ impl Command for Adjust {
     fn name(&self) -> &str {
         "ADJUST"
     }
-    
+
     fn description(&self) -> &str {
         "Set model correction direction"
     }

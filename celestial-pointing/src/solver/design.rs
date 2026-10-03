@@ -90,7 +90,12 @@ mod tests {
     use crate::terms::create_term;
     use crate::test_support::ObsBuilder;
 
-    fn obs(commanded_ha_arcsec: f64, actual_ha_arcsec: f64, dec_deg: f64, obs_dec_deg: f64) -> Observation {
+    fn obs(
+        commanded_ha_arcsec: f64,
+        actual_ha_arcsec: f64,
+        dec_deg: f64,
+        obs_dec_deg: f64,
+    ) -> Observation {
         ObsBuilder::new()
             .commanded_ha_arcsec(commanded_ha_arcsec)
             .actual_ha_arcsec(actual_ha_arcsec)
@@ -127,10 +132,7 @@ mod tests {
     fn build_design_matrix_has_correct_shape() {
         let o = obs(0.0, 0.0, 30.0, 30.0);
         let observations: Vec<&Observation> = vec![&o, &o, &o];
-        let terms = vec![
-            create_term("IH").unwrap(),
-            create_term("ID").unwrap(),
-        ];
+        let terms = vec![create_term("IH").unwrap(), create_term("ID").unwrap()];
         let a = build_design_matrix(&observations, &terms, 0.0);
         assert_eq!(a.nrows(), 6); // 2 * n_obs
         assert_eq!(a.ncols(), 2); // n_terms
@@ -213,7 +215,7 @@ mod tests {
         assert_eq!(scaled[(0, 0)], 0.0); // 0 * 0.5
         assert_eq!(scaled[(0, 1)], 0.5); // 1 * 0.5
         assert_eq!(scaled[(2, 0)], 40.0); // 20 * 2.0
-        // Dec rows untouched
+                                          // Dec rows untouched
         assert_eq!(scaled[(1, 0)], 10.0);
         assert_eq!(scaled[(3, 1)], 31.0);
     }

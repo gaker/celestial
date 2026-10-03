@@ -142,7 +142,13 @@ mod tests {
         img.set_keyword(Keyword::real("CRVAL2", 0.0));
         let err = hint_from_image(&img).unwrap_err();
         assert!(
-            matches!(err, MetadataError::InvalidHeaderType { keyword: "CRVAL1", .. }),
+            matches!(
+                err,
+                MetadataError::InvalidHeaderType {
+                    keyword: "CRVAL1",
+                    ..
+                }
+            ),
             "unexpected error: {err}"
         );
     }
@@ -154,7 +160,13 @@ mod tests {
         img.set_keyword(Keyword::string("CRVAL2", "bogus"));
         let err = hint_from_image(&img).unwrap_err();
         assert!(
-            matches!(err, MetadataError::InvalidHeaderType { keyword: "CRVAL2", .. }),
+            matches!(
+                err,
+                MetadataError::InvalidHeaderType {
+                    keyword: "CRVAL2",
+                    ..
+                }
+            ),
             "unexpected error: {err}"
         );
     }
@@ -231,7 +243,13 @@ mod tests {
         img.set_keyword(Keyword::string("OBJCTDEC", "+00 00 00"));
         let err = hint_from_image(&img).unwrap_err();
         assert!(
-            matches!(err, MetadataError::InvalidHeaderType { keyword: "OBJCTRA", .. }),
+            matches!(
+                err,
+                MetadataError::InvalidHeaderType {
+                    keyword: "OBJCTRA",
+                    ..
+                }
+            ),
             "unexpected error: {err}"
         );
     }

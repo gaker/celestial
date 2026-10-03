@@ -45,15 +45,12 @@ pub(super) fn commit_move(
     }
 }
 
-pub(super) fn cmp_by_bic(
-    a: &Move,
-    b: &Move,
-    base_len: usize,
-    n_obs: usize,
-) -> std::cmp::Ordering {
+pub(super) fn cmp_by_bic(a: &Move, b: &Move, base_len: usize, n_obs: usize) -> std::cmp::Ordering {
     let bic_a = compute_bic(n_obs, base_len + a.added_count(), a.rms);
     let bic_b = compute_bic(n_obs, base_len + b.added_count(), b.rms);
-    bic_a.partial_cmp(&bic_b).unwrap_or(std::cmp::Ordering::Equal)
+    bic_a
+        .partial_cmp(&bic_b)
+        .unwrap_or(std::cmp::Ordering::Equal)
 }
 
 pub(super) fn trial_combo(
@@ -233,10 +230,7 @@ mod tests {
     fn cmp_by_bic_prefers_smaller_rms_at_same_added_count() {
         let a = mv(vec!["X"], None, 0.5);
         let b = mv(vec!["Y"], None, 2.0);
-        assert_eq!(
-            cmp_by_bic(&a, &b, 6, 100),
-            std::cmp::Ordering::Less,
-        );
+        assert_eq!(cmp_by_bic(&a, &b, 6, 100), std::cmp::Ordering::Less,);
     }
 
     // BIC penalizes term count. A pair with the same RMS as a single should
@@ -245,10 +239,7 @@ mod tests {
     fn cmp_by_bic_penalizes_more_added_terms_at_equal_rms() {
         let single = mv(vec!["X"], None, 1.0);
         let pair = mv(vec!["X", "Y"], Some((0, 1)), 1.0);
-        assert_eq!(
-            cmp_by_bic(&single, &pair, 6, 100),
-            std::cmp::Ordering::Less,
-        );
+        assert_eq!(cmp_by_bic(&single, &pair, 6, 100), std::cmp::Ordering::Less,);
     }
 
     #[test]

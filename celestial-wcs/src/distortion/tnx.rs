@@ -279,7 +279,14 @@ impl TnxDistortion {
     pub fn apply_inverse(&self, x: f64, y: f64) -> WcsResult<(f64, f64)> {
         let distort_fn = |px: f64, py: f64| self.apply(px, py);
 
-        newton_raphson_2d((x, y), (x, y), distort_fn, 20, 1e-12, "TNX inverse distortion")
+        newton_raphson_2d(
+            (x, y),
+            (x, y),
+            distort_fn,
+            20,
+            1e-12,
+            "TNX inverse distortion",
+        )
     }
 }
 
@@ -337,7 +344,10 @@ mod tests {
                 ty: SurfaceType::Legendre,
                 x,
                 expected: [
-                    1.0, 0.5, (3.0 * 0.25 - 1.0) / 2.0, (5.0 * 0.125 - 3.0 * 0.5) / 2.0,
+                    1.0,
+                    0.5,
+                    (3.0 * 0.25 - 1.0) / 2.0,
+                    (5.0 * 0.125 - 3.0 * 0.5) / 2.0,
                 ],
             },
             // Polynomial: x^n.
@@ -350,15 +360,21 @@ mod tests {
         for case in &cases {
             let surf = TnxSurface::new(
                 case.ty,
-                3, 3,
+                3,
+                3,
                 CrossTerms::Full,
-                (0.0, 1.0), (0.0, 1.0),
+                (0.0, 1.0),
+                (0.0, 1.0),
                 vec![0.0; 9],
-            ).unwrap();
+            )
+            .unwrap();
             for (n, &expected) in case.expected.iter().enumerate() {
                 assert!(
                     (surf.basis(n as u32, case.x) - expected).abs() < 1e-14,
-                    "{:?} basis {} at {} mismatch", case.ty, n, case.x,
+                    "{:?} basis {} at {} mismatch",
+                    case.ty,
+                    n,
+                    case.x,
                 );
             }
         }
@@ -369,11 +385,14 @@ mod tests {
         // normalize_x/normalize_y must map x_range/y_range onto [-1, +1].
         let surf = TnxSurface::new(
             SurfaceType::Chebyshev,
-            2, 2,
+            2,
+            2,
             CrossTerms::Full,
-            (10.0, 20.0), (30.0, 50.0),
+            (10.0, 20.0),
+            (30.0, 50.0),
             vec![0.0; 4],
-        ).unwrap();
+        )
+        .unwrap();
         // Centre of the asymmetric (10, 20) x (30, 50) range maps to 0.
         assert_eq!(surf.normalize_x(15.0), 0.0);
         assert_eq!(surf.normalize_y(40.0), 0.0);
@@ -381,11 +400,14 @@ mod tests {
         // Edges of the (0, 100) range map to -1 and +1.
         let surf = TnxSurface::new(
             SurfaceType::Chebyshev,
-            2, 2,
+            2,
+            2,
             CrossTerms::Full,
-            (0.0, 100.0), (0.0, 100.0),
+            (0.0, 100.0),
+            (0.0, 100.0),
             vec![0.0; 4],
-        ).unwrap();
+        )
+        .unwrap();
         assert_eq!(surf.normalize_x(0.0), -1.0);
         assert_eq!(surf.normalize_x(100.0), 1.0);
         assert_eq!(surf.normalize_y(0.0), -1.0);
@@ -397,11 +419,14 @@ mod tests {
         // Constant surface (5) is invariant across the domain.
         let constant = TnxSurface::new(
             SurfaceType::Polynomial,
-            2, 2,
+            2,
+            2,
             CrossTerms::Full,
-            (0.0, 100.0), (0.0, 100.0),
+            (0.0, 100.0),
+            (0.0, 100.0),
             vec![5.0, 0.0, 0.0, 0.0],
-        ).unwrap();
+        )
+        .unwrap();
         assert_eq!(constant.evaluate(0.0, 0.0), 5.0);
         assert_eq!(constant.evaluate(50.0, 50.0), 5.0);
         assert_eq!(constant.evaluate(100.0, 100.0), 5.0);
@@ -409,11 +434,14 @@ mod tests {
         // Linear-in-x surface produces normalized x in [-1, 1] (independent of y).
         let linear_x = TnxSurface::new(
             SurfaceType::Polynomial,
-            2, 2,
+            2,
+            2,
             CrossTerms::Full,
-            (0.0, 100.0), (0.0, 100.0),
+            (0.0, 100.0),
+            (0.0, 100.0),
             vec![0.0, 1.0, 0.0, 0.0],
-        ).unwrap();
+        )
+        .unwrap();
         assert_eq!(linear_x.evaluate(0.0, 50.0), -1.0);
         assert_eq!(linear_x.evaluate(50.0, 50.0), 0.0);
         assert_eq!(linear_x.evaluate(100.0, 50.0), 1.0);
@@ -468,26 +496,42 @@ mod tests {
         ];
         for (ty, coeffs, pts) in cases {
             let lng = TnxSurface::new(
-                *ty, 3, 3, CrossTerms::Full,
-                (0.0, 100.0), (0.0, 100.0),
+                *ty,
+                3,
+                3,
+                CrossTerms::Full,
+                (0.0, 100.0),
+                (0.0, 100.0),
                 coeffs.to_vec(),
-            ).unwrap();
+            )
+            .unwrap();
             let lat = TnxSurface::new(
-                *ty, 3, 3, CrossTerms::Full,
-                (0.0, 100.0), (0.0, 100.0),
+                *ty,
+                3,
+                3,
+                CrossTerms::Full,
+                (0.0, 100.0),
+                (0.0, 100.0),
                 coeffs.to_vec(),
-            ).unwrap();
+            )
+            .unwrap();
             let tnx = TnxDistortion::new(lng, lat);
             for &(x_orig, y_orig) in *pts {
                 let (xd, yd) = tnx.apply(x_orig, y_orig);
                 let (xb, yb) = tnx.apply_inverse(xd, yd).unwrap();
                 assert!(
                     (xb - x_orig).abs() < 1e-10,
-                    "{:?} x at ({}, {})", ty, x_orig, y_orig,
+                    "{:?} x at ({}, {})",
+                    ty,
+                    x_orig,
+                    y_orig,
                 );
                 assert!(
                     (yb - y_orig).abs() < 1e-10,
-                    "{:?} y at ({}, {})", ty, x_orig, y_orig,
+                    "{:?} y at ({}, {})",
+                    ty,
+                    x_orig,
+                    y_orig,
                 );
             }
         }
@@ -514,22 +558,28 @@ mod tests {
         half_coeffs[0] = 1.0;
         let half = TnxSurface::new(
             SurfaceType::Polynomial,
-            3, 3,
+            3,
+            3,
             CrossTerms::Half,
-            (0.0, 100.0), (0.0, 100.0),
+            (0.0, 100.0),
+            (0.0, 100.0),
             half_coeffs,
-        ).unwrap();
+        )
+        .unwrap();
         assert_eq!(half.evaluate(50.0, 50.0), 1.0);
 
         // None-cross polynomial: const + 0.5*x normalised, evaluated at the
         // right edge where normalised x = 1.
         let none = TnxSurface::new(
             SurfaceType::Polynomial,
-            3, 3,
+            3,
+            3,
             CrossTerms::None,
-            (0.0, 100.0), (0.0, 100.0),
+            (0.0, 100.0),
+            (0.0, 100.0),
             vec![1.0, 0.5, 0.0, 0.0, 0.0, 0.0],
-        ).unwrap();
+        )
+        .unwrap();
         assert_eq!(none.evaluate(100.0, 50.0), 1.0 + 0.5);
     }
 
@@ -544,9 +594,11 @@ mod tests {
         // Wrong coefficient count (expected 4, given 3) is rejected.
         let bad_n = TnxSurface::new(
             SurfaceType::Polynomial,
-            2, 2,
+            2,
+            2,
             CrossTerms::Full,
-            (0.0, 100.0), (0.0, 100.0),
+            (0.0, 100.0),
+            (0.0, 100.0),
             vec![0.0; 3],
         );
         assert!(bad_n.is_err());
@@ -592,5 +644,4 @@ mod tests {
         let val = surface.evaluate(0.5, 0.0);
         assert!((val - 0.05).abs() < 1e-10);
     }
-
 }

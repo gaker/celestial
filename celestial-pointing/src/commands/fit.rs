@@ -9,7 +9,7 @@ impl Command for Fit {
     fn name(&self) -> &str {
         "FIT"
     }
-    
+
     fn description(&self) -> &str {
         "Fit model to observations"
     }
@@ -83,10 +83,7 @@ fn iteration_note(report: &solver::IterReport) -> Option<String> {
     None
 }
 
-fn outlier_candidate_notes(
-    diagnostics: &[solver::ObsDiagnostic],
-    sky_rms: f64,
-) -> Vec<String> {
+fn outlier_candidate_notes(diagnostics: &[solver::ObsDiagnostic], sky_rms: f64) -> Vec<String> {
     if sky_rms <= 0.0 {
         return Vec::new();
     }

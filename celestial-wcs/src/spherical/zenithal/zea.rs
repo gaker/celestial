@@ -1,8 +1,7 @@
 use celestial_core::constants::{DEG_TO_RAD, HALF_PI};
 
 use crate::common::{
-    intermediate_to_polar, native_coord_from_radians, pole_native_coord,
-    radial_to_intermediate,
+    intermediate_to_polar, native_coord_from_radians, pole_native_coord, radial_to_intermediate,
 };
 use crate::coordinate::{IntermediateCoord, NativeCoord};
 use crate::error::{WcsError, WcsResult};
@@ -36,7 +35,6 @@ pub(crate) fn deproject_zea(inter: IntermediateCoord) -> WcsResult<NativeCoord> 
     Ok(native_coord_from_radians(phi, theta))
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -57,10 +55,22 @@ mod tests {
                 // Near the antipode (theta -> -90), the asin in deproject
                 // loses precision; allow more ULP slack there.
                 let ulp_bar = if theta_deg <= -85.0 { 64 } else { 8 };
-                assert_ulp_lt!(original.phi().degrees(), recovered.phi().degrees(), ulp_bar,
-                    "phi (phi={}, theta={})", phi_deg, theta_deg);
-                assert_ulp_lt!(original.theta().degrees(), recovered.theta().degrees(), ulp_bar,
-                    "theta (phi={}, theta={})", phi_deg, theta_deg);
+                assert_ulp_lt!(
+                    original.phi().degrees(),
+                    recovered.phi().degrees(),
+                    ulp_bar,
+                    "phi (phi={}, theta={})",
+                    phi_deg,
+                    theta_deg
+                );
+                assert_ulp_lt!(
+                    original.theta().degrees(),
+                    recovered.theta().degrees(),
+                    ulp_bar,
+                    "theta (phi={}, theta={})",
+                    phi_deg,
+                    theta_deg
+                );
             }
         }
     }

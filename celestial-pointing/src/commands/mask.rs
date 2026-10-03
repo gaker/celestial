@@ -9,7 +9,7 @@ impl Command for Mask {
     fn name(&self) -> &str {
         "MASK"
     }
-    
+
     fn description(&self) -> &str {
         "Mask observations (exclude from fit)"
     }
@@ -142,10 +142,7 @@ mod tests {
         assert_eq!(Mask.name(), "MASK");
         assert_eq!(Mask.description(), "Mask observations (exclude from fit)");
         assert_eq!(Unmask.name(), "UNMASK");
-        assert_eq!(
-            Unmask.description(),
-            "Unmask observations (include in fit)"
-        );
+        assert_eq!(Unmask.description(), "Unmask observations (include in fit)");
     }
 
     #[test]

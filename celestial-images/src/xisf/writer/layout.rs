@@ -142,11 +142,7 @@ pub(super) fn generate_final_xml<W: Write + Seek>(writer: &mut XisfWriter<W>) ->
     let mut padded_size = align_to(first_pass.len(), HEADER_ALIGNMENT);
 
     loop {
-        calculate_final_offsets(
-            &mut writer.property_blocks,
-            &mut writer.images,
-            padded_size,
-        );
+        calculate_final_offsets(&mut writer.property_blocks, &mut writer.images, padded_size);
         let final_xml = super::xml::generate_xml_content(writer)?;
         let actual_padded = align_to(final_xml.len(), HEADER_ALIGNMENT);
 

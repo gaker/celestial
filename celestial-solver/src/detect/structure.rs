@@ -48,7 +48,6 @@ pub fn build_structure_map<T: Pixel>(
     out
 }
 
-
 fn highpass_filter<T: Pixel>(
     image: &[T],
     bg: &BackgroundMap,
@@ -78,7 +77,10 @@ fn highpass_filter<T: Pixel>(
     let sigma = filter_size as f64 / 6.0;
     let t = std::time::Instant::now();
     let smoothed = separable_gaussian(&subtracted, w, h, sigma);
-    log::info!("[structure]       gaussian: {:?} (sigma={sigma:.2})", t.elapsed());
+    log::info!(
+        "[structure]       gaussian: {:?} (sigma={sigma:.2})",
+        t.elapsed()
+    );
 
     let t = std::time::Instant::now();
     let mut result = vec![0.0_f32; n];
@@ -91,10 +93,7 @@ fn highpass_filter<T: Pixel>(
             *out = if v > 0.0 { v } else { 0.0 };
         });
 
-    let max_val = result
-        .par_iter()
-        .copied()
-        .reduce(|| 0.0_f32, f32::max);
+    let max_val = result.par_iter().copied().reduce(|| 0.0_f32, f32::max);
 
     if max_val > 0.0 {
         let inv = 1.0 / max_val;
@@ -112,35 +111,31 @@ fn separable_gaussian(data: &[f32], w: usize, h: usize, sigma: f64) -> Vec<f32> 
     let half = kernel.len() / 2;
 
     let mut temp = vec![0.0_f32; w * h];
-    temp.par_chunks_mut(w)
-        .enumerate()
-        .for_each(|(y, row)| {
-            let row_off = y * w;
-            for (x, out) in row.iter_mut().enumerate() {
-                let mut sum = 0.0_f32;
-                for (ki, &kv) in kernel.iter().enumerate() {
-                    let sx = x as i64 + ki as i64 - half as i64;
-                    let sx = clamp_coord(sx, w);
-                    sum += data[row_off + sx] * kv;
-                }
-                *out = sum;
+    temp.par_chunks_mut(w).enumerate().for_each(|(y, row)| {
+        let row_off = y * w;
+        for (x, out) in row.iter_mut().enumerate() {
+            let mut sum = 0.0_f32;
+            for (ki, &kv) in kernel.iter().enumerate() {
+                let sx = x as i64 + ki as i64 - half as i64;
+                let sx = clamp_coord(sx, w);
+                sum += data[row_off + sx] * kv;
             }
-        });
+            *out = sum;
+        }
+    });
 
     let mut out = vec![0.0_f32; w * h];
-    out.par_chunks_mut(w)
-        .enumerate()
-        .for_each(|(y, row)| {
-            for x in 0..w {
-                let mut sum = 0.0_f32;
-                for (ki, &kv) in kernel.iter().enumerate() {
-                    let sy = y as i64 + ki as i64 - half as i64;
-                    let sy = clamp_coord(sy, h);
-                    sum += temp[sy * w + x] * kv;
-                }
-                row[x] = sum;
+    out.par_chunks_mut(w).enumerate().for_each(|(y, row)| {
+        for x in 0..w {
+            let mut sum = 0.0_f32;
+            for (ki, &kv) in kernel.iter().enumerate() {
+                let sy = y as i64 + ki as i64 - half as i64;
+                let sy = clamp_coord(sy, h);
+                sum += temp[sy * w + x] * kv;
             }
-        });
+            row[x] = sum;
+        }
+    });
 
     out
 }
@@ -172,26 +167,30 @@ fn median_filter_3x3(data: &[f32], w: usize, h: usize) -> Vec<f32> {
     if w < 3 || h < 3 {
         return median_filter_3x3_edge_only(data, w, h);
     }
-    out.par_chunks_mut(w)
-        .enumerate()
-        .for_each(|(y, row)| {
-            if y == 0 || y == h - 1 {
-                fill_edge_row(data, row, y, w, h);
-                return;
-            }
-            let off_t = (y - 1) * w;
-            let off_m = y * w;
-            let off_b = (y + 1) * w;
-            row[0] = edge_median(data, 0, y, w, h);
-            for x in 1..w - 1 {
-                row[x] = median9_network([
-                    data[off_t + x - 1], data[off_t + x], data[off_t + x + 1],
-                    data[off_m + x - 1], data[off_m + x], data[off_m + x + 1],
-                    data[off_b + x - 1], data[off_b + x], data[off_b + x + 1],
-                ]);
-            }
-            row[w - 1] = edge_median(data, w - 1, y, w, h);
-        });
+    out.par_chunks_mut(w).enumerate().for_each(|(y, row)| {
+        if y == 0 || y == h - 1 {
+            fill_edge_row(data, row, y, w, h);
+            return;
+        }
+        let off_t = (y - 1) * w;
+        let off_m = y * w;
+        let off_b = (y + 1) * w;
+        row[0] = edge_median(data, 0, y, w, h);
+        for x in 1..w - 1 {
+            row[x] = median9_network([
+                data[off_t + x - 1],
+                data[off_t + x],
+                data[off_t + x + 1],
+                data[off_m + x - 1],
+                data[off_m + x],
+                data[off_m + x + 1],
+                data[off_b + x - 1],
+                data[off_b + x],
+                data[off_b + x + 1],
+            ]);
+        }
+        row[w - 1] = edge_median(data, w - 1, y, w, h);
+    });
     out
 }
 
@@ -239,26 +238,24 @@ fn median_filter_3x3_edge_only(data: &[f32], w: usize, h: usize) -> Vec<f32> {
 
 fn dilate_3x3(data: &[f32], w: usize, h: usize) -> Vec<f32> {
     let mut out = vec![0.0_f32; w * h];
-    out.par_chunks_mut(w)
-        .enumerate()
-        .for_each(|(y, row)| {
-            let y0 = if y > 0 { y - 1 } else { 0 };
-            let y1 = if y + 1 < h { y + 1 } else { h - 1 };
-            for x in 0..w {
-                let x0 = if x > 0 { x - 1 } else { 0 };
-                let x1 = if x + 1 < w { x + 1 } else { w - 1 };
-                let mut max_v = data[y * w + x];
-                for ny in y0..=y1 {
-                    for nx in x0..=x1 {
-                        let v = data[ny * w + nx];
-                        if v > max_v {
-                            max_v = v;
-                        }
+    out.par_chunks_mut(w).enumerate().for_each(|(y, row)| {
+        let y0 = if y > 0 { y - 1 } else { 0 };
+        let y1 = if y + 1 < h { y + 1 } else { h - 1 };
+        for x in 0..w {
+            let x0 = if x > 0 { x - 1 } else { 0 };
+            let x1 = if x + 1 < w { x + 1 } else { w - 1 };
+            let mut max_v = data[y * w + x];
+            for ny in y0..=y1 {
+                for nx in x0..=x1 {
+                    let v = data[ny * w + nx];
+                    if v > max_v {
+                        max_v = v;
                     }
                 }
-                row[x] = max_v;
             }
-        });
+            row[x] = max_v;
+        }
+    });
     out
 }
 
@@ -272,16 +269,14 @@ fn adaptive_binarize(data: &[f32], w: usize, h: usize) -> Vec<u8> {
     };
 
     let mut mask = vec![0_u8; n];
-    mask.par_chunks_mut(w)
-        .enumerate()
-        .for_each(|(y, row)| {
-            let off = y * w;
-            for x in 0..w {
-                if data[off + x] > threshold {
-                    row[x] = 1;
-                }
+    mask.par_chunks_mut(w).enumerate().for_each(|(y, row)| {
+        let off = y * w;
+        for x in 0..w {
+            if data[off + x] > threshold {
+                row[x] = 1;
             }
-        });
+        }
+    });
     mask
 }
 
@@ -307,34 +302,32 @@ fn subsample_median_and_noise(data: &[f32]) -> (f32, f32) {
 
 fn erode_3x3(mask: &[u8], w: usize, h: usize) -> Vec<u8> {
     let mut out = vec![0_u8; w * h];
-    out.par_chunks_mut(w)
-        .enumerate()
-        .for_each(|(y, row)| {
-            let y0 = if y > 0 { y - 1 } else { 0 };
-            let y1 = if y + 1 < h { y + 1 } else { h - 1 };
-            for x in 0..w {
-                if mask[y * w + x] == 0 {
-                    continue;
-                }
-                let x0 = if x > 0 { x - 1 } else { 0 };
-                let x1 = if x + 1 < w { x + 1 } else { w - 1 };
-                let mut all_set = true;
-                for ny in y0..=y1 {
-                    for nx in x0..=x1 {
-                        if mask[ny * w + nx] == 0 {
-                            all_set = false;
-                            break;
-                        }
-                    }
-                    if !all_set {
+    out.par_chunks_mut(w).enumerate().for_each(|(y, row)| {
+        let y0 = if y > 0 { y - 1 } else { 0 };
+        let y1 = if y + 1 < h { y + 1 } else { h - 1 };
+        for x in 0..w {
+            if mask[y * w + x] == 0 {
+                continue;
+            }
+            let x0 = if x > 0 { x - 1 } else { 0 };
+            let x1 = if x + 1 < w { x + 1 } else { w - 1 };
+            let mut all_set = true;
+            for ny in y0..=y1 {
+                for nx in x0..=x1 {
+                    if mask[ny * w + nx] == 0 {
+                        all_set = false;
                         break;
                     }
                 }
-                if all_set {
-                    row[x] = 1;
+                if !all_set {
+                    break;
                 }
             }
-        });
+            if all_set {
+                row[x] = 1;
+            }
+        }
+    });
     out
 }
 
@@ -350,14 +343,10 @@ fn median_in_place(buf: &mut [f32]) -> f32 {
     if n % 2 == 1 {
         hi
     } else {
-        let lo = buf[..mid]
-            .iter()
-            .copied()
-            .fold(f32::NEG_INFINITY, f32::max);
+        let lo = buf[..mid].iter().copied().fold(f32::NEG_INFINITY, f32::max);
         (lo + hi) * 0.5
     }
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -498,7 +487,8 @@ mod tests {
             let ix = sx as usize;
             let iy = sy as usize;
             assert_eq!(
-                mask[iy * w + ix], 1,
+                mask[iy * w + ix],
+                1,
                 "star at ({sx}, {sy}) should be in structure map"
             );
         }

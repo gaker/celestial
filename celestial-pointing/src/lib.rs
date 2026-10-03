@@ -1,8 +1,8 @@
-pub mod error;
-pub mod observation;
 pub mod commands;
 pub(crate) mod diurnal;
+pub mod error;
 pub mod model;
+pub mod observation;
 pub mod parser;
 pub mod plot;
 pub(crate) mod prepare;

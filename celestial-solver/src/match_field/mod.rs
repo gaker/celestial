@@ -165,27 +165,45 @@ pub fn match_field(
     let min_spine = field_rad * 0.05;
     let min_spine_sq = min_spine * min_spine;
 
-    let (catalog_stars, catalog_results) = catalog_cone_search(
-        catalog, ra, dec, radius, params.max_stars, epoch,
-    );
+    let (catalog_stars, catalog_results) =
+        catalog_cone_search(catalog, ra, dec, radius, params.max_stars, epoch);
     let catalog_quads = neighbor_quads(&catalog_stars, 10, min_spine_sq);
     let index = build_hash_index(&catalog_quads);
 
-    log::debug!("match_field: radius={:.3}\u{00b0}, scale={:.3}\"/px", radius, scale_arcsec);
-    log::debug!("match_field: {} catalog stars, {} catalog quads", catalog_stars.len(), catalog_quads.len());
+    log::debug!(
+        "match_field: radius={:.3}\u{00b0}, scale={:.3}\"/px",
+        radius,
+        scale_arcsec
+    );
+    log::debug!(
+        "match_field: {} catalog stars, {} catalog quads",
+        catalog_stars.len(),
+        catalog_quads.len()
+    );
 
     let results: Vec<ParityAttempt> = [false, true]
         .par_iter()
         .map(|&parity| {
-            let img_stars = stars_to_quad_stars(stars, w, h, scale_arcsec, params.max_stars, parity);
+            let img_stars =
+                stars_to_quad_stars(stars, w, h, scale_arcsec, params.max_stars, parity);
             let img_quads = neighbor_quads(&img_stars, params.k_neighbors, min_spine_sq);
             let m = find_matches(&img_quads, &catalog_quads, &index);
             let p = extract_pairs(&m, stars, &img_stars, &catalog_stars, &catalog_results);
             let score = verify_pairs(&p, ra, dec);
             let label = if parity { "flipped" } else { "normal" };
-            log::debug!("match_field [{label}]: {} img quads, {} raw matches, {} pairs, verified={}",
-                img_quads.len(), m.len(), p.len(), score);
-            ParityAttempt { img_stars, matches: m, pairs: p, score }
+            log::debug!(
+                "match_field [{label}]: {} img quads, {} raw matches, {} pairs, verified={}",
+                img_quads.len(),
+                m.len(),
+                p.len(),
+                score
+            );
+            ParityAttempt {
+                img_stars,
+                matches: m,
+                pairs: p,
+                score,
+            }
         })
         .collect();
 
@@ -198,8 +216,17 @@ pub fn match_field(
         }
     }
 
-    let ParityAttempt { img_stars: image_stars, matches, pairs, .. } = best.unwrap_or_default();
-    log::debug!("match_field: best parity => {} pairs (score {})", pairs.len(), best_score);
+    let ParityAttempt {
+        img_stars: image_stars,
+        matches,
+        pairs,
+        ..
+    } = best.unwrap_or_default();
+    log::debug!(
+        "match_field: best parity => {} pairs (score {})",
+        pairs.len(),
+        best_score
+    );
 
     Ok(FieldMatch {
         image_stars,
@@ -245,7 +272,11 @@ pub(super) mod test_catalog {
         }
         // Magnitude-sort within each pixel — cone_search relies on it elsewhere.
         for b in buckets.iter_mut() {
-            b.sort_by(|a, b| a.mag.partial_cmp(&b.mag).unwrap_or(std::cmp::Ordering::Equal));
+            b.sort_by(|a, b| {
+                a.mag
+                    .partial_cmp(&b.mag)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
         }
 
         let total_stars: u64 = stars.len() as u64;
@@ -310,7 +341,9 @@ mod tests {
 
     fn det(x: f64, y: f64, flux: f64) -> DetectedStar {
         DetectedStar {
-            x, y, flux,
+            x,
+            y,
+            flux,
             snr: 20.0,
             saturated: false,
             saturated_count: 0,
@@ -332,7 +365,11 @@ mod tests {
 
     #[test]
     fn match_params_clone() {
-        let p = MatchParams { max_stars: 250, k_neighbors: 20, search_radius_deg: Some(3.5) };
+        let p = MatchParams {
+            max_stars: 250,
+            k_neighbors: 20,
+            search_radius_deg: Some(3.5),
+        };
         let q = p.clone();
         assert_eq!(q.max_stars, 250);
         assert_eq!(q.k_neighbors, 20);
@@ -342,9 +379,12 @@ mod tests {
     #[test]
     fn star_pair_clone_preserves_fields() {
         let p = StarPair {
-            px_x: 1.0, px_y: 2.0,
-            ra_deg: 10.0, dec_deg: 20.0,
-            votes: 5, snr: 30.0,
+            px_x: 1.0,
+            px_y: 2.0,
+            ra_deg: 10.0,
+            dec_deg: 20.0,
+            votes: 5,
+            snr: 30.0,
         };
         let q = p.clone();
         assert_eq!(q.px_x, 1.0);
@@ -359,8 +399,14 @@ mod tests {
     fn quad_match_clone_preserves_quads() {
         use celestial_catalog::query::Quad;
         let qm = QuadMatch {
-            image_quad: Quad { hash: [0.1, 0.2, 0.3, 0.4], star_indices: [1, 2, 3, 4] },
-            catalog_quad: Quad { hash: [0.5, 0.6, 0.7, 0.8], star_indices: [5, 6, 7, 8] },
+            image_quad: Quad {
+                hash: [0.1, 0.2, 0.3, 0.4],
+                star_indices: [1, 2, 3, 4],
+            },
+            catalog_quad: Quad {
+                hash: [0.5, 0.6, 0.7, 0.8],
+                star_indices: [5, 6, 7, 8],
+            },
         };
         let c = qm.clone();
         assert_eq!(c.image_quad.hash, [0.1, 0.2, 0.3, 0.4]);
@@ -491,7 +537,12 @@ mod tests {
 
         // image_stars belongs to the winning parity; pairs may be empty for a
         // synthetic non-aligned field, but the structure must be populated.
-        let _ = (out.image_stars.len(), out.catalog_stars.len(), out.matches.len(), out.pairs.len());
+        let _ = (
+            out.image_stars.len(),
+            out.catalog_stars.len(),
+            out.matches.len(),
+            out.pairs.len(),
+        );
     }
 
     #[test]

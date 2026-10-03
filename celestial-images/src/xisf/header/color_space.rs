@@ -58,7 +58,10 @@ mod tests {
 
     #[test]
     fn as_str_roundtrip_known() {
-        assert_eq!(ColorSpace::parse(ColorSpace::Gray.as_str()).as_str(), "Gray");
+        assert_eq!(
+            ColorSpace::parse(ColorSpace::Gray.as_str()).as_str(),
+            "Gray"
+        );
         assert_eq!(ColorSpace::parse(ColorSpace::Rgb.as_str()).as_str(), "RGB");
     }
 

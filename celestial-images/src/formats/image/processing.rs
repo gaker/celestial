@@ -204,7 +204,10 @@ mod tests {
         let mut img = original.clone();
         img.interleaved_to_planar();
         img.planar_to_interleaved();
-        assert_eq!(img.pixels.as_u8().unwrap(), original.pixels.as_u8().unwrap());
+        assert_eq!(
+            img.pixels.as_u8().unwrap(),
+            original.pixels.as_u8().unwrap()
+        );
     }
 
     #[test]
@@ -351,10 +354,7 @@ mod tests {
 
     #[test]
     fn debayer_skips_unsupported_bit_depths() {
-        let mut img = Image::new(
-            PixelData::F32(vec![0.0; 16]),
-            vec![4usize, 4],
-        );
+        let mut img = Image::new(PixelData::F32(vec![0.0; 16]), vec![4usize, 4]);
         img.debayer(BayerPattern::Rggb);
         // Because we return early, dimensions shouldn't have gotten the third axis.
         assert_eq!(img.channels(), 1);

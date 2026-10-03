@@ -1,6 +1,4 @@
-const PHYSICAL_CANDIDATES: &[&str] = &[
-    "TF", "TX", "DAF", "FO", "HCES", "HCEC", "DCES", "DCEC",
-];
+const PHYSICAL_CANDIDATES: &[&str] = &["TF", "TX", "DAF", "FO", "HCES", "HCEC", "DCES", "DCEC"];
 const SINGLE_HARMONIC_MAX_FREQ: u8 = 8;
 const CROSS_HARMONIC_MAX_HA_FREQ: u8 = 4;
 const CROSS_HARMONIC_MAX_DEC_FREQ: u8 = 8;
@@ -46,12 +44,8 @@ pub(super) fn build_candidate_pool() -> CandidatePool {
     }
 }
 
-pub(super) fn filter_remaining(
-    candidates: &CandidatePool,
-    active: &[String],
-) -> CandidatePool {
-    let active_set: std::collections::HashSet<&str> =
-        active.iter().map(|s| s.as_str()).collect();
+pub(super) fn filter_remaining(candidates: &CandidatePool, active: &[String]) -> CandidatePool {
+    let active_set: std::collections::HashSet<&str> = active.iter().map(|s| s.as_str()).collect();
     CandidatePool {
         singles: candidates
             .singles
@@ -62,9 +56,7 @@ pub(super) fn filter_remaining(
         pairs: candidates
             .pairs
             .iter()
-            .filter(|(a, b)| {
-                !active_set.contains(a.as_str()) && !active_set.contains(b.as_str())
-            })
+            .filter(|(a, b)| !active_set.contains(a.as_str()) && !active_set.contains(b.as_str()))
             .cloned()
             .collect(),
         triples: candidates
@@ -122,9 +114,7 @@ fn cross_harmonics() -> Vec<String> {
     out
 }
 
-fn split_singles_and_pairs(
-    names: &[String],
-) -> (Vec<String>, Vec<String>, Vec<(String, String)>) {
+fn split_singles_and_pairs(names: &[String]) -> (Vec<String>, Vec<String>, Vec<(String, String)>) {
     let mut singletons = Vec::new();
     let mut pair_singles = Vec::new();
     let mut pairs = Vec::new();
@@ -134,9 +124,7 @@ fn split_singles_and_pairs(
             continue;
         }
         match pair_partner(name) {
-            Some(partner)
-                if names.iter().any(|n| n == &partner) && !seen.contains(&partner) =>
-            {
+            Some(partner) if names.iter().any(|n| n == &partner) && !seen.contains(&partner) => {
                 seen.insert(name.clone());
                 seen.insert(partner.clone());
                 pair_singles.push(name.clone());

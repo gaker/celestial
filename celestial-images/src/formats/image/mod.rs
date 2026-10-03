@@ -39,10 +39,7 @@ impl Image {
         self.xisf_properties.push(property);
     }
 
-    pub fn add_xisf_properties(
-        &mut self,
-        properties: impl IntoIterator<Item = XisfProperty>,
-    ) {
+    pub fn add_xisf_properties(&mut self, properties: impl IntoIterator<Item = XisfProperty>) {
         self.xisf_properties.extend(properties);
     }
 

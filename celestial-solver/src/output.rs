@@ -287,7 +287,11 @@ mod tests {
         }
     }
 
-    fn build_result(wcs: WcsSolution, sip: Option<SipSolution>, pairs: Vec<StarPair>) -> SolveResult {
+    fn build_result(
+        wcs: WcsSolution,
+        sip: Option<SipSolution>,
+        pairs: Vec<StarPair>,
+    ) -> SolveResult {
         let field_match = FieldMatch {
             image_stars: Vec::new(),
             catalog_stars: Vec::new(),
@@ -415,11 +419,25 @@ mod tests {
         assert!(
             matches!(&get("RBFType").value, XisfPropertyValue::String(s) if s == "ThinPlateSpline")
         );
-        assert!(matches!(get("SplineOrder").value, XisfPropertyValue::Int32(2)));
-        assert!(matches!(get("MaxSplinePoints").value, XisfPropertyValue::Int32(2100)));
-        assert!(matches!(get("UseSimplifiers").value, XisfPropertyValue::Boolean(true)));
-        assert!(matches!(get("Truncated").value, XisfPropertyValue::Boolean(false)));
-        assert!(matches!(get("SplineSmoothness").value, XisfPropertyValue::Float64(s) if s == 0.025));
+        assert!(matches!(
+            get("SplineOrder").value,
+            XisfPropertyValue::Int32(2)
+        ));
+        assert!(matches!(
+            get("MaxSplinePoints").value,
+            XisfPropertyValue::Int32(2100)
+        ));
+        assert!(matches!(
+            get("UseSimplifiers").value,
+            XisfPropertyValue::Boolean(true)
+        ));
+        assert!(matches!(
+            get("Truncated").value,
+            XisfPropertyValue::Boolean(false)
+        ));
+        assert!(
+            matches!(get("SplineSmoothness").value, XisfPropertyValue::Float64(s) if s == 0.025)
+        );
         assert!(matches!(
             get("SimplifierRejectFraction").value,
             XisfPropertyValue::Float64(s) if s == 0.10
@@ -467,7 +485,10 @@ mod tests {
         let result = build_result(sample_wcs(), None, pairs);
         let props = result.to_xisf_properties();
 
-        let world = props.iter().find(|p| p.id.ends_with("ControlPoints:World")).unwrap();
+        let world = props
+            .iter()
+            .find(|p| p.id.ends_with("ControlPoints:World"))
+            .unwrap();
         if let XisfPropertyValue::F64Vector(v) = &world.value {
             assert_eq!(v.len(), 10, "anti-center pair should be dropped");
         } else {
@@ -536,7 +557,10 @@ mod tests {
             img.get_keyword("A_ORDER").unwrap().value.clone().unwrap(),
             KeywordValue::Integer(3)
         );
-        assert!(img.get_keyword("B_1_1").is_none(), "unset coeff should not appear");
+        assert!(
+            img.get_keyword("B_1_1").is_none(),
+            "unset coeff should not appear"
+        );
         assert!(img.get_keyword("A_1_1").is_some());
     }
 
@@ -559,7 +583,10 @@ mod tests {
         let result = build_result(sample_wcs(), None, Vec::new());
         result.save_with(&img, tmp.path()).unwrap();
 
-        assert!(img.get_keyword("CRVAL1").is_none(), "caller's image must not be modified");
+        assert!(
+            img.get_keyword("CRVAL1").is_none(),
+            "caller's image must not be modified"
+        );
     }
 
     #[test]
@@ -575,7 +602,10 @@ mod tests {
 
     #[test]
     fn save_with_unsupported_extension_errors() {
-        let tmp = tempfile::Builder::new().suffix(".bogus").tempfile().unwrap();
+        let tmp = tempfile::Builder::new()
+            .suffix(".bogus")
+            .tempfile()
+            .unwrap();
         let img = blank_image();
         let result = build_result(sample_wcs(), None, Vec::new());
         assert!(result.save_with(&img, tmp.path()).is_err());

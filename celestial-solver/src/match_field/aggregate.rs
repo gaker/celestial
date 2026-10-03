@@ -50,12 +50,19 @@ pub(super) fn extract_pairs(
             }
             let img_star = &image_stars[img_idx];
             let cat_id = catalog_stars[cat_idx].source_id;
-            let Some(&(ra, dec)) = ra_dec.get(&cat_id) else { continue };
+            let Some(&(ra, dec)) = ra_dec.get(&cat_id) else {
+                continue;
+            };
             let det_idx = img_star.source_id as usize;
             let det = &detected[det_idx];
             let key = (img_star.source_id, cat_id);
             let entry = votes.entry(key).or_insert(VoteEntry {
-                px_x: det.x, px_y: det.y, ra, dec, snr: det.snr, votes: 0,
+                px_x: det.x,
+                px_y: det.y,
+                ra,
+                dec,
+                snr: det.snr,
+                votes: 0,
             });
             entry.votes += 1;
         }
@@ -63,20 +70,28 @@ pub(super) fn extract_pairs(
 
     let mut by_image: HashMap<i64, BestMatch> = HashMap::new();
     for (&(img_id, cat_id), entry) in &votes {
-        by_image.entry(img_id)
+        by_image
+            .entry(img_id)
             .and_modify(|best| {
                 if entry.votes > best.entry.votes
                     || (entry.votes == best.entry.votes && cat_id < best.cat_id)
                 {
-                    *best = BestMatch { cat_id, entry: *entry };
+                    *best = BestMatch {
+                        cat_id,
+                        entry: *entry,
+                    };
                 }
             })
-            .or_insert(BestMatch { cat_id, entry: *entry });
+            .or_insert(BestMatch {
+                cat_id,
+                entry: *entry,
+            });
     }
 
     let mut used_cat: HashMap<i64, (i64, usize)> = HashMap::new();
     for (&img_id, best) in &by_image {
-        used_cat.entry(best.cat_id)
+        used_cat
+            .entry(best.cat_id)
             .and_modify(|e| {
                 if best.entry.votes > e.1 || (best.entry.votes == e.1 && img_id < e.0) {
                     *e = (img_id, best.entry.votes);
@@ -112,7 +127,8 @@ mod tests {
 
     fn det(x: f64, y: f64, snr: f64) -> DetectedStar {
         DetectedStar {
-            x, y,
+            x,
+            y,
             flux: 1000.0,
             snr,
             saturated: false,
@@ -122,11 +138,21 @@ mod tests {
     }
 
     fn img_star(id: i64) -> QuadStar {
-        QuadStar { source_id: id, x: 0.0, y: 0.0, mag: 0.0 }
+        QuadStar {
+            source_id: id,
+            x: 0.0,
+            y: 0.0,
+            mag: 0.0,
+        }
     }
 
     fn cat_star(id: i64) -> QuadStar {
-        QuadStar { source_id: id, x: 0.0, y: 0.0, mag: 0.0 }
+        QuadStar {
+            source_id: id,
+            x: 0.0,
+            y: 0.0,
+            mag: 0.0,
+        }
     }
 
     fn cone_result(source_id: i64, ra: f64, dec: f64) -> ConeSearchResult {
@@ -135,13 +161,24 @@ mod tests {
         star.ra = ra;
         star.dec = dec;
         star.mag = 10.0;
-        ConeSearchResult { star, ra_deg: ra, dec_deg: dec, distance_deg: 0.0 }
+        ConeSearchResult {
+            star,
+            ra_deg: ra,
+            dec_deg: dec,
+            distance_deg: 0.0,
+        }
     }
 
     fn quad_match(img_idx: [usize; 4], cat_idx: [usize; 4]) -> QuadMatch {
         QuadMatch {
-            image_quad: Quad { hash: [0.0; 4], star_indices: img_idx },
-            catalog_quad: Quad { hash: [0.0; 4], star_indices: cat_idx },
+            image_quad: Quad {
+                hash: [0.0; 4],
+                star_indices: img_idx,
+            },
+            catalog_quad: Quad {
+                hash: [0.0; 4],
+                star_indices: cat_idx,
+            },
         }
     }
 
@@ -324,7 +361,10 @@ mod tests {
         let pairs = extract_pairs(&m, &detected, &img, &cat, &res);
         // Img 0 had two catalog candidates; by_image's and_modify branch picks 8000 (3 votes).
         let img0_pair = pairs.iter().find(|p| p.ra_deg == 1.0);
-        assert!(img0_pair.is_some(), "img 0 must claim catalog 8000 (3 votes)");
+        assert!(
+            img0_pair.is_some(),
+            "img 0 must claim catalog 8000 (3 votes)"
+        );
         assert_eq!(img0_pair.unwrap().votes, 3);
         // The losing candidate (9000) must not appear as img 0's pair.
         assert!(pairs.iter().find(|p| p.ra_deg == 5.0).is_none());

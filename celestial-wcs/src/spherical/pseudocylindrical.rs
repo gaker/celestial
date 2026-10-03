@@ -195,10 +195,8 @@ mod tests {
 
         for phi_deg in [-180.0, -90.0, -45.0, 0.0, 45.0, 90.0, 180.0] {
             for theta_deg in [-60.0, -30.0, 0.0, 30.0, 60.0] {
-                let original = NativeCoord::new(
-                    Angle::from_degrees(phi_deg),
-                    Angle::from_degrees(theta_deg),
-                );
+                let original =
+                    NativeCoord::new(Angle::from_degrees(phi_deg), Angle::from_degrees(theta_deg));
                 let inter = proj.project(original).unwrap();
                 let recovered = proj.deproject(inter).unwrap();
                 assert_ulp_lt!(original.phi().degrees(), recovered.phi().degrees(), 5);
@@ -212,10 +210,8 @@ mod tests {
         let proj = Projection::par();
         for phi_deg in [-180.0, -90.0, -45.0, 0.0, 45.0, 90.0, 180.0] {
             for theta_deg in [-60.0, -30.0, 0.0, 30.0, 60.0] {
-                let original = NativeCoord::new(
-                    Angle::from_degrees(phi_deg),
-                    Angle::from_degrees(theta_deg),
-                );
+                let original =
+                    NativeCoord::new(Angle::from_degrees(phi_deg), Angle::from_degrees(theta_deg));
                 let inter = proj.project(original).unwrap();
                 let recovered = proj.deproject(inter).unwrap();
                 assert_ulp_lt!(original.phi().degrees(), recovered.phi().degrees(), 5);
@@ -231,23 +227,27 @@ mod tests {
         // Paper II Eq. 79: at the poles, |y| = sqrt(2) * (180/pi) and x = 0.
         let expected_y = SQRT2 * RAD_TO_DEG;
         let north = proj
-            .project(NativeCoord::new(Angle::from_degrees(0.0), Angle::from_degrees(90.0)))
+            .project(NativeCoord::new(
+                Angle::from_degrees(0.0),
+                Angle::from_degrees(90.0),
+            ))
             .unwrap();
         assert!(north.x_deg().abs() < 1e-10);
         assert!((north.y_deg() - expected_y).abs() < 1e-10);
 
         let south = proj
-            .project(NativeCoord::new(Angle::from_degrees(0.0), Angle::from_degrees(-90.0)))
+            .project(NativeCoord::new(
+                Angle::from_degrees(0.0),
+                Angle::from_degrees(-90.0),
+            ))
             .unwrap();
         assert!(south.x_deg().abs() < 1e-10);
         assert!((south.y_deg() + expected_y).abs() < 1e-10);
 
         for phi_deg in [-180.0, -90.0, -45.0, 0.0, 45.0, 90.0, 180.0] {
             for theta_deg in [-60.0, -30.0, 0.0, 30.0, 60.0] {
-                let original = NativeCoord::new(
-                    Angle::from_degrees(phi_deg),
-                    Angle::from_degrees(theta_deg),
-                );
+                let original =
+                    NativeCoord::new(Angle::from_degrees(phi_deg), Angle::from_degrees(theta_deg));
                 let inter = proj.project(original).unwrap();
                 let recovered = proj.deproject(inter).unwrap();
                 assert_ulp_lt!(original.phi().degrees(), recovered.phi().degrees(), 15);
@@ -269,10 +269,8 @@ mod tests {
 
         for phi_deg in [-150.0, -90.0, -45.0, 0.0, 45.0, 90.0, 150.0] {
             for theta_deg in [-60.0, -30.0, 0.0, 30.0, 60.0] {
-                let original = NativeCoord::new(
-                    Angle::from_degrees(phi_deg),
-                    Angle::from_degrees(theta_deg),
-                );
+                let original =
+                    NativeCoord::new(Angle::from_degrees(phi_deg), Angle::from_degrees(theta_deg));
                 let inter = proj.project(original).unwrap();
                 let recovered = proj.deproject(inter).unwrap();
                 assert_ulp_lt!(original.phi().degrees(), recovered.phi().degrees(), 15);

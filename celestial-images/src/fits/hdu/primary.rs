@@ -22,28 +22,16 @@ impl PrimaryHdu {
     }
 
     pub fn has_data(&self) -> bool {
-        self.header
-            .get("NAXIS")
-            .as_i64()
-            .unwrap_or(0)
-            > 0
+        self.header.get("NAXIS").as_i64().unwrap_or(0) > 0
     }
 
     pub fn data_dimensions(&self) -> Vec<usize> {
-        let naxis = self
-            .header
-            .get("NAXIS")
-            .as_i64()
-            .unwrap_or(0) as usize;
+        let naxis = self.header.get("NAXIS").as_i64().unwrap_or(0) as usize;
 
         let mut dims = Vec::with_capacity(naxis);
         for i in 1..=naxis {
             let axis_name = format!("NAXIS{}", i);
-            let axis_size = self
-                .header
-                .get(&axis_name)
-                .as_i64()
-                .unwrap_or(0) as usize;
+            let axis_size = self.header.get(&axis_name).as_i64().unwrap_or(0) as usize;
             dims.push(axis_size);
         }
         dims
@@ -114,16 +102,8 @@ mod tests {
         let hdu = PrimaryHdu::new(header, info);
 
         assert_eq!(hdu.info.index, 0);
-        assert_eq!(
-            hdu.header
-                .get("NAXIS").as_i64()
-                .unwrap(),
-            2
-        );
-        assert!(hdu
-            .header
-            .get("SIMPLE").as_bool()
-            .unwrap());
+        assert_eq!(hdu.header.get("NAXIS").as_i64().unwrap(), 2);
+        assert!(hdu.header.get("SIMPLE").as_bool().unwrap());
     }
 
     #[test]
@@ -133,15 +113,8 @@ mod tests {
         let hdu = PrimaryHdu::new(header, info);
 
         let header_ref = hdu.header();
-        assert_eq!(
-            header_ref
-                .get("NAXIS").as_i64()
-                .unwrap(),
-            2
-        );
-        assert!(header_ref
-            .get("SIMPLE").as_bool()
-            .unwrap());
+        assert_eq!(header_ref.get("NAXIS").as_i64().unwrap(), 2);
+        assert!(header_ref.get("SIMPLE").as_bool().unwrap());
     }
 
     #[test]
@@ -425,14 +398,8 @@ mod tests {
         assert_eq!(hdu.data_dimensions(), vec![100, 50]);
         assert_eq!(hdu.bitpix(), Some(BitPix::U8));
         assert_eq!(hdu.calculate_data_size().unwrap(), 100 * 50);
-        assert!(hdu
-            .header()
-            .get("SIMPLE").as_bool()
-            .unwrap());
-        assert!(hdu
-            .header()
-            .get("EXTEND").as_bool()
-            .unwrap());
+        assert!(hdu.header().get("SIMPLE").as_bool().unwrap());
+        assert!(hdu.header().get("EXTEND").as_bool().unwrap());
     }
 
     #[test]

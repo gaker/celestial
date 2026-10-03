@@ -136,8 +136,7 @@ mod tests {
 
     #[test]
     fn coord_error_converts_via_from_impl() {
-        let coord_err =
-            celestial_coords::ICRSPosition::from_degrees(f64::NAN, 0.0).unwrap_err();
+        let coord_err = celestial_coords::ICRSPosition::from_degrees(f64::NAN, 0.0).unwrap_err();
         let err: MetadataError = coord_err.into();
         assert!(matches!(err, MetadataError::InvalidPosition(_)));
     }

@@ -3,7 +3,9 @@ use super::design::{
     scale_a_ha_rows_by_cos_dec, scale_ha_rows_by_cos_dec, subtract_all_contributions,
 };
 use super::linalg::{solve_and_covariance, SolveOutcome};
-use super::stats::{compute_diagnostics, compute_sigma_from_covariance, compute_sky_rms, compute_popn_sd};
+use super::stats::{
+    compute_diagnostics, compute_popn_sd, compute_sigma_from_covariance, compute_sky_rms,
+};
 use super::validate::{collect_indices, validate_fit_inputs};
 use super::{FitInputs, FitResult, IterReport, RankInfo};
 use crate::error::Result;
@@ -190,10 +192,7 @@ mod tests {
         let o1 = obs(100.0, 30.0);
         let o2 = obs(100.0, 45.0);
         let observations: Vec<&Observation> = vec![&o1, &o2];
-        let terms = vec![
-            create_term("IH").unwrap(),
-            create_term("ID").unwrap(),
-        ];
+        let terms = vec![create_term("IH").unwrap(), create_term("ID").unwrap()];
         // Fix ID at 50, leave IH free.
         let result = run_fit(&observations, &terms, &[false, true], &[0.0, 50.0]);
         assert_eq!(result.coefficients[1], 50.0);
@@ -253,6 +252,10 @@ mod tests {
         let observations: Vec<&Observation> = vec![&o1, &o2];
         let terms = vec![create_term("IH").unwrap()];
         let result = run_fit(&observations, &terms, &[false], &[0.0]);
-        assert!(result.sky_rms.abs() < 1e-6, "got sky_rms = {}", result.sky_rms);
+        assert!(
+            result.sky_rms.abs() < 1e-6,
+            "got sky_rms = {}",
+            result.sky_rms
+        );
     }
 }

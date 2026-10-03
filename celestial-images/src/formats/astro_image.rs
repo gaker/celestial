@@ -199,17 +199,11 @@ mod tests {
     use celestial_wcs::{Projection, WcsBuilder};
 
     fn tmp_fits() -> tempfile::NamedTempFile {
-        tempfile::Builder::new()
-            .suffix(".fits")
-            .tempfile()
-            .unwrap()
+        tempfile::Builder::new().suffix(".fits").tempfile().unwrap()
     }
 
     fn tmp_xisf() -> tempfile::NamedTempFile {
-        tempfile::Builder::new()
-            .suffix(".xisf")
-            .tempfile()
-            .unwrap()
+        tempfile::Builder::new().suffix(".xisf").tempfile().unwrap()
     }
 
     fn sample_wcs() -> Wcs {
@@ -236,10 +230,7 @@ mod tests {
     #[test]
     fn image_kind_reflects_dimensions() {
         let data = vec![0u8; 16];
-        assert_eq!(
-            AstroImage::new(&data, [4, 4]).image_kind(),
-            ImageKind::Mono
-        );
+        assert_eq!(AstroImage::new(&data, [4, 4]).image_kind(), ImageKind::Mono);
 
         let data = vec![0u8; 48];
         assert_eq!(
@@ -259,8 +250,7 @@ mod tests {
     #[test]
     fn keyword_appends() {
         let data = vec![0u8; 16];
-        let img =
-            AstroImage::new(&data, [4, 4]).keyword(Keyword::string("OBJECT", "M31"));
+        let img = AstroImage::new(&data, [4, 4]).keyword(Keyword::string("OBJECT", "M31"));
         assert_eq!(img.keywords.len(), 1);
         assert_eq!(img.keywords[0].name, "OBJECT");
     }
@@ -302,11 +292,23 @@ mod tests {
 
         let keywords = &img.keywords;
         let find = |name: &str| keywords.iter().find(|k| k.name == name);
-        assert_eq!(find("EXPTIME").unwrap().value, Some(KeywordValue::Real(30.0)));
-        assert_eq!(find("CCD-TEMP").unwrap().value, Some(KeywordValue::Real(-10.0)));
+        assert_eq!(
+            find("EXPTIME").unwrap().value,
+            Some(KeywordValue::Real(30.0))
+        );
+        assert_eq!(
+            find("CCD-TEMP").unwrap().value,
+            Some(KeywordValue::Real(-10.0))
+        );
         assert_eq!(find("GAIN").unwrap().value, Some(KeywordValue::Real(1.5)));
-        assert_eq!(find("XBINNING").unwrap().value, Some(KeywordValue::Integer(2)));
-        assert_eq!(find("YBINNING").unwrap().value, Some(KeywordValue::Integer(2)));
+        assert_eq!(
+            find("XBINNING").unwrap().value,
+            Some(KeywordValue::Integer(2))
+        );
+        assert_eq!(
+            find("YBINNING").unwrap().value,
+            Some(KeywordValue::Integer(2))
+        );
         assert_eq!(
             find("FILTER").unwrap().value,
             Some(KeywordValue::String("V".into()))
@@ -409,7 +411,10 @@ mod tests {
 
     #[test]
     fn write_to_rejects_unknown_extension() {
-        let tmp = tempfile::Builder::new().suffix(".bogus").tempfile().unwrap();
+        let tmp = tempfile::Builder::new()
+            .suffix(".bogus")
+            .tempfile()
+            .unwrap();
         let data = vec![0u8; 16];
         assert!(AstroImage::new(&data, [4, 4]).write_to(tmp.path()).is_err());
     }
@@ -465,4 +470,3 @@ mod tests {
         assert_eq!(img_empty.extract_dimensions(), (1, 1, 1));
     }
 }
-

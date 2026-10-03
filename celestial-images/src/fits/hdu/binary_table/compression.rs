@@ -5,17 +5,12 @@ use std::io::{Read, Seek, SeekFrom};
 
 impl BinaryTableHdu {
     pub fn is_compressed_image(&self) -> bool {
-        self.header
-            .get("ZIMAGE")
-            .as_bool()
-            .unwrap_or(false)
+        self.header.get("ZIMAGE").as_bool().unwrap_or(false)
     }
 
     pub fn compression_algorithm(&self) -> Option<&str> {
         if self.is_compressed_image() {
-            self.header
-                .get("ZCMPTYPE")
-                .as_str()
+            self.header.get("ZCMPTYPE").as_str()
         } else {
             None
         }
@@ -23,9 +18,7 @@ impl BinaryTableHdu {
 
     pub fn quantization_level(&self) -> Option<i64> {
         if self.is_compressed_image() {
-            self.header
-                .get("ZQUANTIZ")
-                .as_i64()
+            self.header.get("ZQUANTIZ").as_i64()
         } else {
             None
         }
@@ -37,21 +30,21 @@ impl BinaryTableHdu {
     }
 
     pub fn get_tile_dimensions(&self) -> Result<(usize, usize)> {
-        let znaxis1 = self
-            .header
-            .get("ZNAXIS1")
-            .as_i64()
-            .ok_or_else(|| FitsError::KeywordNotFound {
-                keyword: "ZNAXIS1".to_string(),
-            })?;
+        let znaxis1 =
+            self.header
+                .get("ZNAXIS1")
+                .as_i64()
+                .ok_or_else(|| FitsError::KeywordNotFound {
+                    keyword: "ZNAXIS1".to_string(),
+                })?;
 
-        let znaxis2 = self
-            .header
-            .get("ZNAXIS2")
-            .as_i64()
-            .ok_or_else(|| FitsError::KeywordNotFound {
-                keyword: "ZNAXIS2".to_string(),
-            })?;
+        let znaxis2 =
+            self.header
+                .get("ZNAXIS2")
+                .as_i64()
+                .ok_or_else(|| FitsError::KeywordNotFound {
+                    keyword: "ZNAXIS2".to_string(),
+                })?;
 
         Ok((znaxis1 as usize, znaxis2 as usize))
     }
@@ -546,8 +539,8 @@ mod tests {
         let mut bytes = Vec::new();
         bytes.extend_from_slice(&3u32.to_be_bytes()); // count
         bytes.extend_from_slice(&2u32.to_be_bytes()); // heap offset
-        // Heap starts at data_start + (rows * row_size) = 0 + 1*8 = 8
-        // Heap contents, with target data at heap_offset 2.
+                                                      // Heap starts at data_start + (rows * row_size) = 0 + 1*8 = 8
+                                                      // Heap contents, with target data at heap_offset 2.
         bytes.extend_from_slice(&[0xFF, 0xFF, 0xDE, 0xAD, 0xBE]); // 2 pad + 3 payload
         let mut cursor = Cursor::new(bytes);
 
@@ -563,7 +556,7 @@ mod tests {
         let mut bytes = Vec::new();
         bytes.extend_from_slice(&4u64.to_be_bytes()); // count
         bytes.extend_from_slice(&0u64.to_be_bytes()); // heap offset 0 → straight to heap
-        // Heap starts at 0 + 1*16 = 16
+                                                      // Heap starts at 0 + 1*16 = 16
         bytes.extend_from_slice(&[0xAA, 0xBB, 0xCC, 0xDD]);
         let mut cursor = Cursor::new(bytes);
 
@@ -597,7 +590,7 @@ mod tests {
         let mut bytes = Vec::new();
         bytes.extend_from_slice(&(compressed.len() as u32).to_be_bytes()); // count
         bytes.extend_from_slice(&0u32.to_be_bytes()); // heap offset 0
-        // Heap starts at data_start + row_size = 0 + 8 = 8
+                                                      // Heap starts at data_start + row_size = 0 + 8 = 8
         bytes.extend_from_slice(&compressed);
         let mut cursor = Cursor::new(bytes);
 

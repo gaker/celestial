@@ -158,8 +158,7 @@ fn run_single_pass(
     )?;
     append_trace(report, &physical_trace);
     append_trace(report, &trace);
-    let backed_out =
-        backward_eliminate(observations, active, parallel_groups, latitude, fit_tol)?;
+    let backed_out = backward_eliminate(observations, active, parallel_groups, latitude, fit_tol)?;
     for name in &backed_out {
         report.push_str(&format!("- {} (backward-eliminated)\n", name));
     }
@@ -331,11 +330,7 @@ mod tests {
     use crate::solver::ObsDiagnostic;
     use crate::test_support::{diag, obs, FitResultBuilder};
 
-    fn fit(
-        sky_rms: f64,
-        popn_sd: f64,
-        diagnostics: Vec<ObsDiagnostic>,
-    ) -> FitResult {
+    fn fit(sky_rms: f64, popn_sd: f64, diagnostics: Vec<ObsDiagnostic>) -> FitResult {
         FitResultBuilder::new()
             .sky_rms(sky_rms)
             .popn_sd(popn_sd)

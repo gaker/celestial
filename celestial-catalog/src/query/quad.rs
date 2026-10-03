@@ -50,8 +50,8 @@ pub fn tan_deproject_star(
     let c = libm::atan(rho);
     let (sc, cc) = libm::sincos(c);
     let dec = libm::asin(cc * sd0 + eta_rad * sc * cd0 / rho) * RAD_TO_DEG;
-    let ra = center_ra_deg
-        + libm::atan2(xi_rad * sc, rho * cd0 * cc - eta_rad * sd0 * sc) * RAD_TO_DEG;
+    let ra =
+        center_ra_deg + libm::atan2(xi_rad * sc, rho * cd0 * cc - eta_rad * sd0 * sc) * RAD_TO_DEG;
     (ra, dec)
 }
 
@@ -106,7 +106,13 @@ pub fn orient_spine(sa: &QuadStar, a: usize, sb: &QuadStar, b: usize) -> (usize,
     }
 }
 
-pub fn normalize_quad(stars: &[QuadStar], a: usize, b: usize, c: usize, d: usize) -> Option<[f64; 4]> {
+pub fn normalize_quad(
+    stars: &[QuadStar],
+    a: usize,
+    b: usize,
+    c: usize,
+    d: usize,
+) -> Option<[f64; 4]> {
     normalize_quad_ordered(stars, a, b, c, d).map(|(hash, _)| hash)
 }
 
@@ -136,12 +142,11 @@ pub fn normalize_quad_ordered(
     let dx_val = (px_d * dx_ab + py_d * dy_ab) / scale;
     let dy_val = (py_d * dx_ab - px_d * dy_ab) / scale;
 
-    let (cx, cy, dx_val, dy_val, c_out, d_out) =
-        if cx < dx_val || (cx == dx_val && cy <= dy_val) {
-            (cx, cy, dx_val, dy_val, c, d)
-        } else {
-            (dx_val, dy_val, cx, cy, d, c)
-        };
+    let (cx, cy, dx_val, dy_val, c_out, d_out) = if cx < dx_val || (cx == dx_val && cy <= dy_val) {
+        (cx, cy, dx_val, dy_val, c, d)
+    } else {
+        (dx_val, dy_val, cx, cy, d, c)
+    };
 
     Some(([cx, cy, dx_val, dy_val], [a, b, c_out, d_out]))
 }
@@ -208,11 +213,7 @@ fn knn_indices(stars: &[QuadStar], seed: usize, k: usize) -> Vec<usize> {
     dists.into_iter().map(|(i, _)| i).collect()
 }
 
-pub fn neighbor_quads(
-    stars: &[QuadStar],
-    k_neighbors: usize,
-    min_spine_sq: f64,
-) -> Vec<Quad> {
+pub fn neighbor_quads(stars: &[QuadStar], k_neighbors: usize, min_spine_sq: f64) -> Vec<Quad> {
     let n = stars.len();
     if n < 4 {
         return Vec::new();
@@ -256,7 +257,10 @@ pub fn neighbor_quads(
 
 pub fn discrete_hash_key(hash: &[f64; 4]) -> u64 {
     let quantize = |v: f64| ((v * 100.0).floor() as i32 + 500) as u64 & 0xFFFF;
-    quantize(hash[0]) | (quantize(hash[1]) << 16) | (quantize(hash[2]) << 32) | (quantize(hash[3]) << 48)
+    quantize(hash[0])
+        | (quantize(hash[1]) << 16)
+        | (quantize(hash[2]) << 32)
+        | (quantize(hash[3]) << 48)
 }
 
 pub fn discrete_hash_key_neighbors(hash: &[f64; 4]) -> [u64; 81] {
@@ -503,8 +507,18 @@ mod tests {
 
     #[test]
     fn test_orient_spine_determinism() {
-        let s1 = QuadStar { source_id: 0, x: 5.0, y: 3.0, mag: 5.0 };
-        let s2 = QuadStar { source_id: 1, x: 1.0, y: 7.0, mag: 5.0 };
+        let s1 = QuadStar {
+            source_id: 0,
+            x: 5.0,
+            y: 3.0,
+            mag: 5.0,
+        };
+        let s2 = QuadStar {
+            source_id: 1,
+            x: 1.0,
+            y: 7.0,
+            mag: 5.0,
+        };
         let (a1, b1) = orient_spine(&s1, 0, &s2, 1);
         let (a2, b2) = orient_spine(&s2, 1, &s1, 0);
         assert_eq!(a1, a2);
@@ -538,11 +552,14 @@ mod tests {
             (2.0, 1.0, 5.0),
         ]);
         let quads = neighbor_quads(&stars, 5, 0.0);
-        let mut hashes: Vec<[usize; 4]> = quads.iter().map(|q| {
-            let mut s = q.star_indices;
-            s.sort();
-            s
-        }).collect();
+        let mut hashes: Vec<[usize; 4]> = quads
+            .iter()
+            .map(|q| {
+                let mut s = q.star_indices;
+                s.sort();
+                s
+            })
+            .collect();
         let before = hashes.len();
         hashes.sort();
         hashes.dedup();

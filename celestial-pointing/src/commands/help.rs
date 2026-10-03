@@ -138,10 +138,10 @@ mod tests {
     #[test]
     fn every_known_command_has_a_help_entry() {
         let commands = [
-            "APPLY", "INDAT", "INMOD", "OUTMOD", "USE", "LOSE", "FIT", "CLIST", "RESET",
-            "SLIST", "MASK", "UNMASK", "MVET", "OUTL", "FIX", "UNFIX", "PARAL", "CHAIN",
-            "ADJUST", "FAUTO", "LST", "CORRECT", "PREDICT", "GSCAT", "GDIST", "GMAP",
-            "GHA", "GDEC", "GHYST", "SHOW", "HELP", "QUIT",
+            "APPLY", "INDAT", "INMOD", "OUTMOD", "USE", "LOSE", "FIT", "CLIST", "RESET", "SLIST",
+            "MASK", "UNMASK", "MVET", "OUTL", "FIX", "UNFIX", "PARAL", "CHAIN", "ADJUST", "FAUTO",
+            "LST", "CORRECT", "PREDICT", "GSCAT", "GDIST", "GMAP", "GHA", "GDEC", "GHYST", "SHOW",
+            "HELP", "QUIT",
         ];
         for cmd in commands {
             let body = run_help(&[cmd]);

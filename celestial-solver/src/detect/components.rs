@@ -111,9 +111,7 @@ pub fn find_connected_components(
     }
 
     flatten_labels(&mut labels, &parent);
-    collect_regions(
-        &labels, width, height, min_size, max_size, min_coverage,
-    )
+    collect_regions(&labels, width, height, min_size, max_size, min_coverage)
 }
 
 fn find(parent: &[u32], mut x: u32) -> u32 {
@@ -165,10 +163,18 @@ fn collect_regions(
             }
             map.entry(l)
                 .and_modify(|r| {
-                    if x < r.x_min { r.x_min = x; }
-                    if x > r.x_max { r.x_max = x; }
-                    if y < r.y_min { r.y_min = y; }
-                    if y > r.y_max { r.y_max = y; }
+                    if x < r.x_min {
+                        r.x_min = x;
+                    }
+                    if x > r.x_max {
+                        r.x_max = x;
+                    }
+                    if y < r.y_min {
+                        r.y_min = y;
+                    }
+                    if y > r.y_max {
+                        r.y_max = y;
+                    }
                     r.pixels.push((x, y));
                 })
                 .or_insert(StarRegion {
@@ -187,7 +193,8 @@ fn collect_regions(
     let mut rej_coverage = 0_usize;
     let total = map.len();
 
-    let result: Vec<StarRegion> = map.into_values()
+    let result: Vec<StarRegion> = map
+        .into_values()
         .filter(|r| {
             let count = r.pixels.len();
             if count < min_size || count > max_size {

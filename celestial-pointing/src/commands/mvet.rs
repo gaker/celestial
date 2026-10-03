@@ -8,7 +8,7 @@ impl Command for Mvet {
     fn name(&self) -> &str {
         "MVET"
     }
-    
+
     fn description(&self) -> &str {
         "Find and optionally remove weak terms"
     }

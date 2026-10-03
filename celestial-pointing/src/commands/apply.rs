@@ -11,7 +11,7 @@ impl Command for Apply {
     fn name(&self) -> &str {
         "APPLY"
     }
-    
+
     fn description(&self) -> &str {
         "Compute commanded position for target"
     }

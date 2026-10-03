@@ -1,9 +1,6 @@
 use celestial_core::constants::{DEG_TO_RAD, HALF_PI, RAD_TO_DEG};
 
-use crate::common::{
-    native_coord_from_radians, pole_native_coord,
-    radial_to_intermediate,
-};
+use crate::common::{native_coord_from_radians, pole_native_coord, radial_to_intermediate};
 use crate::coordinate::{IntermediateCoord, NativeCoord};
 use crate::error::{WcsError, WcsResult};
 
@@ -103,7 +100,6 @@ pub(crate) fn deproject_azp(
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -128,10 +124,22 @@ mod tests {
             let original = NativeCoord::new(Angle::from_degrees(*phi), Angle::from_degrees(*theta));
             let inter = proj.project(original).unwrap();
             let recovered = proj.deproject(inter).unwrap();
-            assert_ulp_lt!(original.phi().degrees(), recovered.phi().degrees(), *ulp,
-                "phi (mu={}, gamma={})", mu, gamma);
-            assert_ulp_lt!(original.theta().degrees(), recovered.theta().degrees(), *ulp,
-                "theta (mu={}, gamma={})", mu, gamma);
+            assert_ulp_lt!(
+                original.phi().degrees(),
+                recovered.phi().degrees(),
+                *ulp,
+                "phi (mu={}, gamma={})",
+                mu,
+                gamma
+            );
+            assert_ulp_lt!(
+                original.theta().degrees(),
+                recovered.theta().degrees(),
+                *ulp,
+                "theta (mu={}, gamma={})",
+                mu,
+                gamma
+            );
         }
     }
 
@@ -140,27 +148,46 @@ mod tests {
         // Project: mu + sin(theta) = 0 (non-slant denom singularity)
         let mu: f64 = 0.5;
         let theta_singular = -mu.asin() * RAD_TO_DEG;
-        let native = NativeCoord::new(Angle::from_degrees(0.0), Angle::from_degrees(theta_singular));
+        let native = NativeCoord::new(
+            Angle::from_degrees(0.0),
+            Angle::from_degrees(theta_singular),
+        );
         let err = project_azp(native, mu, 0.0).unwrap_err();
-        assert!(matches!(err, WcsError::Singularity { .. }), "non-slant: {:?}", err);
+        assert!(
+            matches!(err, WcsError::Singularity { .. }),
+            "non-slant: {:?}",
+            err
+        );
 
         // Project: slant denom singularity
         let native = NativeCoord::new(Angle::from_degrees(0.0), Angle::from_degrees(-45.0));
         let err = project_azp(native, 0.0, 45.0).unwrap_err();
-        assert!(matches!(err, WcsError::Singularity { .. }), "slant: {:?}", err);
+        assert!(
+            matches!(err, WcsError::Singularity { .. }),
+            "slant: {:?}",
+            err
+        );
 
         // Deproject: out-of-bounds / singularity cases
         let cases = &[
-            (10.0, 0.0, 50.0, 50.0),               // no slant, far out
-            (0.0, 90.0, 0.0, -57.29577951308232),  // denom zero with slant
-            (10.0, 30.0, 80.0, 80.0),              // s out of bounds with slant
+            (10.0, 0.0, 50.0, 50.0),              // no slant, far out
+            (0.0, 90.0, 0.0, -57.29577951308232), // denom zero with slant
+            (10.0, 30.0, 80.0, 80.0),             // s out of bounds with slant
         ];
         for &(mu, gamma, x, y) in cases {
             let inter = IntermediateCoord::new(x, y);
             let err = deproject_azp(inter, mu, gamma).unwrap_err();
             assert!(
-                matches!(err, WcsError::OutOfBounds { .. } | WcsError::Singularity { .. }),
-                "(mu={}, gamma={}, x={}, y={}): got: {:?}", mu, gamma, x, y, err,
+                matches!(
+                    err,
+                    WcsError::OutOfBounds { .. } | WcsError::Singularity { .. }
+                ),
+                "(mu={}, gamma={}, x={}, y={}): got: {:?}",
+                mu,
+                gamma,
+                x,
+                y,
+                err,
             );
         }
     }

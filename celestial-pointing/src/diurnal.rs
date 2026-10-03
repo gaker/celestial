@@ -5,8 +5,8 @@
 //! signals that this step was skipped. When `:NODA` is absent, the
 //! fitter is expected to apply the correction itself.
 
-use celestial_core::{Angle, Location, Vector3};
 use celestial_coords::aberration::{apply_aberration, remove_aberration};
+use celestial_core::{Angle, Location, Vector3};
 
 const EARTH_ROTATION_RATE_RAD_SEC: f64 = 7.292_115_0e-5;
 const SECONDS_PER_DAY: f64 = 86_400.0;
@@ -76,7 +76,11 @@ fn spherical_to_cartesian(ra: Angle, dec: Angle) -> Vector3 {
 fn cartesian_to_spherical(v: Vector3) -> (Angle, Angle) {
     let ra = libm::atan2(v.y, v.x);
     let dec = libm::asin(v.z / v.magnitude());
-    let ra_wrapped = if ra < 0.0 { ra + 2.0 * libm::atan(1.0) * 4.0 } else { ra };
+    let ra_wrapped = if ra < 0.0 {
+        ra + 2.0 * libm::atan(1.0) * 4.0
+    } else {
+        ra
+    };
     (Angle::from_radians(ra_wrapped), Angle::from_radians(dec))
 }
 
@@ -108,7 +112,15 @@ mod tests {
         let lst = Angle::from_hours(0.0);
         let tel_ra = Angle::from_hours(0.0);
         let tel_dec = Angle::from_degrees(0.0);
-        let (ra2, _dec2) = apply_or_remove(tel_ra, tel_dec, lst, lat, Angle::from_radians(0.0), 0.0, false);
+        let (ra2, _dec2) = apply_or_remove(
+            tel_ra,
+            tel_dec,
+            lst,
+            lat,
+            Angle::from_radians(0.0),
+            0.0,
+            false,
+        );
         let shift = arcsec(tel_ra, ra2);
         assert!(
             shift > 0.25 && shift < 0.40,
@@ -167,8 +179,20 @@ mod tests {
         let lst = Angle::from_hours(0.0);
         let tel_ra = Angle::from_hours(0.0);
         let tel_dec = Angle::from_degrees(0.0);
-        let (ra2, _) = apply_or_remove(tel_ra, tel_dec, lst, lat, Angle::from_radians(0.0), 0.0, false);
+        let (ra2, _) = apply_or_remove(
+            tel_ra,
+            tel_dec,
+            lst,
+            lat,
+            Angle::from_radians(0.0),
+            0.0,
+            false,
+        );
         let delta_rad = (ra2 - tel_ra).wrapped().radians();
-        assert!(delta_rad < 0.0, "expected westward (negative) shift, got {}", delta_rad);
+        assert!(
+            delta_rad < 0.0,
+            "expected westward (negative) shift, got {}",
+            delta_rad
+        );
     }
 }

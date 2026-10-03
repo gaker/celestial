@@ -39,20 +39,22 @@ pub(super) fn catalog_cone_search(
     };
     let mut results = cone_search(catalog, &params);
     results.sort_by(|a, b| {
-        a.star.mag.partial_cmp(&b.star.mag).unwrap_or(std::cmp::Ordering::Equal)
+        a.star
+            .mag
+            .partial_cmp(&b.star.mag)
+            .unwrap_or(std::cmp::Ordering::Equal)
     });
     results.truncate(max_stars);
 
     let stars: Vec<QuadStar> = results
         .iter()
         .filter_map(|r| {
-            tan_project_star(r.ra_deg, r.dec_deg, ra_deg, dec_deg)
-                .map(|(x, y)| QuadStar {
-                    source_id: r.star.source_id,
-                    x,
-                    y,
-                    mag: r.star.mag,
-                })
+            tan_project_star(r.ra_deg, r.dec_deg, ra_deg, dec_deg).map(|(x, y)| QuadStar {
+                source_id: r.star.source_id,
+                x,
+                y,
+                mag: r.star.mag,
+            })
         })
         .collect();
 
@@ -74,7 +76,9 @@ pub(super) fn stars_to_quad_stars(
 
     let mut sorted: Vec<_> = stars.iter().enumerate().collect();
     sorted.sort_by(|a, b| {
-        b.1.flux.partial_cmp(&a.1.flux).unwrap_or(std::cmp::Ordering::Equal)
+        b.1.flux
+            .partial_cmp(&a.1.flux)
+            .unwrap_or(std::cmp::Ordering::Equal)
     });
     sorted.truncate(max_stars);
 
@@ -95,7 +99,9 @@ mod tests {
 
     fn det(x: f64, y: f64, flux: f64) -> DetectedStar {
         DetectedStar {
-            x, y, flux,
+            x,
+            y,
+            flux,
             snr: 20.0,
             saturated: false,
             saturated_count: 0,
@@ -233,9 +239,8 @@ mod tests {
         let catalog = Catalog::open(file.path()).unwrap();
         let epoch = JulianDate::new(2451545.0, 0.0);
 
-        let (quad_stars, results) = catalog_cone_search(
-            &catalog, center_ra, center_dec, 1.0, 8, epoch,
-        );
+        let (quad_stars, results) =
+            catalog_cone_search(&catalog, center_ra, center_dec, 1.0, 8, epoch);
 
         // truncate(max_stars) → at most 8 entries.
         assert!(quad_stars.len() <= 8);
@@ -253,7 +258,12 @@ mod tests {
     #[test]
     fn catalog_cone_search_empty_far_field_returns_empty() {
         // Stars on one side of the sky, search the other side → no hits.
-        let stars = vec![SynthStar { source_id: 1, ra: 10.0, dec: 0.0, mag: 9.0 }];
+        let stars = vec![SynthStar {
+            source_id: 1,
+            ra: 10.0,
+            dec: 0.0,
+            mag: 9.0,
+        }];
         let file = build(4, &stars);
         let catalog = Catalog::open(file.path()).unwrap();
         let epoch = JulianDate::new(2451545.0, 0.0);
@@ -271,8 +281,18 @@ mod tests {
         let center_ra = 0.0;
         let center_dec = 0.0;
         let stars = vec![
-            SynthStar { source_id: 1, ra: 0.0, dec: 0.0, mag: 8.0 },
-            SynthStar { source_id: 2, ra: 180.0, dec: 0.0, mag: 9.0 },
+            SynthStar {
+                source_id: 1,
+                ra: 0.0,
+                dec: 0.0,
+                mag: 8.0,
+            },
+            SynthStar {
+                source_id: 2,
+                ra: 180.0,
+                dec: 0.0,
+                mag: 9.0,
+            },
         ];
         let file = build(4, &stars);
         let catalog = Catalog::open(file.path()).unwrap();

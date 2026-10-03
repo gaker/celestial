@@ -6,7 +6,6 @@ use crate::spherical::Projection;
 
 use super::build::MatrixSpec;
 
-
 pub(super) fn create_projection_from_code(
     code: &str,
     pv_params: &HashMap<(u8, u8), f64>,
@@ -194,11 +193,10 @@ pub(super) fn parse_pv_params(header: &impl KeywordProvider) -> HashMap<(u8, u8)
     pv_params
 }
 
-
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::wcs::projection_to_code;
+    use super::*;
 
     #[test]
     fn test_parse_ctype_valid_forms() {
@@ -215,9 +213,8 @@ mod tests {
             ("  RA---TAN  ", "RA", "TAN"),
         ];
         for &(input, expected_prefix, expected_proj) in cases {
-            let (prefix, proj) = parse_ctype(input).unwrap_or_else(|e| {
-                panic!("parse_ctype({:?}) failed: {}", input, e)
-            });
+            let (prefix, proj) = parse_ctype(input)
+                .unwrap_or_else(|e| panic!("parse_ctype({:?}) failed: {}", input, e));
             assert_eq!(prefix, expected_prefix, "prefix for {:?}", input);
             assert_eq!(proj, expected_proj, "proj for {:?}", input);
         }
@@ -266,7 +263,12 @@ mod tests {
             let pv: HashMap<(u8, u8), f64> = params.iter().copied().collect();
             let proj = create_projection_from_code(code, &pv)
                 .unwrap_or_else(|e| panic!("{} failed to create: {}", code, e));
-            assert_eq!(projection_to_code(&proj), *code, "code mismatch for {}", code);
+            assert_eq!(
+                projection_to_code(&proj),
+                *code,
+                "code mismatch for {}",
+                code
+            );
         }
     }
 
@@ -283,5 +285,4 @@ mod tests {
             );
         }
     }
-
 }

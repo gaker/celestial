@@ -221,11 +221,10 @@ impl WcsBuilder {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::keyword::WcsKeywordValue;
+    use super::*;
     use crate::header::KeywordMap;
 
     fn minimal_builder() -> WcsBuilder {
@@ -424,7 +423,9 @@ mod tests {
     #[test]
     fn test_from_header_lonpole_latpole() {
         let mut header = tan_header();
-        header.set_float("LONPOLE", 180.0).set_float("LATPOLE", 45.0);
+        header
+            .set_float("LONPOLE", 180.0)
+            .set_float("LATPOLE", 45.0);
 
         let builder = WcsBuilder::from_header(&header).unwrap();
 
@@ -522,7 +523,11 @@ mod tests {
     #[test]
     fn test_build_unsupported_projection() {
         // Unknown projection codes must surface the code in the error.
-        let err = minimal_builder().proj_code("XYZ").build().unwrap_err().to_string();
+        let err = minimal_builder()
+            .proj_code("XYZ")
+            .build()
+            .unwrap_err()
+            .to_string();
         assert!(err.contains("XYZ"), "got: {}", err);
     }
 
@@ -569,7 +574,10 @@ mod tests {
 
     #[test]
     fn test_builder_from_header_then_build() {
-        let wcs = WcsBuilder::from_header(&tan_header()).unwrap().build().unwrap();
+        let wcs = WcsBuilder::from_header(&tan_header())
+            .unwrap()
+            .build()
+            .unwrap();
 
         assert_eq!(wcs.crpix(), [512.0, 512.0]);
         assert_eq!(wcs.crval(), (180.0, 45.0));
@@ -626,21 +634,35 @@ mod tests {
             for (axis, idx, value) in *pvs {
                 builder = builder.pv(*axis, *idx, *value);
             }
-            let wcs = builder.build()
+            let wcs = builder
+                .build()
                 .unwrap_or_else(|e| panic!("{} failed to build: {}", code, e));
             assert_eq!(wcs.projection_code(), *code);
         }
 
         // Projection::stg() (no proj_code) also infers the code from the enum.
-        let wcs = minimal_builder().projection(Projection::stg()).build().unwrap();
+        let wcs = minimal_builder()
+            .projection(Projection::stg())
+            .build()
+            .unwrap();
         assert_eq!(wcs.projection_code(), "STG");
     }
 
     #[test]
     fn test_ctype_keywords_emit_correct_prefixes() {
         let cases: &[(Projection, CoordType, &str, &str)] = &[
-            (Projection::tan(), CoordType::Equatorial, "RA---TAN", "DEC--TAN"),
-            (Projection::sin(), CoordType::Galactic, "GLON-SIN", "GLAT-SIN"),
+            (
+                Projection::tan(),
+                CoordType::Equatorial,
+                "RA---TAN",
+                "DEC--TAN",
+            ),
+            (
+                Projection::sin(),
+                CoordType::Galactic,
+                "GLON-SIN",
+                "GLAT-SIN",
+            ),
         ];
         for (proj, coord_type, expected1, expected2) in cases {
             let wcs = minimal_builder()
@@ -658,9 +680,14 @@ mod tests {
                     .value
                     .clone()
             };
-            assert_eq!(find("CTYPE1"), WcsKeywordValue::String((*expected1).to_string()));
-            assert_eq!(find("CTYPE2"), WcsKeywordValue::String((*expected2).to_string()));
+            assert_eq!(
+                find("CTYPE1"),
+                WcsKeywordValue::String((*expected1).to_string())
+            );
+            assert_eq!(
+                find("CTYPE2"),
+                WcsKeywordValue::String((*expected2).to_string())
+            );
         }
     }
-
 }

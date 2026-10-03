@@ -1,23 +1,22 @@
-mod tan;
-mod sin;
-mod arc;
-mod stg;
-mod zea;
-mod azp;
-mod szp;
-mod zpn;
 mod air;
+mod arc;
+mod azp;
+mod sin;
+mod stg;
+mod szp;
+mod tan;
+mod zea;
+mod zpn;
 
-pub(super) use tan::{project_tan, deproject_tan};
-pub(super) use sin::{project_sin, deproject_sin};
-pub(super) use arc::{project_arc, deproject_arc};
-pub(super) use stg::{project_stg, deproject_stg};
-pub(super) use zea::{project_zea, deproject_zea};
-pub(super) use azp::{project_azp, deproject_azp};
-pub(super) use szp::{project_szp, deproject_szp};
-pub(super) use zpn::{project_zpn, deproject_zpn};
-pub(super) use air::{project_air, deproject_air};
-
+pub(super) use air::{deproject_air, project_air};
+pub(super) use arc::{deproject_arc, project_arc};
+pub(super) use azp::{deproject_azp, project_azp};
+pub(super) use sin::{deproject_sin, project_sin};
+pub(super) use stg::{deproject_stg, project_stg};
+pub(super) use szp::{deproject_szp, project_szp};
+pub(super) use tan::{deproject_tan, project_tan};
+pub(super) use zea::{deproject_zea, project_zea};
+pub(super) use zpn::{deproject_zpn, project_zpn};
 
 #[cfg(test)]
 mod tests {
@@ -66,5 +65,4 @@ mod tests {
             assert_eq!(theta0, 90.0);
         }
     }
-
 }

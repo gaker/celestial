@@ -162,11 +162,7 @@ impl HeaderCard {
         }
     }
 
-    fn parse_value_with_comment(
-        value_comment_part: &str,
-        comment_pos: usize,
-        card: &mut Self,
-    ) {
+    fn parse_value_with_comment(value_comment_part: &str, comment_pos: usize, card: &mut Self) {
         let value_part = value_comment_part[..comment_pos].trim();
         let comment_part = value_comment_part[comment_pos + 3..].trim();
 
@@ -629,10 +625,7 @@ mod tests {
             header.get("OBJECT").value(),
             Some(&KeywordValue::String("M31".to_string()))
         );
-        assert_eq!(
-            header.get("NAXIS").value(),
-            Some(&KeywordValue::Integer(2))
-        );
+        assert_eq!(header.get("NAXIS").value(), Some(&KeywordValue::Integer(2)));
     }
 
     #[test]

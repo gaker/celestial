@@ -1,8 +1,6 @@
 use celestial_core::constants::{DEG_TO_RAD, HALF_PI, RAD_TO_DEG};
 
-use crate::common::{
-    native_coord_from_radians, pole_native_coord,
-};
+use crate::common::{native_coord_from_radians, pole_native_coord};
 use crate::coordinate::{IntermediateCoord, NativeCoord};
 use crate::error::{WcsError, WcsResult};
 
@@ -118,7 +116,6 @@ pub(crate) fn deproject_szp(
     Ok(native_coord_from_radians(phi, theta))
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -145,10 +142,24 @@ mod tests {
             let original = NativeCoord::new(Angle::from_degrees(*phi), Angle::from_degrees(*theta));
             let inter = proj.project(original).unwrap();
             let recovered = proj.deproject(inter).unwrap();
-            assert_ulp_lt!(original.phi().degrees(), recovered.phi().degrees(), *ulp,
-                "phi (mu={}, phi_c={}, theta_c={})", mu, phi_c, theta_c);
-            assert_ulp_lt!(original.theta().degrees(), recovered.theta().degrees(), *ulp,
-                "theta (mu={}, phi_c={}, theta_c={})", mu, phi_c, theta_c);
+            assert_ulp_lt!(
+                original.phi().degrees(),
+                recovered.phi().degrees(),
+                *ulp,
+                "phi (mu={}, phi_c={}, theta_c={})",
+                mu,
+                phi_c,
+                theta_c
+            );
+            assert_ulp_lt!(
+                original.theta().degrees(),
+                recovered.theta().degrees(),
+                *ulp,
+                "theta (mu={}, phi_c={}, theta_c={})",
+                mu,
+                phi_c,
+                theta_c
+            );
         }
     }
 
@@ -160,15 +171,31 @@ mod tests {
         let inter_far = IntermediateCoord::new(500.0, 500.0);
 
         let err = project_szp(native_normal, 1.0, 0.0, -90.0).unwrap_err();
-        assert!(matches!(err, WcsError::Singularity { .. }), "zp_singularity_project: {:?}", err);
+        assert!(
+            matches!(err, WcsError::Singularity { .. }),
+            "zp_singularity_project: {:?}",
+            err
+        );
 
         let err = project_szp(native_pole, 1.0, 0.0, 90.0).unwrap_err();
-        assert!(matches!(err, WcsError::Singularity { .. }), "denominator_singularity: {:?}", err);
+        assert!(
+            matches!(err, WcsError::Singularity { .. }),
+            "denominator_singularity: {:?}",
+            err
+        );
 
         let err = deproject_szp(inter_normal, 1.0, 0.0, -90.0).unwrap_err();
-        assert!(matches!(err, WcsError::Singularity { .. }), "zp_singularity_deproject: {:?}", err);
+        assert!(
+            matches!(err, WcsError::Singularity { .. }),
+            "zp_singularity_deproject: {:?}",
+            err
+        );
 
         let err = deproject_szp(inter_far, 2.0, 45.0, 60.0).unwrap_err();
-        assert!(matches!(err, WcsError::OutOfBounds { .. }), "negative_discriminant: {:?}", err);
+        assert!(
+            matches!(err, WcsError::OutOfBounds { .. }),
+            "negative_discriminant: {:?}",
+            err
+        );
     }
 }

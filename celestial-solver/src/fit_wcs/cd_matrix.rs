@@ -39,13 +39,17 @@ pub(super) fn ransac_fit(
     let mut best_mask = vec![false; n];
 
     let max_v = pairs.iter().map(|p| p.votes).max().unwrap_or(0);
-    let high_vote: Vec<usize> = pairs.iter().enumerate()
+    let high_vote: Vec<usize> = pairs
+        .iter()
+        .enumerate()
         .filter(|(_, p)| p.votes >= max_v / 3)
         .map(|(i, _)| i)
         .filter(|&i| i < n)
         .collect();
 
-    let sample_pool = if high_vote.len() >= 3 { &high_vote } else {
+    let sample_pool = if high_vote.len() >= 3 {
+        &high_vote
+    } else {
         return Ok(vec![true; n]);
     };
 
@@ -75,7 +79,8 @@ pub(super) fn ransac_fit(
         let Ok(cd_sample) = fit_cd_matrix_6(projected, &sample_mask) else {
             continue;
         };
-        if libm::fabs(cd_sample.cd1_1 * cd_sample.cd2_2 - cd_sample.cd1_2 * cd_sample.cd2_1) < 1e-30 {
+        if libm::fabs(cd_sample.cd1_1 * cd_sample.cd2_2 - cd_sample.cd1_2 * cd_sample.cd2_1) < 1e-30
+        {
             continue;
         }
 
@@ -97,20 +102,28 @@ pub(super) fn ransac_fit(
         }
     }
 
-    ensure!(best_inliers >= 3, "RANSAC found no consistent model ({} pairs)", n);
+    ensure!(
+        best_inliers >= 3,
+        "RANSAC found no consistent model ({} pairs)",
+        n
+    );
     log::debug!("RANSAC: {} inliers from {} pairs", best_inliers, n);
     Ok(best_mask)
 }
 
-fn fit_cd_matrix_6(
-    projected: &[(f64, f64, f64, f64)],
-    mask: &[bool],
-) -> Result<CdParams> {
+fn fit_cd_matrix_6(projected: &[(f64, f64, f64, f64)], mask: &[bool]) -> Result<CdParams> {
     let (cd1_1, cd1_2, xi0) = solve_3x3(projected, mask, |t| t.2)?;
     let (cd2_1, cd2_2, eta0) = solve_3x3(projected, mask, |t| t.3)?;
     let det = cd1_1 * cd2_2 - cd1_2 * cd2_1;
     ensure!(libm::fabs(det) > 1e-30, "singular CD matrix");
-    Ok(CdParams { cd1_1, cd1_2, xi0, cd2_1, cd2_2, eta0 })
+    Ok(CdParams {
+        cd1_1,
+        cd1_2,
+        xi0,
+        cd2_1,
+        cd2_2,
+        eta0,
+    })
 }
 
 pub(super) fn compute_pixel_errors(
@@ -124,18 +137,22 @@ pub(super) fn compute_pixel_errors(
     let inv_10 = -p.cd2_1 / det;
     let inv_11 = p.cd1_1 / det;
 
-    projected.iter().enumerate().map(|(i, row)| {
-        if !mask[i] {
-            return 0.0;
-        }
-        let dxi = row.2 - p.xi0;
-        let deta = row.3 - p.eta0;
-        let pred_u = inv_00 * dxi + inv_01 * deta;
-        let pred_v = inv_10 * dxi + inv_11 * deta;
-        let ex = row.0 - pred_u;
-        let ey = row.1 - pred_v;
-        libm::sqrt(ex * ex + ey * ey)
-    }).collect()
+    projected
+        .iter()
+        .enumerate()
+        .map(|(i, row)| {
+            if !mask[i] {
+                return 0.0;
+            }
+            let dxi = row.2 - p.xi0;
+            let deta = row.3 - p.eta0;
+            let pred_u = inv_00 * dxi + inv_01 * deta;
+            let pred_v = inv_10 * dxi + inv_11 * deta;
+            let ex = row.0 - pred_u;
+            let ey = row.1 - pred_v;
+            libm::sqrt(ex * ex + ey * ey)
+        })
+        .collect()
 }
 
 pub(super) fn fit_cd_weighted(
@@ -147,7 +164,14 @@ pub(super) fn fit_cd_weighted(
     let (cd2_1, cd2_2, eta0) = solve_3x3_weighted(projected, mask, weights, |t| t.3)?;
     let det = cd1_1 * cd2_2 - cd1_2 * cd2_1;
     ensure!(libm::fabs(det) > 1e-30, "singular CD matrix");
-    Ok(CdParams { cd1_1, cd1_2, xi0, cd2_1, cd2_2, eta0 })
+    Ok(CdParams {
+        cd1_1,
+        cd1_2,
+        xi0,
+        cd2_1,
+        cd2_2,
+        eta0,
+    })
 }
 
 pub(super) fn sigma_clip_loop_weighted(
@@ -161,11 +185,15 @@ pub(super) fn sigma_clip_loop_weighted(
         let mut sum_sr2 = 0.0_f64;
         let mut n_active = 0_usize;
         for (i, &e) in errs.iter().enumerate() {
-            if !mask[i] { continue; }
+            if !mask[i] {
+                continue;
+            }
             sum_sr2 += weights[i] * e * e;
             n_active += 1;
         }
-        if n_active < 3 { break; }
+        if n_active < 3 {
+            break;
+        }
 
         let sr_rms = libm::sqrt(sum_sr2 / n_active as f64);
         let threshold = 3.0 * sr_rms;
@@ -180,12 +208,20 @@ pub(super) fn sigma_clip_loop_weighted(
 
         let n_active = mask.iter().filter(|&&m| m).count();
         let rms = libm::sqrt(
-            errs.iter().enumerate()
+            errs.iter()
+                .enumerate()
                 .filter(|(i, _)| mask[*i])
                 .map(|(_, &e)| e * e)
-                .sum::<f64>() / n_active.max(1) as f64
+                .sum::<f64>()
+                / n_active.max(1) as f64,
         );
-        log::debug!("fit_wcs iter {}: {} stars, rms={:.3}px, rejected {}", iter, n_active, rms, rejected);
+        log::debug!(
+            "fit_wcs iter {}: {} stars, rms={:.3}px, rejected {}",
+            iter,
+            n_active,
+            rms,
+            rejected
+        );
 
         if rejected == 0 || n_active < 3 {
             break;
@@ -230,11 +266,7 @@ fn solve_3x3_weighted(
         s_b += w * b;
     }
 
-    let a = [
-        [s_uu, s_uv, s_u],
-        [s_uv, s_vv, s_v],
-        [s_u, s_v, s_1],
-    ];
+    let a = [[s_uu, s_uv, s_u], [s_uv, s_vv, s_v], [s_u, s_v, s_1]];
     let rhs = [s_ub, s_vb, s_b];
     solve_3x3_system(&a, &rhs)
 }
@@ -271,11 +303,7 @@ fn solve_3x3(
         s_b += b;
     }
 
-    let a = [
-        [s_uu, s_uv, s_u],
-        [s_uv, s_vv, s_v],
-        [s_u, s_v, s_1],
-    ];
+    let a = [[s_uu, s_uv, s_u], [s_uv, s_vv, s_v], [s_u, s_v, s_1]];
     let rhs = [s_ub, s_vb, s_b];
     solve_3x3_system(&a, &rhs)
 }
@@ -332,9 +360,8 @@ pub(super) fn compute_residuals(pairs: &[&StarPair], wcs: WcsParams) -> Vec<Star
     pairs
         .iter()
         .filter_map(|p| {
-            let (xi_rad, eta_rad) = tan_project_star(
-                p.ra_deg, p.dec_deg, wcs.crval_ra, wcs.crval_dec,
-            )?;
+            let (xi_rad, eta_rad) =
+                tan_project_star(p.ra_deg, p.dec_deg, wcs.crval_ra, wcs.crval_dec)?;
             let xi = xi_rad * RAD_TO_DEG;
             let eta = eta_rad * RAD_TO_DEG;
             let pred_x = inv_00 * xi + inv_01 * eta + wcs.crpix1;
@@ -343,8 +370,11 @@ pub(super) fn compute_residuals(pairs: &[&StarPair], wcs: WcsParams) -> Vec<Star
             let err_y = p.px_y - pred_y;
             let err_px = libm::sqrt(err_x * err_x + err_y * err_y);
             Some(StarResidual {
-                px_x: p.px_x, px_y: p.px_y,
-                err_x, err_y, err_px,
+                px_x: p.px_x,
+                px_y: p.px_y,
+                err_x,
+                err_y,
+                err_px,
             })
         })
         .collect()
@@ -368,14 +398,14 @@ pub(super) fn weighted_rms_error(residuals: &[StarResidual], weights: &[f64]) ->
         sum_w += w;
         sum_we2 += w * r.err_px * r.err_px;
     }
-    if sum_w > 0.0 { libm::sqrt(sum_we2 / sum_w) } else { 0.0 }
+    if sum_w > 0.0 {
+        libm::sqrt(sum_we2 / sum_w)
+    } else {
+        0.0
+    }
 }
 
-pub(super) fn solve_normal_equations(
-    a: &mut [f64],
-    b: &mut [f64],
-    n: usize,
-) -> Result<Vec<f64>> {
+pub(super) fn solve_normal_equations(a: &mut [f64], b: &mut [f64], n: usize) -> Result<Vec<f64>> {
     for col in 0..n {
         let mut pivot_row = col;
         let mut pivot_val = libm::fabs(a[col * n + col]);
@@ -386,7 +416,11 @@ pub(super) fn solve_normal_equations(
                 pivot_row = row;
             }
         }
-        ensure!(pivot_val > 1e-30, "singular SIP normal equations at col {}", col);
+        ensure!(
+            pivot_val > 1e-30,
+            "singular SIP normal equations at col {}",
+            col
+        );
         if pivot_row != col {
             for k in 0..n {
                 a.swap(col * n + k, pivot_row * n + k);
@@ -421,11 +455,24 @@ mod tests {
 
     fn residual(err_x: f64, err_y: f64) -> StarResidual {
         let err_px = libm::sqrt(err_x * err_x + err_y * err_y);
-        StarResidual { px_x: 0.0, px_y: 0.0, err_x, err_y, err_px }
+        StarResidual {
+            px_x: 0.0,
+            px_y: 0.0,
+            err_x,
+            err_y,
+            err_px,
+        }
     }
 
     fn pair(px_x: f64, px_y: f64, ra_deg: f64, dec_deg: f64) -> StarPair {
-        StarPair { px_x, px_y, ra_deg, dec_deg, votes: 4, snr: 20.0 }
+        StarPair {
+            px_x,
+            px_y,
+            ra_deg,
+            dec_deg,
+            votes: 4,
+            snr: 20.0,
+        }
     }
 
     #[test]
@@ -472,11 +519,7 @@ mod tests {
     #[test]
     fn solve_normal_equations_identity_returns_b() {
         // 3x3 identity matrix, b = [1, 2, 3]
-        let mut a = vec![
-            1.0, 0.0, 0.0,
-            0.0, 1.0, 0.0,
-            0.0, 0.0, 1.0,
-        ];
+        let mut a = vec![1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0];
         let mut b = vec![1.0, 2.0, 3.0];
         let x = solve_normal_equations(&mut a, &mut b, 3).unwrap();
         assert_eq!(x, vec![1.0, 2.0, 3.0]);
@@ -485,11 +528,7 @@ mod tests {
     #[test]
     fn solve_normal_equations_diagonal_returns_componentwise_divide() {
         // diag(2, 4, 8), b = [2, 8, 24] -> x = [1, 2, 3]
-        let mut a = vec![
-            2.0, 0.0, 0.0,
-            0.0, 4.0, 0.0,
-            0.0, 0.0, 8.0,
-        ];
+        let mut a = vec![2.0, 0.0, 0.0, 0.0, 4.0, 0.0, 0.0, 0.0, 8.0];
         let mut b = vec![2.0, 8.0, 24.0];
         let x = solve_normal_equations(&mut a, &mut b, 3).unwrap();
         assert_eq!(x, vec![1.0, 2.0, 3.0]);
@@ -498,10 +537,7 @@ mod tests {
     #[test]
     fn solve_normal_equations_needs_pivoting_still_works() {
         // first-column pivot is zero, so row swap is required
-        let mut a = vec![
-            0.0, 1.0,
-            2.0, 0.0,
-        ];
+        let mut a = vec![0.0, 1.0, 2.0, 0.0];
         let mut b = vec![3.0, 4.0];
         // x_0 = 4/2 = 2, x_1 = 3/1 = 3
         let x = solve_normal_equations(&mut a, &mut b, 2).unwrap();
@@ -511,10 +547,7 @@ mod tests {
     #[test]
     fn solve_normal_equations_singular_errors() {
         // rank-1 matrix: row 1 = 2x row 0
-        let mut a = vec![
-            1.0, 2.0,
-            2.0, 4.0,
-        ];
+        let mut a = vec![1.0, 2.0, 2.0, 4.0];
         let mut b = vec![1.0, 2.0];
         assert!(solve_normal_equations(&mut a, &mut b, 2).is_err());
     }
@@ -549,8 +582,14 @@ mod tests {
     #[test]
     fn compute_residuals_returns_empty_for_singular_cd() {
         let wcs = WcsParams {
-            crpix1: 0.0, crpix2: 0.0, crval_ra: 0.0, crval_dec: 0.0,
-            cd1_1: 0.0, cd1_2: 0.0, cd2_1: 0.0, cd2_2: 0.0,
+            crpix1: 0.0,
+            crpix2: 0.0,
+            crval_ra: 0.0,
+            crval_dec: 0.0,
+            cd1_1: 0.0,
+            cd1_2: 0.0,
+            cd2_1: 0.0,
+            cd2_2: 0.0,
         };
         let p = pair(100.0, 100.0, 10.0, 10.0);
         let refs: Vec<&StarPair> = vec![&p];
@@ -568,14 +607,20 @@ mod tests {
         use celestial_catalog::query::tan_deproject_star;
         use celestial_core::constants::DEG_TO_RAD;
 
-        samples.iter().map(|&(u, v)| {
-            let xi_deg = cd.cd1_1 * u + cd.cd1_2 * v + cd.xi0;
-            let eta_deg = cd.cd2_1 * u + cd.cd2_2 * v + cd.eta0;
-            let (ra, dec) = tan_deproject_star(
-                xi_deg * DEG_TO_RAD, eta_deg * DEG_TO_RAD, crval_ra, crval_dec,
-            );
-            pair(u, v, ra, dec)
-        }).collect()
+        samples
+            .iter()
+            .map(|&(u, v)| {
+                let xi_deg = cd.cd1_1 * u + cd.cd1_2 * v + cd.xi0;
+                let eta_deg = cd.cd2_1 * u + cd.cd2_2 * v + cd.eta0;
+                let (ra, dec) = tan_deproject_star(
+                    xi_deg * DEG_TO_RAD,
+                    eta_deg * DEG_TO_RAD,
+                    crval_ra,
+                    crval_dec,
+                );
+                pair(u, v, ra, dec)
+            })
+            .collect()
     }
 
     #[test]
@@ -583,22 +628,33 @@ mod tests {
         let crval_ra = 180.0;
         let crval_dec = 0.0;
         let cd = CdParams {
-            cd1_1: 0.001, cd1_2: 0.0, xi0: 0.0,
-            cd2_1: 0.0, cd2_2: 0.001, eta0: 0.0,
+            cd1_1: 0.001,
+            cd1_2: 0.0,
+            xi0: 0.0,
+            cd2_1: 0.0,
+            cd2_2: 0.001,
+            eta0: 0.0,
         };
         let samples = [
-            (-100.0, -100.0), (100.0, -100.0), (0.0, 0.0),
-            (-100.0, 100.0), (100.0, 100.0), (50.0, -50.0),
+            (-100.0, -100.0),
+            (100.0, -100.0),
+            (0.0, 0.0),
+            (-100.0, 100.0),
+            (100.0, 100.0),
+            (50.0, -50.0),
         ];
         let pairs = synthesize_pairs(crval_ra, crval_dec, &cd, &samples);
 
         // Project through the "known" WCS to get (u, v, xi, eta)
         use celestial_catalog::query::tan_project_star;
         use celestial_core::constants::RAD_TO_DEG;
-        let projected: Vec<(f64, f64, f64, f64)> = pairs.iter().filter_map(|p| {
-            tan_project_star(p.ra_deg, p.dec_deg, crval_ra, crval_dec)
-                .map(|(xi, eta)| (p.px_x, p.px_y, xi * RAD_TO_DEG, eta * RAD_TO_DEG))
-        }).collect();
+        let projected: Vec<(f64, f64, f64, f64)> = pairs
+            .iter()
+            .filter_map(|p| {
+                tan_project_star(p.ra_deg, p.dec_deg, crval_ra, crval_dec)
+                    .map(|(xi, eta)| (p.px_x, p.px_y, xi * RAD_TO_DEG, eta * RAD_TO_DEG))
+            })
+            .collect();
 
         let mask = vec![true; projected.len()];
         let weights = vec![1.0; projected.len()];
@@ -617,8 +673,12 @@ mod tests {
         let crval_ra = 180.0;
         let crval_dec = 0.0;
         let cd = CdParams {
-            cd1_1: 0.001, cd1_2: 0.0, xi0: 0.0,
-            cd2_1: 0.0, cd2_2: 0.001, eta0: 0.0,
+            cd1_1: 0.001,
+            cd1_2: 0.0,
+            xi0: 0.0,
+            cd2_1: 0.0,
+            cd2_2: 0.001,
+            eta0: 0.0,
         };
         // 20 clean points in a grid so the fit is well-determined even with the
         // outlier present.
@@ -634,10 +694,13 @@ mod tests {
 
         use celestial_catalog::query::tan_project_star;
         use celestial_core::constants::RAD_TO_DEG;
-        let mut projected: Vec<(f64, f64, f64, f64)> = pairs.iter().filter_map(|p| {
-            tan_project_star(p.ra_deg, p.dec_deg, crval_ra, crval_dec)
-                .map(|(xi, eta)| (p.px_x, p.px_y, xi * RAD_TO_DEG, eta * RAD_TO_DEG))
-        }).collect();
+        let mut projected: Vec<(f64, f64, f64, f64)> = pairs
+            .iter()
+            .filter_map(|p| {
+                tan_project_star(p.ra_deg, p.dec_deg, crval_ra, crval_dec)
+                    .map(|(xi, eta)| (p.px_x, p.px_y, xi * RAD_TO_DEG, eta * RAD_TO_DEG))
+            })
+            .collect();
 
         // Fit an initial CD matrix on the clean points only — this is the normal
         // bootstrap for sigma-clipping: you start from a reasonable model.
@@ -656,6 +719,9 @@ mod tests {
         // outlier must be flagged
         assert!(!mask[last], "expected outlier to be rejected");
         // clean points must be kept
-        assert!(mask[..last].iter().all(|&m| m), "clean points should survive");
+        assert!(
+            mask[..last].iter().all(|&m| m),
+            "clean points should survive"
+        );
     }
 }

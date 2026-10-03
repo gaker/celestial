@@ -1,8 +1,7 @@
 use celestial_core::constants::{DEG_TO_RAD, HALF_PI};
 
 use crate::common::{
-    intermediate_to_polar, native_coord_from_radians, pole_native_coord,
-    radial_to_intermediate,
+    intermediate_to_polar, native_coord_from_radians, pole_native_coord, radial_to_intermediate,
 };
 use crate::coordinate::{IntermediateCoord, NativeCoord};
 use crate::error::{WcsError, WcsResult};
@@ -142,7 +141,6 @@ fn compute_air_dr_dtheta(theta: f64, theta_b: f64) -> WcsResult<f64> {
     Ok(term1 + term2)
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -202,6 +200,10 @@ mod tests {
         // Invalid theta_b (outside valid range) errors.
         let native = NativeCoord::new(Angle::from_degrees(0.0), Angle::from_degrees(45.0));
         let err = project_air(native, -100.0).unwrap_err();
-        assert!(matches!(err, WcsError::Singularity { .. }), "invalid theta_b: {:?}", err);
+        assert!(
+            matches!(err, WcsError::Singularity { .. }),
+            "invalid theta_b: {:?}",
+            err
+        );
     }
 }

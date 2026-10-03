@@ -164,6 +164,30 @@ impl PixelData {
         let converted = self.to_f32_normalized();
         *self = Self::F32(converted);
     }
+
+    /// Keep the first `keep` of every `stored` interleaved samples and drop
+    /// the rest. Loaders use this to strip an alpha (or other extra) channel
+    /// so in-memory buffers are always a clean 1- or 3-channel image.
+    ///
+    /// Returns `self` unchanged when there is nothing to drop.
+    pub fn keep_leading_samples(self, stored: usize, keep: usize) -> Self {
+        fn trim<T: Copy>(data: Vec<T>, stored: usize, keep: usize) -> Vec<T> {
+            data.chunks(stored)
+                .flat_map(|px| px.iter().take(keep).copied())
+                .collect()
+        }
+        if keep == 0 || keep >= stored {
+            return self;
+        }
+        match self {
+            Self::U8(d) => Self::U8(trim(d, stored, keep)),
+            Self::U16(d) => Self::U16(trim(d, stored, keep)),
+            Self::I16(d) => Self::I16(trim(d, stored, keep)),
+            Self::I32(d) => Self::I32(trim(d, stored, keep)),
+            Self::F32(d) => Self::F32(trim(d, stored, keep)),
+            Self::F64(d) => Self::F64(trim(d, stored, keep)),
+        }
+    }
 }
 
 impl From<&[u8]> for PixelData {
@@ -241,6 +265,31 @@ impl From<Vec<f64>> for PixelData {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn keep_leading_samples_drops_trailing_channel() {
+        // RGBA → RGB: keep the first 3 of every 4. One pixel: [R,G,B,A].
+        let rgba = PixelData::U16(vec![10, 20, 30, 999, 40, 50, 60, 888]);
+        let rgb = rgba.keep_leading_samples(4, 3);
+        assert_eq!(rgb.as_u16().unwrap(), &vec![10, 20, 30, 40, 50, 60]);
+    }
+
+    #[test]
+    fn keep_leading_samples_is_a_no_op_when_nothing_to_drop() {
+        let gray = PixelData::U8(vec![1, 2, 3, 4]);
+        assert_eq!(
+            gray.clone().keep_leading_samples(1, 1).as_u8().unwrap(),
+            &vec![1, 2, 3, 4]
+        );
+        assert_eq!(
+            gray.clone().keep_leading_samples(3, 4).as_u8().unwrap(),
+            &vec![1, 2, 3, 4]
+        );
+        assert_eq!(
+            gray.keep_leading_samples(4, 0).as_u8().unwrap(),
+            &vec![1, 2, 3, 4]
+        );
+    }
 
     #[test]
     fn len_and_is_empty_across_variants() {
@@ -324,7 +373,10 @@ mod tests {
 
     #[test]
     fn to_f32_from_every_variant() {
-        assert_eq!(PixelData::U8(vec![0, 128, 255]).to_f32(), vec![0.0, 128.0, 255.0]);
+        assert_eq!(
+            PixelData::U8(vec![0, 128, 255]).to_f32(),
+            vec![0.0, 128.0, 255.0]
+        );
         assert_eq!(PixelData::U16(vec![0, 65535]).to_f32(), vec![0.0, 65535.0]);
         assert_eq!(PixelData::I16(vec![-1, 1]).to_f32(), vec![-1.0, 1.0]);
         assert_eq!(PixelData::I32(vec![-42, 42]).to_f32(), vec![-42.0, 42.0]);
@@ -377,10 +429,7 @@ mod tests {
         assert!(out[0] >= 0.0 && out[0] < 1e-9);
         assert!((out[1] - 1.0).abs() < 1e-9);
 
-        assert_eq!(
-            PixelData::F32(vec![0.5]).to_f64_normalized(),
-            vec![0.5f64]
-        );
+        assert_eq!(PixelData::F32(vec![0.5]).to_f64_normalized(), vec![0.5f64]);
         assert_eq!(
             PixelData::F64(vec![1.5, 2.5]).to_f64_normalized(),
             vec![1.5, 2.5]

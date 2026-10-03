@@ -24,13 +24,12 @@ impl Image {
         let colortype = decoder.colortype().map_err(|e| {
             ImageError::FormatDetectionFailed(format!("TIFF colortype error: {}", e))
         })?;
-        let logical_samples = samples_per_pixel(colortype);
 
         let image = decoder
             .read_image()
             .map_err(|e| ImageError::FormatDetectionFailed(format!("TIFF read error: {}", e)))?;
 
-        let mut pixels = decode_tiff_image(image)?;
+        let pixels = decode_tiff_image(image)?;
 
         // `read_image` returns every stored sample, including extra samples the
         // colortype doesn't account for — most commonly an associated-alpha
@@ -41,10 +40,8 @@ impl Image {
         // image is a clean 1- or 3-channel buffer.
         let pixel_count = (width as usize) * (height as usize);
         let actual = actual_samples(pixels.len(), pixel_count);
-        let samples = reconcile_samples(pixels.len(), pixel_count, logical_samples)?;
-        if samples != actual {
-            pixels = strip_extra_samples(pixels, actual, samples);
-        }
+        let samples = reconcile_samples(pixels.len(), pixel_count, colortype)?;
+        let pixels = pixels.keep_leading_samples(actual, samples);
         let dimensions = build_tiff_dimensions(width, height, samples);
 
         Ok(Self {
@@ -61,7 +58,13 @@ impl Image {
             .map_err(|e| ImageError::FormatDetectionFailed(format!("TIFF encoder error: {}", e)))?;
 
         let (width, height, channels) = self.extract_dimensions();
-        write_tiff_image(&self.pixels, &mut encoder, width as u32, height as u32, channels)
+        write_tiff_image(
+            &self.pixels,
+            &mut encoder,
+            width as u32,
+            height as u32,
+            channels,
+        )
     }
 }
 
@@ -74,48 +77,27 @@ fn actual_samples(buffer_len: usize, pixel_count: usize) -> usize {
 }
 
 /// Resolve how many channels to keep, given the decoded buffer's true sample
-/// count and the count implied by the colortype. When the buffer carries more
-/// samples than the colortype (extra/alpha samples), keep only the logical
-/// channels (1 for gray-like, 3 for RGB-like) and drop the rest. When the two
-/// agree, use the colortype's count.
-fn reconcile_samples(
-    buffer_len: usize,
-    pixel_count: usize,
-    logical_samples: usize,
-) -> Result<usize> {
+/// count and the colortype. When the buffer carries more samples than the
+/// colortype (extra/alpha samples), keep only the logical channels (1 for
+/// gray-like, 3 for RGB-like) and drop the rest. When the two agree, keep the
+/// colortype's channels minus any alpha it declares.
+fn reconcile_samples(buffer_len: usize, pixel_count: usize, colortype: ColorType) -> Result<usize> {
     let actual = actual_samples(buffer_len, pixel_count);
     if pixel_count == 0 || actual == 0 || !buffer_len.is_multiple_of(pixel_count) {
         return Err(ImageError::FormatDetectionFailed(format!(
             "TIFF buffer ({buffer_len}) is not a whole number of samples per pixel ({pixel_count})"
         )));
     }
-    if actual <= logical_samples {
-        return Ok(actual);
+    let logical = samples_per_pixel(colortype);
+    if actual <= logical {
+        return Ok(kept_samples(colortype).min(actual));
     }
     // More samples than the colortype expects: keep the logical channels.
     // Gray-like (1–2) collapse to 1, RGB-like (3–4) collapse to 3.
-    Ok(if logical_samples >= 3 { 3 } else { 1 })
+    Ok(if logical >= 3 { 3 } else { 1 })
 }
 
-/// Drop the trailing `from - to` samples of every pixel in an interleaved
-/// buffer, keeping the first `to` of each group of `from`. Used to strip an
-/// alpha (or other extra) channel down to the logical RGB/gray channels.
-fn strip_extra_samples(pixels: PixelData, from: usize, to: usize) -> PixelData {
-    fn strip<T: Copy>(data: Vec<T>, from: usize, to: usize) -> Vec<T> {
-        data.chunks(from)
-            .flat_map(|px| px.iter().take(to).copied())
-            .collect()
-    }
-    match pixels {
-        PixelData::U8(d) => PixelData::U8(strip(d, from, to)),
-        PixelData::U16(d) => PixelData::U16(strip(d, from, to)),
-        PixelData::I16(d) => PixelData::I16(strip(d, from, to)),
-        PixelData::I32(d) => PixelData::I32(strip(d, from, to)),
-        PixelData::F32(d) => PixelData::F32(strip(d, from, to)),
-        PixelData::F64(d) => PixelData::F64(strip(d, from, to)),
-    }
-}
-
+/// Samples per pixel the colortype itself declares.
 fn samples_per_pixel(colortype: ColorType) -> usize {
     match colortype {
         ColorType::Gray(_) | ColorType::Palette(_) => 1,
@@ -125,6 +107,17 @@ fn samples_per_pixel(colortype: ColorType) -> usize {
         ColorType::CMYKA(_) => 5,
         ColorType::Multiband { num_samples, .. } => num_samples as usize,
         _ => 1,
+    }
+}
+
+/// Channels kept in memory: an alpha channel is dropped, so GrayA lands as
+/// gray and RGBA as RGB. Colortypes with no alpha keep every sample.
+fn kept_samples(colortype: ColorType) -> usize {
+    match colortype {
+        ColorType::GrayA(_) => 1,
+        ColorType::RGBA(_) => 3,
+        ColorType::CMYKA(_) => 4,
+        other => samples_per_pixel(other),
     }
 }
 
@@ -184,10 +177,7 @@ mod tests {
     use super::*;
 
     fn tmp_tiff() -> tempfile::NamedTempFile {
-        tempfile::Builder::new()
-            .suffix(".tiff")
-            .tempfile()
-            .unwrap()
+        tempfile::Builder::new().suffix(".tiff").tempfile().unwrap()
     }
 
     #[test]
@@ -244,7 +234,10 @@ mod tests {
         img.save(tmp.path()).unwrap();
 
         let restored = Image::open_tiff(tmp.path()).unwrap();
-        assert!(restored.is_rgb(), "RGB TIFF should round-trip with channels==3");
+        assert!(
+            restored.is_rgb(),
+            "RGB TIFF should round-trip with channels==3"
+        );
         assert_eq!(restored.channels(), 3);
         assert_eq!(restored.width(), 4);
         assert_eq!(restored.height(), 4);
@@ -275,37 +268,57 @@ mod tests {
 
     #[test]
     fn reconcile_keeps_matching_samples() {
-        // 3 samples/pixel buffer, colortype says 3 → keep 3.
-        assert_eq!(reconcile_samples(4 * 3, 4, 3).unwrap(), 3);
+        // 3 samples/pixel buffer, colortype says RGB → keep 3.
+        assert_eq!(reconcile_samples(4 * 3, 4, ColorType::RGB(8)).unwrap(), 3);
         // 1 sample/pixel gray.
-        assert_eq!(reconcile_samples(4, 4, 1).unwrap(), 1);
+        assert_eq!(reconcile_samples(4, 4, ColorType::Gray(8)).unwrap(), 1);
     }
 
     #[test]
     fn reconcile_strips_rgb_alpha() {
         // PixInsight RGBA: buffer has 4 samples/pixel but colortype reports
         // RGB (3). Keep 3, drop the assoc-alpha.
-        assert_eq!(reconcile_samples(4 * 4, 4, 3).unwrap(), 3);
+        assert_eq!(reconcile_samples(4 * 4, 4, ColorType::RGB(8)).unwrap(), 3);
+    }
+
+    #[test]
+    fn reconcile_strips_declared_alpha() {
+        // Colortype and buffer agree on 4 samples: it is a real RGBA TIFF, and
+        // the alpha still has to go so the image lands as 3-channel RGB.
+        assert_eq!(reconcile_samples(4 * 4, 4, ColorType::RGBA(8)).unwrap(), 3);
+        assert_eq!(reconcile_samples(4 * 2, 4, ColorType::GrayA(8)).unwrap(), 1);
     }
 
     #[test]
     fn reconcile_strips_gray_alpha() {
-        // GrayA: 2 samples/pixel, logical 1 → keep 1.
-        assert_eq!(reconcile_samples(4 * 2, 4, 1).unwrap(), 1);
+        // GrayA stored against a Gray colortype: 2 samples/pixel, logical 1.
+        assert_eq!(reconcile_samples(4 * 2, 4, ColorType::Gray(8)).unwrap(), 1);
     }
 
     #[test]
     fn reconcile_rejects_non_integer_samples() {
         // A buffer that isn't a whole number of samples per pixel.
-        assert!(reconcile_samples(10, 4, 3).is_err());
+        assert!(reconcile_samples(10, 4, ColorType::RGB(8)).is_err());
     }
 
     #[test]
-    fn strip_extra_samples_drops_trailing_channel() {
-        // RGBA → RGB: keep first 3 of every 4. One pixel: [R,G,B,A].
-        let rgba = PixelData::U16(vec![10, 20, 30, 999, 40, 50, 60, 888]);
-        let rgb = strip_extra_samples(rgba, 4, 3);
-        assert_eq!(rgb.as_u16().unwrap(), &vec![10, 20, 30, 40, 50, 60]);
+    fn open_rgba_tiff_drops_alpha() {
+        let tmp = tmp_tiff();
+        // One row of two pixels: red then green, both opaque.
+        let rgba: Vec<u8> = vec![10, 20, 30, 255, 40, 50, 60, 255];
+        let file = std::fs::File::create(tmp.path()).unwrap();
+        TiffEncoder::new(file)
+            .unwrap()
+            .write_image::<colortype::RGBA8>(2, 1, &rgba)
+            .unwrap();
+
+        let restored = Image::open_tiff(tmp.path()).unwrap();
+        assert!(restored.is_rgb());
+        assert_eq!(restored.channels(), 3);
+        assert_eq!(
+            restored.pixels.as_u8().unwrap(),
+            &vec![10, 20, 30, 40, 50, 60]
+        );
     }
 
     #[test]
@@ -318,10 +331,7 @@ mod tests {
     #[test]
     fn i32_saves_as_gray32() {
         let tmp = tmp_tiff();
-        let img = Image::new(
-            PixelData::I32(vec![0i32, 1000, -500, 42]),
-            vec![2usize, 2],
-        );
+        let img = Image::new(PixelData::I32(vec![0i32, 1000, -500, 42]), vec![2usize, 2]);
         img.save(tmp.path()).unwrap();
     }
 }

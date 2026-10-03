@@ -130,7 +130,10 @@ mod tests {
         assert_eq!(XisfPropertyValue::Boolean(true).type_name(), "Boolean");
         assert_eq!(XisfPropertyValue::Float64(0.0).type_name(), "Float64");
         assert_eq!(XisfPropertyValue::Int32(0).type_name(), "Int32");
-        assert_eq!(XisfPropertyValue::F64Vector(vec![]).type_name(), "F64Vector");
+        assert_eq!(
+            XisfPropertyValue::F64Vector(vec![]).type_name(),
+            "F64Vector"
+        );
         assert_eq!(
             XisfPropertyValue::F64Matrix {
                 rows: 0,
@@ -144,7 +147,10 @@ mod tests {
 
     #[test]
     fn format_value_string_passthrough() {
-        assert_eq!(XisfPropertyValue::String("hello".into()).format_value(), "hello");
+        assert_eq!(
+            XisfPropertyValue::String("hello".into()).format_value(),
+            "hello"
+        );
         assert_eq!(XisfPropertyValue::String(String::new()).format_value(), "");
     }
 
@@ -158,8 +164,14 @@ mod tests {
     fn format_value_int32_uses_display() {
         assert_eq!(XisfPropertyValue::Int32(42).format_value(), "42");
         assert_eq!(XisfPropertyValue::Int32(-1).format_value(), "-1");
-        assert_eq!(XisfPropertyValue::Int32(i32::MAX).format_value(), "2147483647");
-        assert_eq!(XisfPropertyValue::Int32(i32::MIN).format_value(), "-2147483648");
+        assert_eq!(
+            XisfPropertyValue::Int32(i32::MAX).format_value(),
+            "2147483647"
+        );
+        assert_eq!(
+            XisfPropertyValue::Int32(i32::MIN).format_value(),
+            "-2147483648"
+        );
     }
 
     #[test]
@@ -180,8 +192,14 @@ mod tests {
 
     #[test]
     fn format_value_float_handles_special_values() {
-        assert_eq!(XisfPropertyValue::Float64(f64::INFINITY).format_value(), "inf");
-        assert_eq!(XisfPropertyValue::Float64(f64::NEG_INFINITY).format_value(), "-inf");
+        assert_eq!(
+            XisfPropertyValue::Float64(f64::INFINITY).format_value(),
+            "inf"
+        );
+        assert_eq!(
+            XisfPropertyValue::Float64(f64::NEG_INFINITY).format_value(),
+            "-inf"
+        );
         assert_eq!(XisfPropertyValue::Float64(f64::NAN).format_value(), "NaN");
     }
 
@@ -192,7 +210,10 @@ mod tests {
             "1.5 2.5 3.5"
         );
         assert_eq!(XisfPropertyValue::F64Vector(vec![]).format_value(), "");
-        assert_eq!(XisfPropertyValue::F64Vector(vec![42.0]).format_value(), "42.0");
+        assert_eq!(
+            XisfPropertyValue::F64Vector(vec![42.0]).format_value(),
+            "42.0"
+        );
     }
 
     #[test]
@@ -280,7 +301,9 @@ mod tests {
 
     #[test]
     fn to_le_bytes_none_for_scalar_types() {
-        assert!(XisfPropertyValue::String("x".into()).to_le_bytes().is_none());
+        assert!(XisfPropertyValue::String("x".into())
+            .to_le_bytes()
+            .is_none());
         assert!(XisfPropertyValue::Boolean(true).to_le_bytes().is_none());
         assert!(XisfPropertyValue::Float64(1.0).to_le_bytes().is_none());
         assert!(XisfPropertyValue::Int32(1).to_le_bytes().is_none());

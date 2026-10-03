@@ -10,7 +10,7 @@ impl Command for Outl {
     fn name(&self) -> &str {
         "OUTL"
     }
-    
+
     fn description(&self) -> &str {
         "Identify outlier observations"
     }
@@ -244,7 +244,12 @@ mod tests {
             s.observations = vec![obs(10.0), obs(100.0)];
             s.last_fit = Some(fit_with(5.0, vec![]));
             let body = text(Outl.execute(&mut s, &["3.0", token]).unwrap());
-            assert!(body.contains("Masked 1 observations"), "token {:?}: {}", token, body);
+            assert!(
+                body.contains("Masked 1 observations"),
+                "token {:?}: {}",
+                token,
+                body
+            );
             assert!(!s.observations[0].masked);
             assert!(s.observations[1].masked);
         }

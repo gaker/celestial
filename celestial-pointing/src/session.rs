@@ -100,11 +100,7 @@ impl Session {
         let lat = site.latitude;
         let lon = site.longitude;
         let height_m = site.elevation;
-        let location = match celestial_core::Location::new(
-            lat.radians(),
-            lon.radians(),
-            height_m,
-        ) {
+        let location = match celestial_core::Location::new(lat.radians(), lon.radians(), height_m) {
             Ok(l) => l,
             Err(_) => return self.observations.clone(),
         };
@@ -114,16 +110,14 @@ impl Session {
                 let mut cat_ra = obs.catalog_ra;
                 let mut cat_dec = obs.catalog_dec;
                 if apply_diurnal {
-                    let (ra, dec) = crate::diurnal::apply_diurnal(
-                        cat_ra, cat_dec, obs.lst, lat, lon, height_m,
-                    );
+                    let (ra, dec) =
+                        crate::diurnal::apply_diurnal(cat_ra, cat_dec, obs.lst, lat, lon, height_m);
                     cat_ra = ra;
                     cat_dec = dec;
                 }
                 if apply_refraction {
-                    let (ra, dec) = crate::prepare::apply_refraction(
-                        cat_ra, cat_dec, obs.lst, &location, site,
-                    );
+                    let (ra, dec) =
+                        crate::prepare::apply_refraction(cat_ra, cat_dec, obs.lst, &location, site);
                     cat_ra = ra;
                     cat_dec = dec;
                 }
@@ -387,10 +381,7 @@ mod tests {
             prepared[0].catalog_dec.degrees(),
             original.catalog_dec.degrees(),
         );
-        assert_eq!(
-            prepared[0].catalog_ra.hours(),
-            original.catalog_ra.hours(),
-        );
+        assert_eq!(prepared[0].catalog_ra.hours(), original.catalog_ra.hours(),);
     }
 
     // Pressure > 0 triggers refraction → catalog coords get nudged.
@@ -407,8 +398,7 @@ mod tests {
             .observed_dec_deg(target_dec)
             .build()];
         let prepared = s.prepared_observations();
-        let diff_arcsec =
-            (prepared[0].catalog_dec.degrees() - target_dec) * 3600.0;
+        let diff_arcsec = (prepared[0].catalog_dec.degrees() - target_dec) * 3600.0;
         assert!(
             diff_arcsec.abs() > 0.1,
             "refraction should shift dec by more than 0.1\"; got {}\"",
@@ -427,8 +417,7 @@ mod tests {
             .catalog_ra_hours(target_ra)
             .build()];
         let prepared = s.prepared_observations();
-        let diff_seconds =
-            (prepared[0].catalog_ra.hours() - target_ra).abs() * 3600.0;
+        let diff_seconds = (prepared[0].catalog_ra.hours() - target_ra).abs() * 3600.0;
         assert!(
             diff_seconds < 1.0,
             "diurnal aberration is sub-arcsec; got {} sec of HA",
@@ -436,11 +425,8 @@ mod tests {
         );
         // It still ran (commanded_ha was recomputed) — verify by checking
         // commanded_ha matches (lst - cat_ra).wrapped().
-        let expected_ha =
-            (prepared[0].lst - prepared[0].catalog_ra).wrapped();
-        assert!(
-            (prepared[0].commanded_ha.arcseconds() - expected_ha.arcseconds()).abs() < 1e-6,
-        );
+        let expected_ha = (prepared[0].lst - prepared[0].catalog_ra).wrapped();
+        assert!((prepared[0].commanded_ha.arcseconds() - expected_ha.arcseconds()).abs() < 1e-6,);
     }
 
     // commanded_ha gets recomputed in the transform path, overriding whatever
@@ -469,9 +455,7 @@ mod tests {
     fn prepared_observations_preserves_input_order_and_count() {
         let mut s = Session::new();
         s.site = Some(site(39.0, 987.0));
-        s.observations = (0..5)
-            .map(|i| make_obs(0.0, 10.0 * i as f64))
-            .collect();
+        s.observations = (0..5).map(|i| make_obs(0.0, 10.0 * i as f64)).collect();
         let prepared = s.prepared_observations();
         assert_eq!(prepared.len(), 5);
         for (i, p) in prepared.iter().enumerate().take(5) {
@@ -557,25 +541,17 @@ mod tests {
     fn fit_overwrites_previous_last_fit() {
         let mut s = Session::new();
         s.last_fit = Some(fake_fit(vec![999.0]));
-        s.observations = vec![
-            make_obs(100.0, 30.0),
-            make_obs(100.0, 45.0),
-        ];
+        s.observations = vec![make_obs(100.0, 30.0), make_obs(100.0, 45.0)];
         s.model.add_term("IH").unwrap();
         s.fit().unwrap();
         assert!(s.last_fit.is_some());
-        assert!(
-            (s.last_fit.as_ref().unwrap().coefficients[0] - (-100.0)).abs() < 1e-6,
-        );
+        assert!((s.last_fit.as_ref().unwrap().coefficients[0] - (-100.0)).abs() < 1e-6,);
     }
 
     #[test]
     fn fit_writes_coefficients_back_to_model() {
         let mut s = Session::new();
-        s.observations = vec![
-            make_obs(50.0, 30.0),
-            make_obs(50.0, 45.0),
-        ];
+        s.observations = vec![make_obs(50.0, 30.0), make_obs(50.0, 45.0)];
         s.model.add_term("IH").unwrap();
         s.fit().unwrap();
         // Model coefficients should match fit result, not the initial 0.0.

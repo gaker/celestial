@@ -26,8 +26,8 @@ impl PointingHelper {
             commands: [
                 "APPLY", "CORRECT", "INDAT", "INMOD", "OUTMOD", "USE", "LOSE", "FIT", "CLIST",
                 "SLIST", "SHOW", "RESET", "MASK", "UNMASK", "MVET", "OUTL", "FIX", "UNFIX",
-                "PARAL", "CHAIN", "ADJUST", "FAUTO", "LST", "PREDICT", "GSCAT",
-                "GDIST", "GMAP", "GHA", "GDEC", "GHYST", "HELP", "QUIT",
+                "PARAL", "CHAIN", "ADJUST", "FAUTO", "LST", "PREDICT", "GSCAT", "GDIST", "GMAP",
+                "GHA", "GDEC", "GHYST", "HELP", "QUIT",
             ]
             .iter()
             .map(|s| s.to_string())
@@ -281,11 +281,7 @@ fn print_fit(fit: &commands::FitDisplay) {
         } else {
             println!(
                 "{}  {:>6}  {:>+10.3}  {:>12.2}  {:>9.3}",
-                lead,
-                name,
-                fit.change[i],
-                fit.coefficients[i],
-                fit.sigma[i],
+                lead, name, fit.change[i], fit.coefficients[i], fit.sigma[i],
             );
         }
     }

@@ -188,11 +188,15 @@ mod tests {
             let inter = proj.project(native).unwrap();
             assert!(
                 inter.x_deg().abs() < 1e-10,
-                "x not zero for BON theta_1={}: {}", theta_1, inter.x_deg(),
+                "x not zero for BON theta_1={}: {}",
+                theta_1,
+                inter.x_deg(),
             );
             assert!(
                 inter.y_deg().abs() < 1e-10,
-                "y not zero for BON theta_1={}: {}", theta_1, inter.y_deg(),
+                "y not zero for BON theta_1={}: {}",
+                theta_1,
+                inter.y_deg(),
             );
         }
     }
@@ -220,11 +224,17 @@ mod tests {
                     // doesn't recover ULP-tight; assert the absolute floor.
                     assert!(
                         (original.phi().degrees() - recovered.phi().degrees()).abs() < 1e-8,
-                        "phi (theta_1={}, {}, {})", theta_1, phi_deg, theta_deg,
+                        "phi (theta_1={}, {}, {})",
+                        theta_1,
+                        phi_deg,
+                        theta_deg,
                     );
                     assert!(
                         (original.theta().degrees() - recovered.theta().degrees()).abs() < 1e-8,
-                        "theta (theta_1={}, {}, {})", theta_1, phi_deg, theta_deg,
+                        "theta (theta_1={}, {}, {})",
+                        theta_1,
+                        phi_deg,
+                        theta_deg,
                     );
                 }
             }
@@ -261,19 +271,21 @@ mod tests {
         let proj = Projection::pco();
         for phi_deg in [-60.0, -30.0, 0.0, 30.0, 60.0] {
             for theta_deg in [-70.0, -45.0, -20.0, 15.0, 20.0, 30.0, 45.0, 60.0, 70.0] {
-                let original = NativeCoord::new(
-                    Angle::from_degrees(phi_deg),
-                    Angle::from_degrees(theta_deg),
-                );
+                let original =
+                    NativeCoord::new(Angle::from_degrees(phi_deg), Angle::from_degrees(theta_deg));
                 let inter = proj.project(original).unwrap();
                 let recovered = proj.deproject(inter).unwrap();
                 assert!(
                     (original.phi().degrees() - recovered.phi().degrees()).abs() < 1e-8,
-                    "phi mismatch at ({}, {})", phi_deg, theta_deg,
+                    "phi mismatch at ({}, {})",
+                    phi_deg,
+                    theta_deg,
                 );
                 assert!(
                     (original.theta().degrees() - recovered.theta().degrees()).abs() < 1e-8,
-                    "theta mismatch at ({}, {})", phi_deg, theta_deg,
+                    "theta mismatch at ({}, {})",
+                    phi_deg,
+                    theta_deg,
                 );
             }
         }

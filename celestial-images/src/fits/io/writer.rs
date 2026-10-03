@@ -826,19 +826,13 @@ mod tests {
             CompressionAlgorithm::Rice,
         );
 
-        let zimage = header
-            .get("ZIMAGE")
-            .as_bool();
+        let zimage = header.get("ZIMAGE").as_bool();
         assert_eq!(zimage, Some(true));
 
-        let zcmptype = header
-            .get("ZCMPTYPE")
-            .as_str();
+        let zcmptype = header.get("ZCMPTYPE").as_str();
         assert_eq!(zcmptype, Some("RICE_1"));
 
-        let zbitpix = header
-            .get("ZBITPIX")
-            .as_i64();
+        let zbitpix = header.get("ZBITPIX").as_i64();
         assert_eq!(zbitpix, Some(16));
     }
 

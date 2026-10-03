@@ -40,10 +40,7 @@ mod tests {
 
     #[test]
     fn four_plus_dim_is_cube() {
-        assert_eq!(
-            ImageKind::from_dimensions(&[10, 10, 3, 5]),
-            ImageKind::Cube
-        );
+        assert_eq!(ImageKind::from_dimensions(&[10, 10, 3, 5]), ImageKind::Cube);
         assert_eq!(
             ImageKind::from_dimensions(&[10, 10, 3, 5, 2]),
             ImageKind::Cube

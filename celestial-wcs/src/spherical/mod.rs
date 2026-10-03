@@ -488,13 +488,10 @@ mod tests {
         ];
         for proj in projections {
             let (phi0, theta0) = proj.native_reference();
-            let native = NativeCoord::new(
-                Angle::from_degrees(phi0),
-                Angle::from_degrees(theta0),
-            );
-            let inter = proj.project(native).unwrap_or_else(|e| {
-                panic!("{:?} failed to project reference: {}", proj, e)
-            });
+            let native = NativeCoord::new(Angle::from_degrees(phi0), Angle::from_degrees(theta0));
+            let inter = proj
+                .project(native)
+                .unwrap_or_else(|e| panic!("{:?} failed to project reference: {}", proj, e));
             assert!(
                 inter.x_deg().abs() < 1e-10 && inter.y_deg().abs() < 1e-10,
                 "{:?} reference point did not map to origin: ({}, {})",
@@ -565,8 +562,16 @@ mod tests {
         let cel = rot_fwd.native_to_celestial(original_nat).unwrap();
         let recovered_nat = rot_fwd.celestial_to_native(cel).unwrap();
         // ULP tolerance accounts for ARM vs x86 FPU differences in trig functions.
-        assert_ulp_lt!(original_nat.phi().degrees(), recovered_nat.phi().degrees(), 8);
-        assert_ulp_lt!(original_nat.theta().degrees(), recovered_nat.theta().degrees(), 8);
+        assert_ulp_lt!(
+            original_nat.phi().degrees(),
+            recovered_nat.phi().degrees(),
+            8
+        );
+        assert_ulp_lt!(
+            original_nat.theta().degrees(),
+            recovered_nat.theta().degrees(),
+            8
+        );
 
         // Reverse roundtrip starting from celestial space, including negative delta_p.
         let rot_rev = SphericalRotation::new(
@@ -578,8 +583,16 @@ mod tests {
             CelestialCoord::new(Angle::from_degrees(110.0), Angle::from_degrees(-30.0));
         let nat = rot_rev.celestial_to_native(original_cel).unwrap();
         let recovered_cel = rot_rev.native_to_celestial(nat).unwrap();
-        assert_ulp_lt!(original_cel.alpha().degrees(), recovered_cel.alpha().degrees(), 2);
-        assert_ulp_lt!(original_cel.delta().degrees(), recovered_cel.delta().degrees(), 3);
+        assert_ulp_lt!(
+            original_cel.alpha().degrees(),
+            recovered_cel.alpha().degrees(),
+            2
+        );
+        assert_ulp_lt!(
+            original_cel.delta().degrees(),
+            recovered_cel.delta().degrees(),
+            3
+        );
     }
 
     #[test]
@@ -819,8 +832,8 @@ mod tests {
 
     #[test]
     fn test_from_crval_pole_crval() {
-        use crate::Projection;
         use crate::coordinate::IntermediateCoord;
+        use crate::Projection;
 
         // crval at the celestial pole exercises Paper II rule 1
         // (delta_0 = +/-90 -> alpha_p = 0).
@@ -848,11 +861,13 @@ mod tests {
         let alpha_norm = celestial.alpha().degrees().rem_euclid(360.0);
         assert!(
             (alpha_norm - 315.0).abs() < 1e-9,
-            "expected alpha ≈ 315°, got {}", celestial.alpha().degrees(),
+            "expected alpha ≈ 315°, got {}",
+            celestial.alpha().degrees(),
         );
         assert!(
             (celestial.delta().degrees() - 89.293).abs() < 1e-3,
-            "expected delta ≈ 89.293°, got {}", celestial.delta().degrees(),
+            "expected delta ≈ 89.293°, got {}",
+            celestial.delta().degrees(),
         );
     }
 

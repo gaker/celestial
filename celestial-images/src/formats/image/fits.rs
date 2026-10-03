@@ -1,8 +1,8 @@
 use super::Image;
 use crate::core::{BitPix, ImageError, Result};
-use crate::formats::pixel_data::PixelData;
 use crate::fits::header::Keyword;
 use crate::fits::io::writer::FitsWriter;
+use crate::formats::pixel_data::PixelData;
 use std::path::Path;
 
 impl Image {
@@ -21,8 +21,7 @@ impl Image {
             BitPix::I16 if is_unsigned_16 => {
                 let (_, data): (_, Vec<i16>) =
                     fits.primary_hdu_with_data().map_err(ImageError::Fits)?;
-                let u16_data: Vec<u16> =
-                    data.iter().map(|&v| (v as i32 + 32768) as u16).collect();
+                let u16_data: Vec<u16> = data.iter().map(|&v| (v as i32 + 32768) as u16).collect();
                 PixelData::U16(u16_data)
             }
             BitPix::I16 => {
@@ -85,8 +84,7 @@ impl Image {
                 .write_primary_image(data, &source.dimensions, &source.keywords)
                 .map_err(ImageError::Fits)?,
             PixelData::U16(data) => {
-                let shifted: Vec<i16> =
-                    data.iter().map(|&v| (v as i32 - 32768) as i16).collect();
+                let shifted: Vec<i16> = data.iter().map(|&v| (v as i32 - 32768) as i16).collect();
                 let keywords = with_u16_scaling(&source.keywords);
                 writer
                     .write_primary_image(&shifted, &source.dimensions, &keywords)
@@ -111,14 +109,8 @@ impl Image {
 }
 
 fn is_u16_encoding(header: &crate::fits::header::Header) -> bool {
-    let bzero = header
-        .get("BZERO")
-        .as_f64()
-        .unwrap_or(0.0);
-    let bscale = header
-        .get("BSCALE")
-        .as_f64()
-        .unwrap_or(1.0);
+    let bzero = header.get("BZERO").as_f64().unwrap_or(0.0);
+    let bscale = header.get("BSCALE").as_f64().unwrap_or(1.0);
     bzero == 32768.0 && bscale == 1.0
 }
 
@@ -128,7 +120,9 @@ fn with_u16_scaling(keywords: &[Keyword]) -> Vec<Keyword> {
         .filter(|k| k.name != "BZERO" && k.name != "BSCALE")
         .cloned()
         .collect();
-    out.push(Keyword::real("BZERO", 32768.0).with_comment("offset data range to that of unsigned short"));
+    out.push(
+        Keyword::real("BZERO", 32768.0).with_comment("offset data range to that of unsigned short"),
+    );
     out.push(Keyword::real("BSCALE", 1.0).with_comment("default scaling factor"));
     out
 }
@@ -139,10 +133,7 @@ mod tests {
     use crate::fits::header::Keyword;
 
     fn tmp_fits() -> tempfile::NamedTempFile {
-        tempfile::Builder::new()
-            .suffix(".fits")
-            .tempfile()
-            .unwrap()
+        tempfile::Builder::new().suffix(".fits").tempfile().unwrap()
     }
 
     #[test]
@@ -211,8 +202,18 @@ mod tests {
         let restored = Image::open(tmp.path()).unwrap();
         assert_eq!(restored.pixels.as_u16().unwrap(), &original);
 
-        let bzero = restored.get_keyword("BZERO").unwrap().value.clone().unwrap();
-        let bscale = restored.get_keyword("BSCALE").unwrap().value.clone().unwrap();
+        let bzero = restored
+            .get_keyword("BZERO")
+            .unwrap()
+            .value
+            .clone()
+            .unwrap();
+        let bscale = restored
+            .get_keyword("BSCALE")
+            .unwrap()
+            .value
+            .clone()
+            .unwrap();
         assert_eq!(bzero.as_real(), Some(32768.0));
         assert_eq!(bscale.as_real(), Some(1.0));
     }
@@ -224,9 +225,9 @@ mod tests {
         // that conversion is handled transparently.
         let tmp = tmp_fits();
         let interleaved: Vec<f32> = vec![
-            1.0, 2.0, 3.0,    // pixel (0,0)
-            4.0, 5.0, 6.0,    // pixel (1,0)
-            7.0, 8.0, 9.0,    // pixel (0,1)
+            1.0, 2.0, 3.0, // pixel (0,0)
+            4.0, 5.0, 6.0, // pixel (1,0)
+            7.0, 8.0, 9.0, // pixel (0,1)
             10.0, 11.0, 12.0, // pixel (1,1)
         ];
         let img = Image::new(PixelData::F32(interleaved.clone()), vec![2usize, 2, 3]);

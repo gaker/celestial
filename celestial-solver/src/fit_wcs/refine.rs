@@ -1,7 +1,6 @@
 use anyhow::{ensure, Result};
 use celestial_catalog::query::{
-    tan_deproject_star, tan_project_star,
-    Catalog, ConeSearchParams, cone_search,
+    cone_search, tan_deproject_star, tan_project_star, Catalog, ConeSearchParams,
 };
 use celestial_core::constants::{DEG_TO_RAD, RAD_TO_DEG};
 use celestial_time::JulianDate;
@@ -10,9 +9,8 @@ use crate::detect::DetectedStar;
 use crate::match_field::StarPair;
 
 use super::cd_matrix::{
+    compute_residuals, fit_cd_weighted, rms_error, sigma_clip_loop_weighted, weighted_rms_error,
     WcsParams,
-    fit_cd_weighted, sigma_clip_loop_weighted,
-    compute_residuals, rms_error, weighted_rms_error,
 };
 use super::solution::WcsSolution;
 
@@ -99,25 +97,43 @@ pub fn refine_wcs(
     epoch: JulianDate,
     params: &RefineParams,
 ) -> Result<RefineResult> {
-    let (catalog_stars, _mag) = prep_catalog_for_refine(initial, catalog, epoch, params.target_stars);
+    let (catalog_stars, _mag) =
+        prep_catalog_for_refine(initial, catalog, epoch, params.target_stars);
     let mut wcs = initial.clone();
     let mut final_pairs = Vec::new();
-    log::debug!("refine_wcs: initial rms={:.4}px n_stars={}", wcs.rms_px, wcs.n_stars);
+    log::debug!(
+        "refine_wcs: initial rms={:.4}px n_stars={}",
+        wcs.rms_px,
+        wcs.n_stars
+    );
 
     for iter in 0..params.max_iterations {
         match run_refine_iteration(&wcs, stars, &catalog_stars, params, iter)? {
-            RefineIterStep::Continue { new_wcs, new_pairs, converged } => {
+            RefineIterStep::Continue {
+                new_wcs,
+                new_pairs,
+                converged,
+            } => {
                 final_pairs = new_pairs;
                 wcs = new_wcs;
-                if converged { break; }
+                if converged {
+                    break;
+                }
             }
             RefineIterStep::Break => break,
         }
     }
 
     ensure_pairs_nonempty(&final_pairs, params.max_iterations)?;
-    log::debug!("refine_wcs: end-of-loop wcs.rms={:.4}px final_pairs={}", wcs.rms_px, final_pairs.len());
-    Ok(RefineResult { wcs, pairs: final_pairs })
+    log::debug!(
+        "refine_wcs: end-of-loop wcs.rms={:.4}px final_pairs={}",
+        wcs.rms_px,
+        final_pairs.len()
+    );
+    Ok(RefineResult {
+        wcs,
+        pairs: final_pairs,
+    })
 }
 
 fn prep_catalog_for_refine(
@@ -128,17 +144,29 @@ fn prep_catalog_for_refine(
 ) -> (Vec<CatalogEntry>, f64) {
     let radius_deg = field_radius_deg(initial);
     let (catalog_stars, mag_limit) = search_optimal_magnitude(
-        catalog, initial.crval1, initial.crval2, radius_deg, epoch, target_stars,
+        catalog,
+        initial.crval1,
+        initial.crval2,
+        radius_deg,
+        epoch,
+        target_stars,
     );
     log::debug!(
         "refine_wcs: {} catalog stars to mag {:.2} within {:.3} deg (target {})",
-        catalog_stars.len(), mag_limit, radius_deg, target_stars,
+        catalog_stars.len(),
+        mag_limit,
+        radius_deg,
+        target_stars,
     );
     (catalog_stars, mag_limit)
 }
 
 enum RefineIterStep {
-    Continue { new_wcs: WcsSolution, new_pairs: Vec<StarPair>, converged: bool },
+    Continue {
+        new_wcs: WcsSolution,
+        new_pairs: Vec<StarPair>,
+        converged: bool,
+    },
     Break,
 }
 
@@ -151,7 +179,11 @@ fn run_refine_iteration(
 ) -> Result<RefineIterStep> {
     let m = match_by_projection(wcs, stars, cats, params.tolerance_px);
     if m.pairs.len() < 3 {
-        log::debug!("refine iter {}: only {} pairs, stopping", iter, m.pairs.len());
+        log::debug!(
+            "refine iter {}: only {} pairs, stopping",
+            iter,
+            m.pairs.len()
+        );
         if iter == 0 {
             return Err(anyhow::anyhow!(
                 "refine could not extend match: only {} projection pairs within tolerance",
@@ -164,10 +196,18 @@ fn run_refine_iteration(
     let delta = libm::fabs(wcs.rms_px - refined.rms_px);
     log::debug!(
         "refine iter {}: {} stars, rms={:.4} px, wrms={:.4} px (delta={:.4})",
-        iter, refined.n_stars, refined.rms_px, refined.weighted_rms_px, delta,
+        iter,
+        refined.n_stars,
+        refined.rms_px,
+        refined.weighted_rms_px,
+        delta,
     );
     let converged = delta < params.rms_delta_threshold && refined.n_stars == wcs.n_stars;
-    Ok(RefineIterStep::Continue { new_wcs: refined, new_pairs: m.pairs, converged })
+    Ok(RefineIterStep::Continue {
+        new_wcs: refined,
+        new_pairs: m.pairs,
+        converged,
+    })
 }
 
 fn ensure_pairs_nonempty(pairs: &[StarPair], max_iterations: usize) -> Result<()> {
@@ -184,13 +224,19 @@ pub(crate) fn fit_direct(
     weights: &[f64],
     prior: &WcsSolution,
 ) -> Result<WcsSolution> {
-    ensure!(pairs.len() >= 3, "need at least 3 matched pairs, got {}", pairs.len());
+    ensure!(
+        pairs.len() >= 3,
+        "need at least 3 matched pairs, got {}",
+        pairs.len()
+    );
     let crpix1 = prior.width as f64 / 2.0;
     let crpix2 = prior.height as f64 / 2.0;
-    let (projected, w_vec) = project_pairs_to_tangent(
-        pairs, weights, prior.crval1, prior.crval2, crpix1, crpix2,
+    let (projected, w_vec) =
+        project_pairs_to_tangent(pairs, weights, prior.crval1, prior.crval2, crpix1, crpix2);
+    ensure!(
+        projected.len() >= 3,
+        "too few stars projected onto tangent plane"
     );
-    ensure!(projected.len() >= 3, "too few stars projected onto tangent plane");
 
     let mut mask = vec![true; projected.len()];
     let mut cd = fit_cd_weighted(&projected, &mask, &w_vec)?;
@@ -198,13 +244,21 @@ pub(crate) fn fit_direct(
     cd = fit_cd_weighted(&projected, &mask, &w_vec)?;
 
     let (crval1, crval2) = tan_deproject_star(
-        cd.xi0 * DEG_TO_RAD, cd.eta0 * DEG_TO_RAD, prior.crval1, prior.crval2,
+        cd.xi0 * DEG_TO_RAD,
+        cd.eta0 * DEG_TO_RAD,
+        prior.crval1,
+        prior.crval2,
     );
     let (kept_pairs, kept_weights) = extract_kept_pairs(pairs, &mask, &w_vec);
     Ok(assemble_wcs_solution(WcsAssembly {
-        prior, crval1, crval2, cd: &cd,
-        kept_pairs: &kept_pairs, kept_weights: &kept_weights,
-        crpix1, crpix2,
+        prior,
+        crval1,
+        crval2,
+        cd: &cd,
+        kept_pairs: &kept_pairs,
+        kept_weights: &kept_weights,
+        crpix1,
+        crpix2,
     }))
 }
 
@@ -222,7 +276,12 @@ pub(crate) fn project_pairs_to_tangent(
     let mut w_vec = Vec::with_capacity(pairs.len());
     for (p, &wt) in pairs.iter().zip(weights.iter()) {
         if let Some((xi, eta)) = tan_project_star(p.ra_deg, p.dec_deg, crval_ra, crval_dec) {
-            projected.push((p.px_x - crpix1, p.px_y - crpix2, xi * RAD_TO_DEG, eta * RAD_TO_DEG));
+            projected.push((
+                p.px_x - crpix1,
+                p.px_y - crpix2,
+                xi * RAD_TO_DEG,
+                eta * RAD_TO_DEG,
+            ));
             w_vec.push(wt);
         }
     }
@@ -237,7 +296,9 @@ pub(crate) fn extract_kept_pairs<'a>(
     let mut kept_pairs = Vec::new();
     let mut kept_weights = Vec::new();
     for (i, (p, &m)) in pairs.iter().zip(mask.iter()).enumerate() {
-        if !m { continue; }
+        if !m {
+            continue;
+        }
         if i < weights.len() {
             kept_pairs.push(p);
             kept_weights.push(weights[i]);
@@ -259,21 +320,35 @@ struct WcsAssembly<'a> {
 
 fn assemble_wcs_solution(a: WcsAssembly<'_>) -> WcsSolution {
     let wcs_params = WcsParams {
-        crpix1: a.crpix1, crpix2: a.crpix2,
-        crval_ra: a.crval1, crval_dec: a.crval2,
-        cd1_1: a.cd.cd1_1, cd1_2: a.cd.cd1_2, cd2_1: a.cd.cd2_1, cd2_2: a.cd.cd2_2,
+        crpix1: a.crpix1,
+        crpix2: a.crpix2,
+        crval_ra: a.crval1,
+        crval_dec: a.crval2,
+        cd1_1: a.cd.cd1_1,
+        cd1_2: a.cd.cd1_2,
+        cd2_1: a.cd.cd2_1,
+        cd2_2: a.cd.cd2_2,
     };
     let residuals = compute_residuals(a.kept_pairs, wcs_params);
     let rms_px = rms_error(&residuals);
     let weighted_rms_px = weighted_rms_error(&residuals, a.kept_weights);
     WcsSolution {
-        crpix1: a.crpix1, crpix2: a.crpix2,
-        crval1: a.crval1, crval2: a.crval2,
-        cd1_1: a.cd.cd1_1, cd1_2: a.cd.cd1_2, cd2_1: a.cd.cd2_1, cd2_2: a.cd.cd2_2,
-        width: a.prior.width, height: a.prior.height,
-        focal_mm: a.prior.focal_mm, pixel_um: a.prior.pixel_um,
+        crpix1: a.crpix1,
+        crpix2: a.crpix2,
+        crval1: a.crval1,
+        crval2: a.crval2,
+        cd1_1: a.cd.cd1_1,
+        cd1_2: a.cd.cd1_2,
+        cd2_1: a.cd.cd2_1,
+        cd2_2: a.cd.cd2_2,
+        width: a.prior.width,
+        height: a.prior.height,
+        focal_mm: a.prior.focal_mm,
+        pixel_um: a.prior.pixel_um,
         n_stars: residuals.len(),
-        rms_px, weighted_rms_px, residuals,
+        rms_px,
+        weighted_rms_px,
+        residuals,
     }
 }
 
@@ -309,7 +384,10 @@ pub(crate) fn cone_search_at_mag(
     };
     cone_search(catalog, &params)
         .into_iter()
-        .map(|r| CatalogEntry { ra_deg: r.ra_deg, dec_deg: r.dec_deg })
+        .map(|r| CatalogEntry {
+            ra_deg: r.ra_deg,
+            dec_deg: r.dec_deg,
+        })
         .collect()
 }
 
@@ -399,7 +477,9 @@ pub(crate) fn assign_cats_to_dets(
 ) -> Vec<Option<(usize, f64)>> {
     let mut best_det_for_cat = vec![None; catalog_stars.len()];
     for (ci, cat) in catalog_stars.iter().enumerate() {
-        let Some((pred_x, pred_y)) = predict_cat_in_image(wcs, cat) else { continue };
+        let Some((pred_x, pred_y)) = predict_cat_in_image(wcs, cat) else {
+            continue;
+        };
         best_det_for_cat[ci] = nearest_detection(stars, pred_x, pred_y, tol_sq);
     }
     best_det_for_cat
@@ -433,9 +513,12 @@ fn build_match_pairs(
         let cat = &catalog_stars[*ci];
         let det = &stars[si];
         pairs.push(StarPair {
-            px_x: det.x, px_y: det.y,
-            ra_deg: cat.ra_deg, dec_deg: cat.dec_deg,
-            votes: 1, snr: det.snr,
+            px_x: det.x,
+            px_y: det.y,
+            ra_deg: cat.ra_deg,
+            dec_deg: cat.dec_deg,
+            votes: 1,
+            snr: det.snr,
         });
         weights.push(det.snr * det.snr);
         match_dists.push(libm::sqrt(*d2));
@@ -447,10 +530,15 @@ fn build_match_pairs(
 fn log_match_stats(match_dists: &[f64], n_pairs: usize) {
     let mut sorted = match_dists.to_vec();
     sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
-    let median = if sorted.is_empty() { 0.0 } else { sorted[sorted.len() / 2] };
+    let median = if sorted.is_empty() {
+        0.0
+    } else {
+        sorted[sorted.len() / 2]
+    };
     log::debug!(
         "  match_by_projection: {} final pairs, median dist={:.3} px",
-        n_pairs, median,
+        n_pairs,
+        median,
     );
 }
 
@@ -508,7 +596,8 @@ mod tests {
 
     fn det(x: f64, y: f64, snr: f64) -> DetectedStar {
         DetectedStar {
-            x, y,
+            x,
+            y,
             flux: 1000.0,
             snr,
             saturated: false,
@@ -518,7 +607,10 @@ mod tests {
     }
 
     fn cat(ra: f64, dec: f64) -> CatalogEntry {
-        CatalogEntry { ra_deg: ra, dec_deg: dec }
+        CatalogEntry {
+            ra_deg: ra,
+            dec_deg: dec,
+        }
     }
 
     fn synth_catalog(stars: Vec<SynthStar>) -> (Catalog, tempfile::NamedTempFile) {
@@ -530,12 +622,16 @@ mod tests {
     #[test]
     fn field_radius_matches_expected_formula() {
         let wcs = sample_wcs(1000, 1000, 0.001);
-        let expected_diag_arcsec = libm::sqrt(
-            (1000.0 * 3.6) * (1000.0 * 3.6) + (1000.0 * 3.6) * (1000.0 * 3.6),
-        );
+        let expected_diag_arcsec =
+            libm::sqrt((1000.0 * 3.6) * (1000.0 * 3.6) + (1000.0 * 3.6) * (1000.0 * 3.6));
         let expected = expected_diag_arcsec / 3600.0 / 2.0 * 1.2;
         let radius = field_radius_deg(&wcs);
-        assert!((radius - expected).abs() < 1e-9, "got {}, expected {}", radius, expected);
+        assert!(
+            (radius - expected).abs() < 1e-9,
+            "got {}, expected {}",
+            radius,
+            expected
+        );
     }
 
     #[test]
@@ -568,9 +664,24 @@ mod tests {
         // 3 stars: mag 8, 12, 18. Search with max_mag=10 should return only the
         // bright one; max_mag=20 should return all three.
         let stars = vec![
-            SynthStar { source_id: 1, ra: 0.0, dec: 0.0, mag: 8.0 },
-            SynthStar { source_id: 2, ra: 0.01, dec: 0.0, mag: 12.0 },
-            SynthStar { source_id: 3, ra: 0.0, dec: 0.01, mag: 18.0 },
+            SynthStar {
+                source_id: 1,
+                ra: 0.0,
+                dec: 0.0,
+                mag: 8.0,
+            },
+            SynthStar {
+                source_id: 2,
+                ra: 0.01,
+                dec: 0.0,
+                mag: 12.0,
+            },
+            SynthStar {
+                source_id: 3,
+                ra: 0.0,
+                dec: 0.01,
+                mag: 18.0,
+            },
         ];
         let (c, _f) = synth_catalog(stars);
         let epoch = JulianDate::new(2451545.0, 0.0);
@@ -585,7 +696,12 @@ mod tests {
 
     #[test]
     fn cone_search_at_mag_returns_empty_when_no_stars_in_cone() {
-        let stars = vec![SynthStar { source_id: 1, ra: 10.0, dec: 0.0, mag: 8.0 }];
+        let stars = vec![SynthStar {
+            source_id: 1,
+            ra: 10.0,
+            dec: 0.0,
+            mag: 8.0,
+        }];
         let (c, _f) = synth_catalog(stars);
         let epoch = JulianDate::new(2451545.0, 0.0);
 
@@ -609,8 +725,15 @@ mod tests {
         let epoch = JulianDate::new(2451545.0, 0.0);
 
         let (results, mag) = search_optimal_magnitude(&c, 0.0, 0.0, 1.0, epoch, 10);
-        assert!(results.len() >= 10, "got {} stars at mag {mag}", results.len());
-        assert!((8.0..=20.0).contains(&mag), "mag {mag} outside expected range");
+        assert!(
+            results.len() >= 10,
+            "got {} stars at mag {mag}",
+            results.len()
+        );
+        assert!(
+            (8.0..=20.0).contains(&mag),
+            "mag {mag} outside expected range"
+        );
     }
 
     #[test]
@@ -618,8 +741,18 @@ mod tests {
         // 2 stars in a target-of-100 search → never reaches target; mag should
         // hit the hi cap (20.0).
         let stars = vec![
-            SynthStar { source_id: 1, ra: 0.0, dec: 0.0, mag: 8.0 },
-            SynthStar { source_id: 2, ra: 0.01, dec: 0.0, mag: 10.0 },
+            SynthStar {
+                source_id: 1,
+                ra: 0.0,
+                dec: 0.0,
+                mag: 8.0,
+            },
+            SynthStar {
+                source_id: 2,
+                ra: 0.01,
+                dec: 0.0,
+                mag: 10.0,
+            },
         ];
         let (c, _f) = synth_catalog(stars);
         let epoch = JulianDate::new(2451545.0, 0.0);
@@ -638,12 +771,16 @@ mod tests {
         let wcs = wcs_centered_at(180.0, 0.0, 3.6, 100, 100);
         let stars = vec![det(50.0, 50.0, 20.0)];
         let cats = vec![
-            cat(180.0, 0.0),  // near image center
-            cat(0.0, 80.0),    // anti-meridian + high dec → far outside
+            cat(180.0, 0.0), // near image center
+            cat(0.0, 80.0),  // anti-meridian + high dec → far outside
         ];
 
         let result = match_by_projection(&wcs, &stars, &cats, 5.0);
-        assert_eq!(result.pairs.len(), 1, "only the in-bounds star should match");
+        assert_eq!(
+            result.pairs.len(),
+            1,
+            "only the in-bounds star should match"
+        );
         assert_eq!(result.pairs[0].ra_deg, 180.0);
     }
 
@@ -670,12 +807,16 @@ mod tests {
         // Both catalog stars project very close to the image center.
         // Pick two slightly different RA values so they're distinguishable.
         let cats = vec![
-            cat(180.0, 0.0),       // projects to exactly (50, 50)
-            cat(180.0005, 0.0),    // projects to (50 - small_offset, 50)
+            cat(180.0, 0.0),    // projects to exactly (50, 50)
+            cat(180.0005, 0.0), // projects to (50 - small_offset, 50)
         ];
 
         let result = match_by_projection(&wcs, &stars, &cats, 5.0);
-        assert_eq!(result.pairs.len(), 1, "single det shouldn't pair to two cats");
+        assert_eq!(
+            result.pairs.len(),
+            1,
+            "single det shouldn't pair to two cats"
+        );
         // The closer cat is the one at RA=180 (zero offset from center).
         assert!((result.pairs[0].ra_deg - 180.0).abs() < 1e-6);
     }
@@ -701,18 +842,32 @@ mod tests {
         let s_deg = scale_arcsec / 3600.0;
         let mut pairs = Vec::new();
         for &(dx, dy) in &[
-            (-200.0, -200.0), (200.0, -200.0), (-200.0, 200.0), (200.0, 200.0),
-            (-100.0, 50.0), (100.0, -50.0), (0.0, 0.0), (150.0, 150.0),
+            (-200.0, -200.0),
+            (200.0, -200.0),
+            (-200.0, 200.0),
+            (200.0, 200.0),
+            (-100.0, 50.0),
+            (100.0, -50.0),
+            (0.0, 0.0),
+            (150.0, 150.0),
         ] {
             let px_x = crpix + dx;
             let px_y = crpix + dy;
             let xi_deg = -s_deg * dx;
             let eta_deg = s_deg * dy;
             let (ra, dec) = tan_deproject_star(
-                xi_deg * DEG_TO_RAD, eta_deg * DEG_TO_RAD, center_ra, center_dec,
+                xi_deg * DEG_TO_RAD,
+                eta_deg * DEG_TO_RAD,
+                center_ra,
+                center_dec,
             );
             pairs.push(StarPair {
-                px_x, px_y, ra_deg: ra, dec_deg: dec, votes: 4, snr: 20.0,
+                px_x,
+                px_y,
+                ra_deg: ra,
+                dec_deg: dec,
+                votes: 4,
+                snr: 20.0,
             });
         }
         pairs
@@ -727,8 +882,7 @@ mod tests {
         let pairs = pairs_on_tangent_plane(center_ra, center_dec, scale, 512.0);
         let weights: Vec<f64> = pairs.iter().map(|p| p.snr * p.snr).collect();
 
-        let wcs = fit_direct(&pairs, &weights, &prior)
-            .expect("clean pairs must produce a WCS");
+        let wcs = fit_direct(&pairs, &weights, &prior).expect("clean pairs must produce a WCS");
         assert!((wcs.crval1 - center_ra).abs() < 0.1);
         assert!((wcs.crval2 - center_dec).abs() < 0.1);
         assert!(wcs.n_stars >= 3, "expected ≥3 inliers, got {}", wcs.n_stars);
@@ -739,8 +893,22 @@ mod tests {
     fn fit_direct_errors_on_too_few_pairs() {
         let prior = wcs_centered_at(180.0, 30.0, 1.5, 1024, 1024);
         let pairs = vec![
-            StarPair { px_x: 0.0, px_y: 0.0, ra_deg: 180.0, dec_deg: 30.0, votes: 1, snr: 10.0 },
-            StarPair { px_x: 10.0, px_y: 10.0, ra_deg: 180.01, dec_deg: 30.0, votes: 1, snr: 10.0 },
+            StarPair {
+                px_x: 0.0,
+                px_y: 0.0,
+                ra_deg: 180.0,
+                dec_deg: 30.0,
+                votes: 1,
+                snr: 10.0,
+            },
+            StarPair {
+                px_x: 10.0,
+                px_y: 10.0,
+                ra_deg: 180.01,
+                dec_deg: 30.0,
+                votes: 1,
+                snr: 10.0,
+            },
         ];
         let weights = vec![100.0, 100.0];
         let err = fit_direct(&pairs, &weights, &prior).expect_err("2 pairs must error");
@@ -757,7 +925,11 @@ mod tests {
 
     #[test]
     fn nearest_detection_picks_closest_within_tolerance() {
-        let stars = vec![det(50.0, 50.0, 10.0), det(52.0, 50.0, 10.0), det(60.0, 60.0, 10.0)];
+        let stars = vec![
+            det(50.0, 50.0, 10.0),
+            det(52.0, 50.0, 10.0),
+            det(60.0, 60.0, 10.0),
+        ];
         // pred at (51, 50): closest is star 0 (d=1), then star 1 (d=1) — first wins on tie.
         let (idx, d2) = nearest_detection(&stars, 51.0, 50.0, 5.0 * 5.0).expect("must match");
         assert_eq!(idx, 0);
@@ -774,11 +946,7 @@ mod tests {
     fn dedupe_best_cat_per_det_keeps_closest_cat() {
         // Cat 0 claims det 0 at d²=4. Cat 1 also claims det 0 at d²=1.
         // After dedupe, det 0's slot should point at cat 1.
-        let input = vec![
-            Some((0usize, 4.0)),
-            Some((0usize, 1.0)),
-            None,
-        ];
+        let input = vec![Some((0usize, 4.0)), Some((0usize, 1.0)), None];
         let out = dedupe_best_cat_per_det(&input, 1);
         assert_eq!(out.len(), 1);
         let (ci, d2) = out[0].expect("det 0 must be claimed");

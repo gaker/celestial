@@ -8,7 +8,7 @@ impl Command for Clist {
     fn name(&self) -> &str {
         "CLIST"
     }
-    
+
     fn description(&self) -> &str {
         "List current coefficients"
     }

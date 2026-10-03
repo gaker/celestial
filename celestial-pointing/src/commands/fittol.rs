@@ -8,7 +8,7 @@ impl Command for Fittol {
     fn name(&self) -> &str {
         "FITTOL"
     }
-    
+
     fn description(&self) -> &str {
         "Set or report the SVD ill-conditioning tolerance"
     }

@@ -101,7 +101,14 @@ impl SipDistortion {
     fn apply_inverse_iterative(&self, x: f64, y: f64) -> WcsResult<(f64, f64)> {
         let distort_fn = |px: f64, py: f64| self.apply(px, py);
 
-        newton_raphson_2d((x, y), (x, y), distort_fn, 20, 1e-12, "SIP inverse distortion")
+        newton_raphson_2d(
+            (x, y),
+            (x, y),
+            distort_fn,
+            20,
+            1e-12,
+            "SIP inverse distortion",
+        )
     }
 
     fn eval_poly(coeffs: &HashMap<(u32, u32), f64>, u: f64, v: f64) -> f64 {
@@ -218,10 +225,10 @@ mod tests {
         // SIP only stores non-zero coefficients up to A_ORDER (p + q <= A_ORDER).
         let mut sip = SipDistortion::new([512.0, 512.0], 2, 2);
 
-        sip.set_a(2, 0, 0.0);   // zero -> not stored
-        sip.set_a(1, 1, 1e-6);  // valid (1 + 1 = 2) -> stored
-        sip.set_a(3, 0, 1e-6);  // 3 + 0 > 2 -> rejected
-        sip.set_a(2, 1, 1e-6);  // 2 + 1 > 2 -> rejected
+        sip.set_a(2, 0, 0.0); // zero -> not stored
+        sip.set_a(1, 1, 1e-6); // valid (1 + 1 = 2) -> stored
+        sip.set_a(3, 0, 1e-6); // 3 + 0 > 2 -> rejected
+        sip.set_a(2, 1, 1e-6); // 2 + 1 > 2 -> rejected
 
         assert!(!sip.a_coeffs.contains_key(&(2, 0)));
         assert!(sip.a_coeffs.contains_key(&(1, 1)));

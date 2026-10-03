@@ -247,7 +247,7 @@ mod tests {
         let resid = DVector::from_vec(vec![1.0, 1.0]);
         let leverage = vec![0.0, 0.0];
         let out = compute_diagnostics(&resid, &leverage, 10); // rank > n_rows
-        // Should not panic, should still produce one diag.
+                                                              // Should not panic, should still produce one diag.
         assert_eq!(out.len(), 1);
     }
 

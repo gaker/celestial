@@ -1,4 +1,3 @@
-
 use celestial_core::Angle;
 
 use crate::coordinate::{CelestialCoord, IntermediateCoord, PixelCoord};
@@ -241,7 +240,11 @@ pub(super) fn format_ctype(prefix: &str, proj_code: &str) -> String {
     format!("{}{}{}", prefix, dashes, proj_code)
 }
 
-pub(super) fn default_lonpole(_coord_type: &CoordType, crval_lat: f64, projection: &Projection) -> f64 {
+pub(super) fn default_lonpole(
+    _coord_type: &CoordType,
+    crval_lat: f64,
+    projection: &Projection,
+) -> f64 {
     let (_, theta_0) = projection.native_reference();
     if crval_lat >= theta_0 {
         0.0
@@ -337,7 +340,6 @@ pub(super) fn projection_to_code(proj: &Projection) -> String {
     .to_string()
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -379,8 +381,9 @@ mod tests {
         let wcs = create_simple_tan_wcs().unwrap();
 
         // CRPIX maps to CRVAL by definition.
-        let celestial =
-            wcs.pixel_to_celestial(PixelCoord::new(512.0, 512.0)).unwrap();
+        let celestial = wcs
+            .pixel_to_celestial(PixelCoord::new(512.0, 512.0))
+            .unwrap();
         assert_ulp_lt!(celestial.alpha().degrees(), 180.0, 10);
         assert_ulp_lt!(celestial.delta().degrees(), 45.0, 10);
 
@@ -523,11 +526,17 @@ mod tests {
                 .unwrap();
             assert!(
                 (original.x() - recovered.x()).abs() < 1e-8,
-                "{} x: {} vs {}", case.code, original.x(), recovered.x(),
+                "{} x: {} vs {}",
+                case.code,
+                original.x(),
+                recovered.x(),
             );
             assert!(
                 (original.y() - recovered.y()).abs() < 1e-8,
-                "{} y: {} vs {}", case.code, original.y(), recovered.y(),
+                "{} y: {} vs {}",
+                case.code,
+                original.y(),
+                recovered.y(),
             );
         }
     }
@@ -586,7 +595,8 @@ mod tests {
     }
 
     fn tan_wcs_with(distortion: DistortionModel) -> Wcs {
-        let linear = LinearTransform::from_cd([512.0, 512.0], [[0.001, 0.0], [0.0, 0.001]]).unwrap();
+        let linear =
+            LinearTransform::from_cd([512.0, 512.0], [[0.001, 0.0], [0.0, 0.001]]).unwrap();
         let projection = Projection::tan();
         let (_, theta_0) = projection.native_reference();
         let rotation = SphericalRotation::from_crval(
@@ -673,15 +683,22 @@ mod tests {
         // are produced for each parameterized projection.
         let names = |kws: Vec<WcsKeyword>| kws.iter().map(|k| k.name.clone()).collect::<Vec<_>>();
 
-        assert_eq!(names(projection_pv_keywords(&Projection::tan())), Vec::<String>::new());
+        assert_eq!(
+            names(projection_pv_keywords(&Projection::tan())),
+            Vec::<String>::new()
+        );
 
         assert_eq!(
-            names(projection_pv_keywords(&Projection::sin_with_params(0.1, -0.2))),
+            names(projection_pv_keywords(&Projection::sin_with_params(
+                0.1, -0.2
+            ))),
             vec!["PV2_1", "PV2_2"],
         );
         // SIN with both params zero takes the default arm (no keywords).
         assert_eq!(
-            names(projection_pv_keywords(&Projection::sin_with_params(0.0, 0.0))),
+            names(projection_pv_keywords(&Projection::sin_with_params(
+                0.0, 0.0
+            ))),
             Vec::<String>::new(),
         );
 
