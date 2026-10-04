@@ -1,14 +1,16 @@
 pub mod bundled;
 pub mod interpolate;
-pub mod parse;
+mod parse;
 pub mod record;
-
-pub use record::{EopParameters, EopRecord};
+mod table;
 
 use interpolate::{EopInterpolator, InterpolationMethod};
+use record::{EopParameters, EopRecord};
+use table::EopTable;
 
-use crate::{CoordError, CoordResult};
+use crate::errors::{CoordError, CoordResult};
 use std::path::Path;
+use std::sync::{Arc, OnceLock};
 
 pub struct EopProvider {
     interpolator: EopInterpolator,
@@ -16,23 +18,34 @@ pub struct EopProvider {
 
 impl EopProvider {
     pub fn bundled() -> CoordResult<Self> {
-        let records = bundled::load_bundled_combined()?;
-        Self::from_records(records)
+        static TABLE: OnceLock<Arc<EopTable>> = OnceLock::new();
+        Self::from_cached(&TABLE, bundled::load_bundled_combined)
     }
 
     pub fn bundled_c04() -> CoordResult<Self> {
-        let records = bundled::load_bundled_c04()?;
-        Self::from_records(records)
+        static TABLE: OnceLock<Arc<EopTable>> = OnceLock::new();
+        Self::from_cached(&TABLE, bundled::load_bundled_c04)
+    }
+
+    fn from_cached(
+        cell: &OnceLock<Arc<EopTable>>,
+        load: fn() -> CoordResult<Vec<EopRecord>>,
+    ) -> CoordResult<Self> {
+        let table = match cell.get() {
+            Some(table) => Arc::clone(table),
+            None => {
+                let built = Arc::new(EopTable::new(load()?)?);
+                Arc::clone(cell.get_or_init(|| built))
+            }
+        };
+        Ok(Self {
+            interpolator: EopInterpolator::from_table(table),
+        })
     }
 
     pub fn from_records(records: Vec<EopRecord>) -> CoordResult<Self> {
-        if records.is_empty() {
-            return Err(CoordError::data_unavailable(
-                "Cannot create EopProvider with empty records",
-            ));
-        }
         Ok(Self {
-            interpolator: EopInterpolator::new(records),
+            interpolator: EopInterpolator::new(records)?,
         })
     }
 
@@ -45,7 +58,7 @@ impl EopProvider {
         self.interpolator.get(mjd)
     }
 
-    pub fn time_span(&self) -> Option<(f64, f64)> {
+    pub fn time_span(&self) -> (f64, f64) {
         self.interpolator.time_span()
     }
 
@@ -59,20 +72,23 @@ impl EopProvider {
     }
 
     pub fn from_finals_file(path: impl AsRef<Path>) -> CoordResult<Self> {
-        let content = std::fs::read_to_string(path.as_ref()).map_err(|e| {
-            CoordError::external_library("reading finals2000A file", &e.to_string())
-        })?;
+        let content = std::fs::read_to_string(path.as_ref())
+            .map_err(|e| CoordError::io("reading finals2000A file", e))?;
         Self::from_finals_str(&content)
     }
 
     pub fn bundled_with_update(path: impl AsRef<Path>) -> CoordResult<Self> {
-        let mut provider = Self::bundled()?;
-        let update_content = std::fs::read_to_string(path.as_ref()).map_err(|e| {
-            CoordError::external_library("reading finals2000A update file", &e.to_string())
-        })?;
-        let update_records = parse::parse_finals(&update_content)?;
-        provider.interpolator.extend(update_records);
-        Ok(provider)
+        let update_content = std::fs::read_to_string(path.as_ref())
+            .map_err(|e| CoordError::io("reading finals2000A update file", e))?;
+        Self::bundled()?.overlay_finals(&update_content)
+    }
+
+    fn overlay_finals(mut self, content: &str) -> CoordResult<Self> {
+        let update = bundled::after_c04(parse::parse_finals(content)?);
+        if !update.is_empty() {
+            self.interpolator.extend(update)?;
+        }
+        Ok(self)
     }
 }
 
@@ -84,7 +100,7 @@ mod tests {
     fn test_bundled_provider() {
         let provider = EopProvider::bundled().unwrap();
         assert!(provider.record_count() > 0);
-        assert!(provider.time_span().is_some());
+        assert_eq!(provider.time_span(), bundled::bundled_time_span());
     }
 
     #[test]
@@ -92,20 +108,20 @@ mod tests {
         let provider = EopProvider::bundled().unwrap();
         let params = provider.get(59945.0).unwrap();
         assert_eq!(params.mjd, 59945.0);
-        assert!(params.x_p.abs() < 1.0);
-        assert!(params.y_p.abs() < 1.0);
-        assert!(params.ut1_utc.abs() < 1.0);
+        assert!(libm::fabs(params.x_p) < 1.0);
+        assert!(libm::fabs(params.y_p) < 1.0);
+        assert!(libm::fabs(params.ut1_utc) < 1.0);
     }
 
     #[test]
     fn test_from_records() {
         let records = vec![
-            EopRecord::new(60000.0, 0.1, 0.2, 0.01, 0.001).unwrap(),
-            EopRecord::new(60001.0, 0.101, 0.202, 0.011, 0.001).unwrap(),
+            EopRecord::new(60000.0, 0.1, 0.2, 0.01).unwrap(),
+            EopRecord::new(60001.0, 0.101, 0.202, 0.011).unwrap(),
         ];
         let provider = EopProvider::from_records(records).unwrap();
         let params = provider.get(60000.5).unwrap();
-        assert!((params.x_p - 0.1005).abs() < 1e-7);
+        assert_eq!(params.x_p, 0.1005);
     }
 
     #[test]
@@ -118,6 +134,30 @@ mod tests {
     fn test_out_of_range() {
         let provider = EopProvider::bundled().unwrap();
         assert!(provider.get(70000.0).is_err());
+    }
+
+    fn io_kind(err: &CoordError) -> Option<std::io::ErrorKind> {
+        let source = std::error::Error::source(err)?;
+        source
+            .downcast_ref::<std::io::Error>()
+            .map(std::io::Error::kind)
+    }
+
+    #[test]
+    fn unreadable_files_keep_the_io_error() {
+        let path = "/nonexistent/finals2000A.all";
+        let err = EopProvider::from_finals_file(path).err().unwrap();
+        assert_eq!(io_kind(&err), Some(std::io::ErrorKind::NotFound), "{err:?}");
+        let err = EopProvider::bundled_with_update(path).err().unwrap();
+        assert_eq!(io_kind(&err), Some(std::io::ErrorKind::NotFound), "{err:?}");
+    }
+
+    // The last bundled days are predictions, which have no LOD.
+    #[test]
+    fn bundled_predictions_have_no_lod() {
+        let provider = EopProvider::bundled().unwrap();
+        let last = provider.get(provider.time_span().1).unwrap();
+        assert_eq!(last.lod, None);
     }
 
     #[test]
@@ -141,7 +181,7 @@ mod tests {
     fn bundled_c04_loads_records() {
         let provider = EopProvider::bundled_c04().unwrap();
         assert!(provider.record_count() > 0);
-        assert!(provider.time_span().is_some());
+        assert_eq!(provider.time_span().0, bundled::bundled_time_span().0);
     }
 
     #[test]
@@ -163,12 +203,34 @@ mod tests {
         let content = format!("{}\n{}\n", line1, line2);
         let provider = EopProvider::from_finals_str(&content).unwrap();
         assert_eq!(provider.record_count(), 2);
-        assert_eq!(provider.time_span(), Some((60000.0, 60001.0)));
+        assert_eq!(provider.time_span(), (60000.0, 60001.0));
     }
 
     #[test]
     fn from_finals_str_propagates_parse_error() {
         let result = EopProvider::from_finals_str("garbage\nlines\nonly\n");
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn finals_overlay_replaces_bundled_predictions() {
+        let (_, end) = bundled::bundled_time_span();
+        let mjd = format!("{:8.2}", end);
+        let content = sample_finals_line_at(mjd.as_bytes());
+        let provider = EopProvider::bundled()
+            .unwrap()
+            .overlay_finals(&content)
+            .unwrap();
+        assert_eq!(provider.get(end).unwrap().ut1_utc, -0.05);
+    }
+
+    #[test]
+    fn finals_overlay_keeps_c04_days() {
+        let content = sample_finals_line_at(b"57754.00");
+        let provider = EopProvider::bundled()
+            .unwrap()
+            .overlay_finals(&content)
+            .unwrap();
+        assert_eq!(provider.get(57754.0).unwrap().ut1_utc, 0.591287);
     }
 }

@@ -38,6 +38,7 @@ use crate::constants::ARCSEC_TO_RAD;
 use crate::math::polynomial;
 use crate::matrix::RotationMatrix3;
 use crate::obliquity::iau_2006_obliquity_at;
+use std::sync::OnceLock;
 
 // Fukushima-Williams angle polynomials in arcseconds, constant term first.
 const GAMMA_BAR_ARCSEC: [f64; 6] = [
@@ -116,7 +117,7 @@ impl PrecessionIAU2006 {
     pub fn compute(&self, date1: f64, date2: f64) -> crate::errors::AstroResult<PrecessionResult> {
         let t = crate::utils::checked_jd_to_centuries(date1, date2)?;
         let bias_precession_matrix = self.bias_precession_at(t);
-        let bias_matrix = self.bias_precession_at(0.0);
+        let bias_matrix = j2000_bias();
         let precession_matrix = bias_precession_matrix.multiply(&bias_matrix.transpose());
 
         Ok(PrecessionResult {
@@ -191,6 +192,12 @@ impl PrecessionIAU2006 {
             ..fw
         })
     }
+}
+
+// The frame bias is the F-W matrix at J2000.0. It never changes, so it is built once.
+fn j2000_bias() -> RotationMatrix3 {
+    static BIAS: OnceLock<RotationMatrix3> = OnceLock::new();
+    *BIAS.get_or_init(|| PrecessionIAU2006.bias_precession_at(0.0))
 }
 
 // Maps GCRS (or mean J2000.0, for bias-free angles) to the mean equator and equinox of date.

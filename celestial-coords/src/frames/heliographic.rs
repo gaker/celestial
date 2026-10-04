@@ -1,8 +1,10 @@
-use crate::{solar, transforms::CoordinateFrame, CoordResult, Distance, ICRSPosition};
+use crate::distance::Distance;
+use crate::errors::CoordResult;
+use crate::frames::icrs::ICRSPosition;
+use crate::solar;
+use crate::transforms::CoordinateFrame;
 use celestial_core::angle::wrap_0_2pi;
 use celestial_core::angle::Angle;
-use celestial_core::constants::HALF_PI;
-use celestial_core::matrix::RotationMatrix3;
 use celestial_time::scales::tt::TT;
 
 #[cfg(feature = "serde")]
@@ -50,7 +52,7 @@ impl HeliographicStonyhurst {
         self.radius
     }
 
-    pub fn set_radius(&mut self, radius: Distance) {
+    pub(crate) fn set_radius(&mut self, radius: Distance) {
         self.radius = Some(radius);
     }
 
@@ -67,9 +69,8 @@ impl HeliographicStonyhurst {
     }
 
     pub fn disk_center(epoch: &TT) -> CoordResult<Self> {
-        let orientation = solar::compute_solar_orientation(epoch)?;
         Ok(Self {
-            latitude: orientation.b0,
+            latitude: solar::compute_b0(epoch)?,
             longitude: Angle::ZERO,
             radius: None,
         })
@@ -118,7 +119,7 @@ impl HeliographicCarrington {
         self.radius
     }
 
-    pub fn set_radius(&mut self, radius: Distance) {
+    pub(crate) fn set_radius(&mut self, radius: Distance) {
         self.radius = Some(radius);
     }
 
@@ -133,37 +134,21 @@ impl HeliographicCarrington {
         }
         Ok(stony)
     }
-
-    pub fn carrington_rotation_number(epoch: &TT) -> f64 {
-        const CARRINGTON_EPOCH_JD: f64 = 2398220.0;
-        const CARRINGTON_PERIOD_DAYS: f64 = 25.38;
-
-        let jd = epoch.to_julian_date();
-        let d = jd.jd1() + jd.jd2() - CARRINGTON_EPOCH_JD;
-        d / CARRINGTON_PERIOD_DAYS
-    }
-}
-
-fn heliographic_to_icrs_matrix(epoch: &TT) -> CoordResult<RotationMatrix3> {
-    let orientation = solar::compute_solar_orientation(epoch)?;
-    let b0 = orientation.b0.radians();
-    let p = orientation.p.radians();
-
-    let sun_icrs = solar::get_sun_icrs(epoch)?;
-    let sun_ra = sun_icrs.ra().radians();
-    let sun_dec = sun_icrs.dec().radians();
-
-    let mut m = RotationMatrix3::identity();
-    m.rotate_y(-b0);
-    m.rotate_z(p);
-    m.rotate_y(sun_dec - HALF_PI);
-    m.rotate_z(-sun_ra);
-    Ok(m)
 }
 
 impl CoordinateFrame for HeliographicStonyhurst {
     fn to_icrs(&self, epoch: &TT) -> CoordResult<ICRSPosition> {
-        let m = heliographic_to_icrs_matrix(epoch)?;
+        self.to_carrington(epoch)?.to_icrs(epoch)
+    }
+
+    fn from_icrs(icrs: &ICRSPosition, epoch: &TT) -> CoordResult<Self> {
+        HeliographicCarrington::from_icrs(icrs, epoch)?.to_stonyhurst(epoch)
+    }
+}
+
+impl CoordinateFrame for HeliographicCarrington {
+    fn to_icrs(&self, epoch: &TT) -> CoordResult<ICRSPosition> {
+        let m = solar::icrs_to_carrington(epoch)?;
         let (ra, dec) = m
             .transpose()
             .transform_spherical(self.longitude.radians(), self.latitude.radians());
@@ -180,7 +165,7 @@ impl CoordinateFrame for HeliographicStonyhurst {
     }
 
     fn from_icrs(icrs: &ICRSPosition, epoch: &TT) -> CoordResult<Self> {
-        let m = heliographic_to_icrs_matrix(epoch)?;
+        let m = solar::icrs_to_carrington(epoch)?;
         let (lon, lat) = m.transform_spherical(icrs.ra().radians(), icrs.dec().radians());
 
         let mut pos = Self::new(
@@ -192,18 +177,6 @@ impl CoordinateFrame for HeliographicStonyhurst {
             pos.set_radius(dist);
         }
         Ok(pos)
-    }
-}
-
-impl CoordinateFrame for HeliographicCarrington {
-    fn to_icrs(&self, epoch: &TT) -> CoordResult<ICRSPosition> {
-        let stonyhurst = self.to_stonyhurst(epoch)?;
-        stonyhurst.to_icrs(epoch)
-    }
-
-    fn from_icrs(icrs: &ICRSPosition, epoch: &TT) -> CoordResult<Self> {
-        let stonyhurst = HeliographicStonyhurst::from_icrs(icrs, epoch)?;
-        stonyhurst.to_carrington(epoch)
     }
 }
 
@@ -244,20 +217,24 @@ impl std::fmt::Display for HeliographicCarrington {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::aberration::compute_earth_state;
+    use crate::test_support::rounded;
+    use celestial_core::test_helpers::assert_ulp_le;
+    use celestial_time::julian::JulianDate;
 
     #[test]
     fn test_stonyhurst_creation() {
         let pos = HeliographicStonyhurst::from_degrees(45.0, 30.0).unwrap();
-        assert!((pos.latitude().degrees() - 45.0).abs() < 1e-12);
-        assert!((pos.longitude().degrees() - 30.0).abs() < 1e-12);
+        assert_eq!(pos.latitude(), Angle::from_degrees(45.0));
+        assert_eq!(pos.longitude(), Angle::from_degrees(30.0));
         assert!(pos.radius().is_none());
     }
 
     #[test]
     fn test_carrington_creation() {
         let pos = HeliographicCarrington::from_degrees(-30.0, 180.0).unwrap();
-        assert!((pos.latitude().degrees() - (-30.0)).abs() < 1e-12);
-        assert!((pos.longitude().degrees() - 180.0).abs() < 1e-12);
+        assert_eq!(pos.latitude(), Angle::from_degrees(-30.0));
+        assert_eq!(pos.longitude(), Angle::from_degrees(180.0));
         assert!(pos.radius().is_none());
     }
 
@@ -283,10 +260,10 @@ mod tests {
         );
 
         let l0 = solar::compute_l0(&epoch).unwrap();
-        let expected_carr_lon = wrap_0_2pi((stonyhurst.longitude() + l0).radians()).unwrap()
-            * celestial_core::constants::RAD_TO_DEG;
-
-        assert!((carrington.longitude().degrees() - expected_carr_lon).abs() < 1e-10);
+        assert_eq!(
+            carrington.longitude().radians(),
+            wrap_0_2pi((stonyhurst.longitude() + l0).radians()).unwrap()
+        );
     }
 
     #[test]
@@ -296,8 +273,7 @@ mod tests {
         let stonyhurst = original.to_stonyhurst(&epoch).unwrap();
         let roundtrip = stonyhurst.to_carrington(&epoch).unwrap();
 
-        assert!((original.latitude().degrees() - roundtrip.latitude().degrees()).abs() < 1e-10);
-        assert!((original.longitude().degrees() - roundtrip.longitude().degrees()).abs() < 1e-10);
+        assert_eq!(roundtrip, original);
     }
 
     #[test]
@@ -305,21 +281,72 @@ mod tests {
         let epoch = TT::j2000();
         let center = HeliographicStonyhurst::disk_center(&epoch).unwrap();
 
-        let b0 = solar::compute_b0(&epoch).unwrap();
-        assert!((center.latitude().degrees() - b0.degrees()).abs() < 1e-12);
+        assert_eq!(center.latitude(), solar::compute_b0(&epoch).unwrap());
         assert_eq!(center.longitude().degrees(), 0.0);
     }
 
     #[test]
-    fn test_carrington_rotation_number() {
+    fn test_solar_pole_is_iau_pole_at_j2000() {
         let epoch = TT::j2000();
-        let rotation = HeliographicCarrington::carrington_rotation_number(&epoch);
+        let poles = [
+            HeliographicStonyhurst::from_degrees(90.0, 0.0)
+                .unwrap()
+                .to_icrs(&epoch)
+                .unwrap(),
+            HeliographicCarrington::from_degrees(90.0, 0.0)
+                .unwrap()
+                .to_icrs(&epoch)
+                .unwrap(),
+        ];
+        for pole in poles {
+            let printed = [pole.ra(), pole.dec()].map(|a| rounded(a.degrees(), 2));
+            assert_eq!(printed, [286.13, 63.87]);
+        }
+    }
 
-        assert!(
-            rotation > 1900.0 && rotation < 2200.0,
-            "Carrington rotation number at J2000 = {} should be reasonable",
-            rotation
+    #[test]
+    fn test_disk_centre_is_earth_direction_displaced_by_aberration() {
+        let epoch = TT::from_julian_date(JulianDate::new(2448908.50068, 0.0));
+        let earth = compute_earth_state(&epoch).unwrap().heliocentric_position;
+        let (ra, dec) = earth.to_spherical();
+        let earth_direction = ICRSPosition::new(
+            Angle::from_radians(wrap_0_2pi(ra).unwrap()),
+            Angle::from_radians(dec),
+        )
+        .unwrap();
+
+        let centre = HeliographicStonyhurst::disk_center(&epoch)
+            .unwrap()
+            .to_icrs(&epoch)
+            .unwrap();
+        let separation = centre.angular_separation(&earth_direction).arcseconds();
+        assert_eq!(
+            rounded(separation, 2),
+            rounded(20.4898 / earth.magnitude(), 2)
         );
+    }
+
+    #[test]
+    fn test_disk_centre_maps_back_to_b0_and_l0() {
+        let epoch = TT::from_julian_date(JulianDate::new(2448908.50068, 0.0));
+        let centre = HeliographicStonyhurst::disk_center(&epoch)
+            .unwrap()
+            .to_carrington(&epoch)
+            .unwrap();
+        let printed = [centre.latitude(), centre.longitude()].map(|a| rounded(a.degrees(), 2));
+        assert_eq!(printed, [5.99, 238.63]);
+    }
+
+    #[test]
+    fn test_non_finite_epoch_is_err() {
+        let epoch = TT::from_julian_date(JulianDate::new(f64::NAN, 0.0));
+        let icrs = ICRSPosition::from_degrees(10.0, 20.0).unwrap();
+        let stonyhurst = HeliographicStonyhurst::from_degrees(10.0, 20.0).unwrap();
+        let carrington = HeliographicCarrington::from_degrees(10.0, 20.0).unwrap();
+        assert!(stonyhurst.to_icrs(&epoch).is_err());
+        assert!(carrington.to_icrs(&epoch).is_err());
+        assert!(HeliographicStonyhurst::from_icrs(&icrs, &epoch).is_err());
+        assert!(HeliographicCarrington::from_icrs(&icrs, &epoch).is_err());
     }
 
     #[test]
@@ -338,27 +365,18 @@ mod tests {
             let icrs = original.to_icrs(&epoch).unwrap();
             let recovered = HeliographicStonyhurst::from_icrs(&icrs, &epoch).unwrap();
 
-            let lat_err = (original.latitude().degrees() - recovered.latitude().degrees()).abs();
-            let lon_diff = (original.longitude().radians() - recovered.longitude().radians()).abs();
-            let lon_err = if lon_diff > std::f64::consts::PI {
-                std::f64::consts::TAU - lon_diff
-            } else {
-                lon_diff
-            } * celestial_core::constants::RAD_TO_DEG;
-
-            assert!(
-                lat_err < 1.0 / 3600.0,
-                "({}, {}): Latitude error {:.6} arcsec",
-                lat,
-                lon,
-                lat_err * 3600.0,
+            let ctx = format!("({lat}, {lon})");
+            assert_ulp_le(
+                recovered.latitude().radians(),
+                original.latitude().radians(),
+                2,
+                &ctx,
             );
-            assert!(
-                lon_err < 1.0 / 3600.0,
-                "({}, {}): Longitude error {:.6} arcsec",
-                lat,
-                lon,
-                lon_err * 3600.0,
+            assert_ulp_le(
+                recovered.longitude().radians(),
+                original.longitude().radians(),
+                2,
+                &ctx,
             );
         }
     }

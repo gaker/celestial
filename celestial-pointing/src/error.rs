@@ -24,7 +24,7 @@ pub enum Error {
     Core(#[from] celestial_core::errors::AstroError),
 
     #[error("coordinate error: {0}")]
-    Coord(#[from] celestial_coords::CoordError),
+    Coord(#[from] celestial_coords::errors::CoordError),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;

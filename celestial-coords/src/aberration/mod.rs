@@ -1,9 +1,12 @@
 mod coefficients;
+#[cfg(test)]
+mod tests;
 
-use crate::{CoordError, CoordResult};
+use crate::constants::AU_LIGHT_TIME_DAYS;
+use crate::errors::{CoordError, CoordResult};
 use celestial_core::{
-    angle::Angle,
-    constants::{DAYS_PER_JULIAN_YEAR, J2000_JD, SPEED_OF_LIGHT_AU_PER_DAY, TWOPI},
+    angle::{wrap_0_2pi, Angle},
+    constants::{DAYS_PER_JULIAN_YEAR, J2000_JD},
     matrix::Vector3,
 };
 use celestial_time::scales::tt::TT;
@@ -14,86 +17,69 @@ pub struct EarthState {
     pub heliocentric_position: Vector3,
 }
 
+// Each axis is a cosine series, plus t and t² times two more, with t in Julian years from
+// J2000. One set gives the Earth's heliocentric motion, the other the Sun's barycentric motion.
+type Series = [&'static [[f64; 3]]; 3];
+
+const EARTH_SERIES: [Series; 3] = [
+    [Coefficients::E0X, Coefficients::E1X, Coefficients::E2X],
+    [Coefficients::E0Y, Coefficients::E1Y, Coefficients::E2Y],
+    [Coefficients::E0Z, Coefficients::E1Z, Coefficients::E2Z],
+];
+
+const SUN_SERIES: [Series; 3] = [
+    [Coefficients::S0X, Coefficients::S1X, Coefficients::S2X],
+    [Coefficients::S0Y, Coefficients::S1Y, Coefficients::S2Y],
+    [Coefficients::S0Z, Coefficients::S1Z, Coefficients::S2Z],
+];
+
 pub fn compute_earth_state(tt: &TT) -> CoordResult<EarthState> {
-    let jd = tt.to_julian_date();
-    let t = ((jd.jd1() - J2000_JD) + jd.jd2()) / DAYS_PER_JULIAN_YEAR;
-
-    if t.abs() > 100.0 {
-        return Err(CoordError::invalid_coordinate("Epoch outside 1900-2100"));
+    let t = julian_years_since_j2000(tt)?;
+    let mut heliocentric_position = [0.0; 3];
+    let mut barycentric_velocity = [0.0; 3];
+    for axis in 0..3 {
+        let mut sums = (0.0, 0.0);
+        accumulate_series(t, &EARTH_SERIES[axis], &mut sums);
+        heliocentric_position[axis] = sums.0;
+        // The Earth's barycentric motion is its heliocentric motion plus the Sun's.
+        accumulate_series(t, &SUN_SERIES[axis], &mut sums);
+        barycentric_velocity[axis] = sums.1 / DAYS_PER_JULIAN_YEAR;
     }
-
-    let t2 = t * t;
-
-    let e_coefs = [
-        [Coefficients::E0X, Coefficients::E1X, Coefficients::E2X],
-        [Coefficients::E0Y, Coefficients::E1Y, Coefficients::E2Y],
-        [Coefficients::E0Z, Coefficients::E1Z, Coefficients::E2Z],
-    ];
-    let s_coefs = [
-        [Coefficients::S0X, Coefficients::S1X, Coefficients::S2X],
-        [Coefficients::S0Y, Coefficients::S1Y, Coefficients::S2Y],
-        [Coefficients::S0Z, Coefficients::S1Z, Coefficients::S2Z],
-    ];
-
-    let mut ph = [0.0; 3];
-    let mut vh = [0.0; 3];
-    let mut vb = [0.0; 3];
-
-    for i in 0..3 {
-        let mut xyz = 0.0;
-        let mut xyzd = 0.0;
-
-        accumulate_terms(t, t2, e_coefs[i][0], &mut xyz, &mut xyzd, 0);
-        accumulate_terms(t, t2, e_coefs[i][1], &mut xyz, &mut xyzd, 1);
-        accumulate_terms(t, t2, e_coefs[i][2], &mut xyz, &mut xyzd, 2);
-
-        ph[i] = xyz;
-        vh[i] = xyzd / DAYS_PER_JULIAN_YEAR;
-
-        accumulate_terms(t, t2, s_coefs[i][0], &mut xyz, &mut xyzd, 0);
-        accumulate_terms(t, t2, s_coefs[i][1], &mut xyz, &mut xyzd, 1);
-        accumulate_terms(t, t2, s_coefs[i][2], &mut xyz, &mut xyzd, 2);
-
-        vb[i] = xyzd / DAYS_PER_JULIAN_YEAR;
-    }
-
-    let helio_pos_bcrs = rotate_to_bcrs(ph);
-    let bary_vel_bcrs = rotate_to_bcrs(vb);
-
     Ok(EarthState {
-        barycentric_velocity: Vector3::new(bary_vel_bcrs[0], bary_vel_bcrs[1], bary_vel_bcrs[2]),
-        heliocentric_position: Vector3::new(
-            helio_pos_bcrs[0],
-            helio_pos_bcrs[1],
-            helio_pos_bcrs[2],
-        ),
+        barycentric_velocity: rotate_to_bcrs(barycentric_velocity),
+        heliocentric_position: rotate_to_bcrs(heliocentric_position),
     })
 }
 
-fn accumulate_terms(t: f64, t2: f64, coefs: &[[f64; 3]], xyz: &mut f64, xyzd: &mut f64, power: u8) {
-    for &[a, b, c] in coefs {
-        let ct = c * t;
-        let p = b + ct;
-        let (sin_p, cos_p) = libm::sincos(p);
+fn julian_years_since_j2000(tt: &TT) -> CoordResult<f64> {
+    let jd = tt.to_julian_date();
+    let t = ((jd.jd1() - J2000_JD) + jd.jd2()) / DAYS_PER_JULIAN_YEAR;
+    if t.is_finite() {
+        Ok(t)
+    } else {
+        Err(CoordError::invalid_coordinate("Epoch is not finite"))
+    }
+}
 
-        match power {
-            0 => {
-                *xyz += a * cos_p;
-                *xyzd -= a * c * sin_p;
-            }
-            1 => {
-                *xyz += a * t * cos_p;
-                *xyzd += a * (cos_p - ct * sin_p);
-            }
-            _ => {
-                *xyz += a * t2 * cos_p;
-                *xyzd += a * t * (2.0 * cos_p - ct * sin_p);
-            }
+// Adds one axis's series to a running (value, rate per year).
+fn accumulate_series(t: f64, series: &Series, sums: &mut (f64, f64)) {
+    for (power, terms) in series.iter().enumerate() {
+        for &[a, b, c] in *terms {
+            let ct = c * t;
+            let (sin_p, cos_p) = libm::sincos(b + ct);
+            let (value, rate) = match power {
+                0 => (a * cos_p, -(a * c * sin_p)),
+                1 => (a * t * cos_p, a * (cos_p - ct * sin_p)),
+                _ => (a * (t * t) * cos_p, a * t * (2.0 * cos_p - ct * sin_p)),
+            };
+            sums.0 += value;
+            sums.1 += rate;
         }
     }
 }
 
-fn rotate_to_bcrs(v: [f64; 3]) -> [f64; 3] {
+// From the ecliptic and equinox of J2000 to the BCRS.
+fn rotate_to_bcrs(v: [f64; 3]) -> Vector3 {
     const AM12: f64 = 0.000000211284;
     const AM13: f64 = -0.000000091603;
     const AM21: f64 = -0.000000230286;
@@ -103,11 +89,11 @@ fn rotate_to_bcrs(v: [f64; 3]) -> [f64; 3] {
     const AM33: f64 = 0.917482137087;
 
     let (x, y, z) = (v[0], v[1], v[2]);
-    [
+    Vector3::new(
         x + AM12 * y + AM13 * z,
         AM21 * x + AM22 * y + AM23 * z,
         AM32 * y + AM33 * z,
-    ]
+    )
 }
 
 const SCHWARZSCHILD_RADIUS_SUN_AU: f64 = 1.97412574336e-8;
@@ -115,7 +101,7 @@ const SCHWARZSCHILD_RADIUS_SUN_AU: f64 = 1.97412574336e-8;
 /// Apply gravitational light deflection by the Sun.
 ///
 /// This implements the relativistic bending of starlight as it passes near the Sun,
-/// based on the algorithm in IERS Conventions.
+/// for a star far enough away that its directions from the Sun and from the observer coincide.
 ///
 /// # Arguments
 /// * `star_direction` - Unit vector from observer to star (BCRS)
@@ -129,46 +115,15 @@ pub fn apply_light_deflection(
     sun_to_observer: Vector3,
     sun_observer_distance_au: f64,
 ) -> Vector3 {
-    // Deflection limiter: for nearby observers, use smaller limit
-    let em2 = sun_observer_distance_au * sun_observer_distance_au;
-    let em2_clamped = if em2 < 1.0 { 1.0 } else { em2 };
-    let dlim = 1e-6 / em2_clamped;
-
-    // For distant stars, the direction from Sun to star ≈ direction from observer to star
-    // So we use star_direction for both p and q in ERFA's eraLd
-    let q = star_direction;
-    let e = sun_to_observer;
-
-    // q + e
-    let qpe = Vector3::new(q.x + e.x, q.y + e.y, q.z + e.z);
-
-    // q . (q + e)
-    let qdqpe = q.dot(&qpe);
-
-    // Apply limiter to avoid division by zero when star is near Sun
-    let qdqpe_limited = if qdqpe > dlim { qdqpe } else { dlim };
-
-    // 2G*M / (c^2 * r * (q.(q+e))) = SRS / (em * (q.(q+e)))
-    // where SRS = Schwarzschild radius of Sun in AU
-    let w = SCHWARZSCHILD_RADIUS_SUN_AU / sun_observer_distance_au / qdqpe_limited;
-
-    // e × q (cross product)
-    let eq = Vector3::new(
-        e.y * q.z - e.z * q.y,
-        e.z * q.x - e.x * q.z,
-        e.x * q.y - e.y * q.x,
-    );
-
-    // p × (e × q) (cross product)
-    let p = star_direction;
-    let peq = Vector3::new(
-        p.y * eq.z - p.z * eq.y,
-        p.z * eq.x - p.x * eq.z,
-        p.x * eq.y - p.y * eq.x,
-    );
-
-    // Apply deflection: p1 = p + w * (p × (e × q))
-    Vector3::new(p.x + w * peq.x, p.y + w * peq.y, p.z + w * peq.z)
+    // Within about 5' of the Sun's centre as seen from 1 au, well inside the limb, the
+    // deflection is held back so that it falls to zero rather than diverging. The threshold
+    // shrinks with the Sun's apparent size for observers farther out.
+    let distance_squared = sun_observer_distance_au * sun_observer_distance_au;
+    let dlim = 1e-6 / libm::fmax(distance_squared, 1.0);
+    let (p, e) = (star_direction, sun_to_observer);
+    let w =
+        SCHWARZSCHILD_RADIUS_SUN_AU / sun_observer_distance_au / libm::fmax(p.dot(&(p + e)), dlim);
+    p + p.cross(&e.cross(&p)) * w
 }
 
 /// Remove gravitational light deflection by the Sun (inverse operation).
@@ -177,32 +132,9 @@ pub fn remove_light_deflection(
     sun_to_observer: Vector3,
     sun_observer_distance_au: f64,
 ) -> CoordResult<Vector3> {
-    // We compute: d = forward(estimate) - estimate, then refine: estimate = observed - d
-    let mut d = Vector3::zeros();
-
-    for _ in 0..5 {
-        // Estimate the original direction
-        let before = Vector3::new(
-            deflected_direction.x - d.x,
-            deflected_direction.y - d.y,
-            deflected_direction.z - d.z,
-        )
-        .normalize()?;
-
-        // Apply forward deflection to the estimate
-        let after = apply_light_deflection(before, sun_to_observer, sun_observer_distance_au);
-
-        // Update correction
-        d = Vector3::new(after.x - before.x, after.y - before.y, after.z - before.z);
-    }
-
-    // Final result
-    Ok(Vector3::new(
-        deflected_direction.x - d.x,
-        deflected_direction.y - d.y,
-        deflected_direction.z - d.z,
-    )
-    .normalize()?)
+    invert(deflected_direction, 5, |p| {
+        apply_light_deflection(p, sun_to_observer, sun_observer_distance_au)
+    })
 }
 
 /// Remove stellar aberration (inverse operation).
@@ -211,32 +143,8 @@ pub fn remove_aberration(
     velocity_au_day: Vector3,
     sun_earth_distance_au: f64,
 ) -> CoordResult<Vector3> {
-    // Iterative approach matching ERFA's eraAticq
-    let mut d = Vector3::zeros();
-
-    for _ in 0..2 {
-        // Estimate the original direction
-        let before = Vector3::new(
-            apparent_direction.x - d.x,
-            apparent_direction.y - d.y,
-            apparent_direction.z - d.z,
-        )
-        .normalize()?;
-
-        // Apply forward aberration to the estimate
-        let after = apply_aberration(before, velocity_au_day, sun_earth_distance_au);
-
-        // Update correction
-        d = Vector3::new(after.x - before.x, after.y - before.y, after.z - before.z);
-    }
-
-    // Final result
-    Ok(Vector3::new(
-        apparent_direction.x - d.x,
-        apparent_direction.y - d.y,
-        apparent_direction.z - d.z,
-    )
-    .normalize()?)
+    let (v, bm1) = observer_motion(velocity_au_day);
+    unaberrate(apparent_direction, v, sun_earth_distance_au, bm1)
 }
 
 pub fn apply_aberration(
@@ -244,27 +152,58 @@ pub fn apply_aberration(
     velocity_au_day: Vector3,
     sun_earth_distance_au: f64,
 ) -> Vector3 {
-    let v = Vector3::new(
-        velocity_au_day.x / SPEED_OF_LIGHT_AU_PER_DAY,
-        velocity_au_day.y / SPEED_OF_LIGHT_AU_PER_DAY,
-        velocity_au_day.z / SPEED_OF_LIGHT_AU_PER_DAY,
-    );
+    let (v, bm1) = observer_motion(velocity_au_day);
+    aberrate(direction, v, sun_earth_distance_au, bm1)
+}
 
-    let v2 = v.x * v.x + v.y * v.y + v.z * v.z;
-    let bm1 = libm::sqrt(1.0 - v2);
+// Observer velocity in units of c, and sqrt(1 - v²).
+pub(crate) fn observer_motion(velocity_au_day: Vector3) -> (Vector3, f64) {
+    let v = velocity_au_day * AU_LIGHT_TIME_DAYS;
+    (v, libm::sqrt(1.0 - v.magnitude_squared()))
+}
 
+pub(crate) fn aberrate(direction: Vector3, v: Vector3, sun_distance_au: f64, bm1: f64) -> Vector3 {
     let pdv = direction.dot(&v);
     let w1 = 1.0 + pdv / (1.0 + bm1);
-    let w2 = SCHWARZSCHILD_RADIUS_SUN_AU / sun_earth_distance_au;
+    let w2 = SCHWARZSCHILD_RADIUS_SUN_AU / sun_distance_au;
 
-    let p2 = Vector3::new(
-        direction.x * bm1 + w1 * v.x + w2 * (v.x - pdv * direction.x),
-        direction.y * bm1 + w1 * v.y + w2 * (v.y - pdv * direction.y),
-        direction.z * bm1 + w1 * v.z + w2 * (v.z - pdv * direction.z),
-    );
+    let p2 = direction * bm1 + v * w1 + (v - direction * pdv) * w2;
+    p2 / p2.magnitude()
+}
 
-    let r = p2.magnitude();
-    Vector3::new(p2.x / r, p2.y / r, p2.z / r)
+pub(crate) fn unaberrate(
+    apparent: Vector3,
+    v: Vector3,
+    sun_distance_au: f64,
+    bm1: f64,
+) -> CoordResult<Vector3> {
+    invert(apparent, 2, |p| aberrate(p, v, sun_distance_au, bm1))
+}
+
+// Fixed-point inversion of a small direction shift: subtract the shift that
+// `forward` produces at the current estimate. Estimates are normalised by
+// dividing by the modulus, which is what makes the result bit-exact with ERFA.
+fn invert(
+    observed: Vector3,
+    iterations: usize,
+    forward: impl Fn(Vector3) -> Vector3,
+) -> CoordResult<Vector3> {
+    let mut shift = Vector3::zeros();
+    for _ in 0..iterations {
+        let before = unit(observed - shift)?;
+        shift = forward(before) - before;
+    }
+    unit(observed - shift)
+}
+
+fn unit(v: Vector3) -> CoordResult<Vector3> {
+    let r = v.magnitude();
+    if r == 0.0 || !r.is_finite() {
+        return Err(CoordError::invalid_coordinate(
+            "Direction has zero or non-finite length",
+        ));
+    }
+    Ok(v / r)
 }
 
 pub fn apply_annual_aberration(ra: Angle, dec: Angle, tt: &TT) -> CoordResult<(Angle, Angle)> {
@@ -278,171 +217,15 @@ pub fn remove_annual_aberration(ra: Angle, dec: Angle, tt: &TT) -> CoordResult<(
 fn annual_shift(ra: Angle, dec: Angle, tt: &TT, apply: bool) -> CoordResult<(Angle, Angle)> {
     let state = compute_earth_state(tt)?;
     let sun_distance_au = state.heliocentric_position.magnitude();
-    let direction = ra_dec_to_unit(ra, dec);
+    let direction = Vector3::from_spherical(ra.radians(), dec.radians());
     let corrected = if apply {
         apply_aberration(direction, state.barycentric_velocity, sun_distance_au)
     } else {
         remove_aberration(direction, state.barycentric_velocity, sun_distance_au)?
     };
-    Ok(unit_to_ra_dec(corrected))
-}
-
-fn ra_dec_to_unit(ra: Angle, dec: Angle) -> Vector3 {
-    let (sin_ra, cos_ra) = libm::sincos(ra.radians());
-    let (sin_dec, cos_dec) = libm::sincos(dec.radians());
-    Vector3::new(cos_dec * cos_ra, cos_dec * sin_ra, sin_dec)
-}
-
-fn unit_to_ra_dec(v: Vector3) -> (Angle, Angle) {
-    let mag = v.magnitude();
-    let ra = libm::atan2(v.y, v.x);
-    let dec = libm::asin(v.z / mag);
-    let ra_wrapped = if ra < 0.0 { ra + TWOPI } else { ra };
-    (Angle::from_radians(ra_wrapped), Angle::from_radians(dec))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_earth_velocity_j2000() {
-        let tt = TT::j2000();
-        let state = compute_earth_state(&tt).unwrap();
-
-        let v_mag = state.barycentric_velocity.magnitude();
-        assert!(
-            (v_mag - 0.017).abs() < 0.001,
-            "Barycentric velocity should be ~0.017 AU/day, got {}",
-            v_mag
-        );
-    }
-
-    #[test]
-    fn test_aberration_magnitude() {
-        let tt = TT::j2000();
-        let state = compute_earth_state(&tt).unwrap();
-
-        let p = Vector3::new(1.0, 0.0, 0.0);
-        let s = state.heliocentric_position.magnitude();
-        let p_ab = apply_aberration(p, state.barycentric_velocity, s);
-
-        let disp_sq = (p_ab.x - p.x).powi(2) + (p_ab.y - p.y).powi(2) + (p_ab.z - p.z).powi(2);
-        let aberr_arcsec = libm::sqrt(disp_sq) * 206264.806247;
-
-        assert!(
-            aberr_arcsec < 25.0,
-            "Aberration should be < 25\", got {}",
-            aberr_arcsec
-        );
-    }
-
-    #[test]
-    fn test_aberration_roundtrip() {
-        let tt = TT::j2000();
-        let state = compute_earth_state(&tt).unwrap();
-        let sun_dist = state.heliocentric_position.magnitude();
-
-        let directions = [
-            Vector3::new(1.0, 0.0, 0.0),
-            Vector3::new(0.0, 1.0, 0.0),
-            Vector3::new(0.0, 0.0, 1.0),
-            Vector3::new(1.0, 1.0, 1.0).normalize().unwrap(),
-        ];
-
-        for dir in directions {
-            let aberrated = apply_aberration(dir, state.barycentric_velocity, sun_dist);
-            let recovered =
-                remove_aberration(aberrated, state.barycentric_velocity, sun_dist).unwrap();
-
-            let diff = libm::sqrt(
-                (dir.x - recovered.x).powi(2)
-                    + (dir.y - recovered.y).powi(2)
-                    + (dir.z - recovered.z).powi(2),
-            );
-
-            // Iterative inverse gives ~1e-13 precision, not machine epsilon
-            assert!(diff < 1e-12, "Aberration roundtrip error: {:.2e}", diff);
-        }
-    }
-
-    #[test]
-    fn test_remove_aberration_is_inverse() {
-        let velocity = Vector3::new(0.01, 0.005, 0.002);
-        let sun_dist = 1.0;
-        let original = Vector3::new(0.6, 0.7, 0.3).normalize().unwrap();
-
-        let aberrated = apply_aberration(original, velocity, sun_dist);
-        let recovered = remove_aberration(aberrated, velocity, sun_dist).unwrap();
-
-        let diff = libm::sqrt(
-            (original.x - recovered.x).powi(2)
-                + (original.y - recovered.y).powi(2)
-                + (original.z - recovered.z).powi(2),
-        );
-
-        // Iterative inverse gives ~1e-13 precision, not machine epsilon
-        assert!(
-            diff < 1e-12,
-            "Aberration inverse should be within iterative precision: {:.2e}",
-            diff
-        );
-    }
-
-    fn spring_equinox_tt() -> TT {
-        TT::from_julian_date(celestial_time::julian::JulianDate::from_f64(2460389.5))
-    }
-
-    fn arcsec_diff(a: Angle, b: Angle) -> f64 {
-        (a - b).wrapped().unwrap().arcseconds().abs()
-    }
-
-    #[test]
-    fn annual_aberration_shift_is_on_order_of_twenty_arcsec() {
-        let tt = spring_equinox_tt();
-        let ra = Angle::from_hours(0.0);
-        let dec = Angle::from_degrees(0.0);
-        let (ra2, dec2) = apply_annual_aberration(ra, dec, &tt).unwrap();
-        let shift = arcsec_diff(ra, ra2) + arcsec_diff(dec, dec2);
-        assert!(
-            shift > 5.0 && shift < 45.0,
-            "expected annual aberration ~20 arcsec, got {}",
-            shift
-        );
-    }
-
-    #[test]
-    fn annual_aberration_apply_and_remove_are_inverses() {
-        let tt = spring_equinox_tt();
-        let ra = Angle::from_hours(12.0);
-        let dec = Angle::from_degrees(30.0);
-        let (ra2, dec2) = apply_annual_aberration(ra, dec, &tt).unwrap();
-        let (ra3, dec3) = remove_annual_aberration(ra2, dec2, &tt).unwrap();
-        assert!(
-            arcsec_diff(ra, ra3) < 0.01,
-            "ra drift {}",
-            arcsec_diff(ra, ra3)
-        );
-        assert!(
-            arcsec_diff(dec, dec3) < 0.01,
-            "dec drift {}",
-            arcsec_diff(dec, dec3)
-        );
-    }
-
-    #[test]
-    fn annual_aberration_varies_by_sky_position() {
-        let tt = spring_equinox_tt();
-        let dec = Angle::from_degrees(0.0);
-        let (ra_a, dec_a) = apply_annual_aberration(Angle::from_hours(0.0), dec, &tt).unwrap();
-        let (ra_b, dec_b) = apply_annual_aberration(Angle::from_hours(12.0), dec, &tt).unwrap();
-        let shift_a = arcsec_diff(Angle::from_hours(0.0), ra_a) + arcsec_diff(dec, dec_a);
-        let shift_b = arcsec_diff(Angle::from_hours(12.0), ra_b) + arcsec_diff(dec, dec_b);
-        assert!(
-            (shift_a - shift_b).abs() > 0.0,
-            "shift should depend on sky position; got a={} b={}",
-            shift_a,
-            shift_b
-        );
-    }
+    let (ra, dec) = corrected.to_spherical();
+    Ok((
+        Angle::from_radians(wrap_0_2pi(ra)?),
+        Angle::from_radians(dec),
+    ))
 }

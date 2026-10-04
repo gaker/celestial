@@ -32,6 +32,7 @@ impl Vector3 {
     /// assert_eq!(unit, Vector3::new(0.6000000000000001, 0.8, 0.0));
     /// # Ok::<(), celestial_core::errors::AstroError>(())
     /// ```
+    #[inline]
     pub fn normalize(&self) -> AstroResult<Self> {
         let mag = self.magnitude();
         if mag == 0.0 {
@@ -86,6 +87,7 @@ impl Vector3 {
     /// let z = x.cross(&y);
     /// assert_eq!(z, Vector3::z_axis());  // X × Y = Z
     /// ```
+    #[inline]
     pub fn cross(&self, other: &Self) -> Self {
         Self::new(
             self.y * other.z - self.z * other.y,
@@ -118,6 +120,7 @@ impl Vector3 {
     /// let v = Vector3::from_spherical(0.0, HALF_PI);
     /// assert_eq!(v, Vector3::new(6.123233995736766e-17, 0.0, 1.0));
     /// ```
+    #[inline]
     pub fn from_spherical(ra: f64, dec: f64) -> Self {
         let (sin_ra, cos_ra) = libm::sincos(ra);
         let (sin_dec, cos_dec) = libm::sincos(dec);
@@ -142,6 +145,7 @@ impl Vector3 {
     /// assert_eq!(theta, 0.0);
     /// assert_eq!(phi, HALF_PI);
     /// ```
+    #[inline]
     pub fn to_spherical(&self) -> (f64, f64) {
         let d2 = self.x * self.x + self.y * self.y;
 

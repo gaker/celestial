@@ -17,7 +17,7 @@ fn main() -> anyhow::Result<()> {
         epoch: None,
     };
 
-    let results = cone_search(&catalog, &params);
+    let results = cone_search(&catalog, &params)?;
     println!(
         "\n{} stars within {:.1}° of ({:.3}, {:.3}):\n",
         results.len(),

@@ -27,7 +27,7 @@
 //!     max_mag: Some(14.0),
 //!     max_results: Some(50),
 //!     epoch: None,
-//! });
+//! })?;
 //! ```
 //!
 //! # Binary Format

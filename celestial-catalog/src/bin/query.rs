@@ -111,7 +111,7 @@ fn main() -> anyhow::Result<()> {
 
             let start = if timing { Some(Instant::now()) } else { None };
 
-            let results = cone_search(&catalog, &params);
+            let results = cone_search(&catalog, &params)?;
 
             if let Some(start_time) = start {
                 let elapsed = start_time.elapsed();

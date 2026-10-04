@@ -1,9 +1,11 @@
 #[cfg(test)]
 mod tests;
 
-use celestial_coords::{CartesianFrame, EclipticCartesian, Vector3};
+use celestial_coords::frames::ecliptic_cartesian::EclipticCartesian;
+use celestial_coords::transforms::cartesian::CartesianFrame;
 use celestial_core::constants::{DAYS_PER_JULIAN_MILLENNIUM, J2000_JD, TWOPI};
 use celestial_core::errors::AstroResult;
+use celestial_core::matrix::Vector3;
 
 use crate::earth::Vsop2013Earth;
 use crate::planetary_coefficients::*;

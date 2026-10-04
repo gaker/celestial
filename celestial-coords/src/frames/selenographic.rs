@@ -1,8 +1,10 @@
-use crate::{lunar, transforms::CoordinateFrame, CoordResult, Distance, ICRSPosition};
+use crate::distance::Distance;
+use crate::errors::CoordResult;
+use crate::frames::icrs::ICRSPosition;
+use crate::lunar;
+use crate::transforms::CoordinateFrame;
 use celestial_core::angle::wrap_0_2pi;
 use celestial_core::angle::Angle;
-use celestial_core::constants::HALF_PI;
-use celestial_core::matrix::RotationMatrix3;
 use celestial_time::scales::tt::TT;
 
 #[cfg(feature = "serde")]
@@ -50,7 +52,7 @@ impl SelenographicPosition {
         self.radius
     }
 
-    pub fn set_radius(&mut self, radius: Distance) {
+    pub(crate) fn set_radius(&mut self, radius: Distance) {
         self.radius = Some(radius);
     }
 
@@ -100,38 +102,16 @@ impl SelenographicPosition {
         ))
     }
 
-    pub fn is_visible_from_earth(&self, epoch: &TT) -> bool {
-        let sub_earth = Self::sub_earth_point(epoch).unwrap_or_else(|_| Self::nearside_center());
-        let separation = self.angular_separation(&sub_earth);
-        separation.degrees() < 90.0
+    pub fn is_visible_from_earth(&self, epoch: &TT) -> CoordResult<bool> {
+        let sub_earth = Self::sub_earth_point(epoch)?;
+        Ok(self.angular_separation(&sub_earth).degrees() < 90.0)
     }
-}
-
-fn selenographic_to_icrs_matrix(epoch: &TT) -> CoordResult<RotationMatrix3> {
-    let orientation = lunar::compute_lunar_orientation(epoch)?;
-    let lib_lon = orientation.optical_libration.longitude.radians();
-    let lib_lat = orientation.optical_libration.latitude.radians();
-    let c = orientation.position_angle.radians();
-
-    let moon_icrs = lunar::get_moon_icrs(epoch)?;
-    let moon_ra = moon_icrs.ra().radians();
-    let moon_dec = moon_icrs.dec().radians();
-
-    let mut m = RotationMatrix3::identity();
-    m.rotate_z(-lib_lon);
-    m.rotate_y(-lib_lat);
-    m.rotate_z(c);
-    m.rotate_y(moon_dec - HALF_PI);
-    m.rotate_z(-moon_ra);
-    Ok(m)
 }
 
 impl CoordinateFrame for SelenographicPosition {
     fn to_icrs(&self, epoch: &TT) -> CoordResult<ICRSPosition> {
-        let m = selenographic_to_icrs_matrix(epoch)?;
-        let (ra, dec) = m
-            .transpose()
-            .transform_spherical(self.longitude.radians(), self.latitude.radians());
+        let m = lunar::icrs_to_selenographic(epoch)?.transpose();
+        let (ra, dec) = m.transform_spherical(self.longitude.radians(), self.latitude.radians());
 
         let mut icrs = ICRSPosition::new(
             Angle::from_radians(wrap_0_2pi(ra)?),
@@ -145,7 +125,7 @@ impl CoordinateFrame for SelenographicPosition {
     }
 
     fn from_icrs(icrs: &ICRSPosition, epoch: &TT) -> CoordResult<Self> {
-        let m = selenographic_to_icrs_matrix(epoch)?;
+        let m = lunar::icrs_to_selenographic(epoch)?;
         let (lon, lat) = m.transform_spherical(icrs.ra().radians(), icrs.dec().radians());
 
         let mut pos = Self::new(
@@ -180,12 +160,15 @@ impl std::fmt::Display for SelenographicPosition {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::rounded;
+    use celestial_core::matrix::Vector3;
+    use celestial_time::julian::JulianDate;
 
     #[test]
     fn test_selenographic_creation() {
         let pos = SelenographicPosition::from_degrees(45.0, 30.0).unwrap();
-        assert!((pos.latitude().degrees() - 45.0).abs() < 1e-12);
-        assert!((pos.longitude().degrees() - 30.0).abs() < 1e-12);
+        assert_eq!(pos.latitude(), Angle::from_degrees(45.0));
+        assert_eq!(pos.longitude(), Angle::from_degrees(30.0));
         assert!(pos.radius().is_none());
     }
 
@@ -221,12 +204,10 @@ mod tests {
         let nearside = SelenographicPosition::nearside_center();
         let farside = SelenographicPosition::farside_center();
 
-        let sep = nearside.angular_separation(&farside);
-        assert!((sep.degrees() - 180.0).abs() < 1e-10);
+        assert_eq!(nearside.angular_separation(&farside).degrees(), 180.0);
 
         let north = SelenographicPosition::north_pole();
-        let sep_to_north = nearside.angular_separation(&north);
-        assert!((sep_to_north.degrees() - 90.0).abs() < 1e-10);
+        assert_eq!(nearside.angular_separation(&north).degrees(), 90.0);
     }
 
     #[test]
@@ -234,7 +215,7 @@ mod tests {
         let epoch = TT::j2000();
 
         let farside = SelenographicPosition::farside_center();
-        assert!(!farside.is_visible_from_earth(&epoch));
+        assert!(!farside.is_visible_from_earth(&epoch).unwrap());
     }
 
     #[test]
@@ -243,7 +224,7 @@ mod tests {
         let sub_earth = SelenographicPosition::sub_earth_point(&epoch).unwrap();
 
         assert!(
-            sub_earth.latitude().degrees().abs() <= 7.5,
+            libm::fabs(sub_earth.latitude().degrees()) <= 7.5,
             "Sub-earth latitude = {}",
             sub_earth.latitude().degrees()
         );
@@ -252,6 +233,50 @@ mod tests {
             "Sub-earth longitude = {}",
             sub_earth.longitude().degrees()
         );
+    }
+
+    // eraMoon98 at Meeus' example 53.a; the Earth lies the opposite way.
+    fn earth_from_moon() -> ICRSPosition {
+        let moon = Vector3::new(
+            -0.0016853456834658809,
+            0.0016977178353056598,
+            0.0005848854873104547,
+        );
+        let (ra, dec) = (-moon).to_spherical();
+        ICRSPosition::new(
+            Angle::from_radians(wrap_0_2pi(ra).unwrap()),
+            Angle::from_radians(dec),
+        )
+        .unwrap()
+    }
+
+    fn meeus_53a() -> TT {
+        TT::from_julian_date(JulianDate::new(2448724.5, 0.0))
+    }
+
+    #[test]
+    fn test_earth_direction_maps_to_meeus_total_libration() {
+        let p = SelenographicPosition::from_icrs(&earth_from_moon(), &meeus_53a()).unwrap();
+        let printed = [p.latitude(), p.longitude()].map(|a| rounded(a.degrees(), 2));
+        assert_eq!(printed, [4.20, 358.77]);
+    }
+
+    #[test]
+    fn test_sub_earth_point_is_meeus_total_libration() {
+        let p = SelenographicPosition::sub_earth_point(&meeus_53a()).unwrap();
+        let printed = [p.latitude(), p.longitude()].map(|a| rounded(a.degrees(), 2));
+        assert_eq!(printed, [4.20, 358.77]);
+    }
+
+    #[test]
+    fn test_non_finite_epoch_is_err() {
+        let epoch = TT::from_julian_date(JulianDate::new(f64::NAN, 0.0));
+        let position = SelenographicPosition::from_degrees(10.0, 20.0).unwrap();
+        let icrs = ICRSPosition::from_degrees(10.0, 20.0).unwrap();
+        assert!(position.to_icrs(&epoch).is_err());
+        assert!(SelenographicPosition::from_icrs(&icrs, &epoch).is_err());
+        assert!(SelenographicPosition::sub_earth_point(&epoch).is_err());
+        assert!(position.is_visible_from_earth(&epoch).is_err());
     }
 
     #[test]
@@ -281,28 +306,9 @@ mod tests {
             let icrs = original.to_icrs(&epoch).unwrap();
             let recovered = SelenographicPosition::from_icrs(&icrs, &epoch).unwrap();
 
-            let lat_err = (original.latitude().degrees() - recovered.latitude().degrees()).abs();
-            let lon_diff = (original.longitude().radians() - recovered.longitude().radians()).abs();
-            let lon_err = if lon_diff > std::f64::consts::PI {
-                std::f64::consts::TAU - lon_diff
-            } else {
-                lon_diff
-            } * celestial_core::constants::RAD_TO_DEG;
-
-            assert!(
-                lat_err < 1.0 / 3600.0,
-                "({}, {}): Latitude error {:.6} arcsec",
-                lat,
-                lon,
-                lat_err * 3600.0,
-            );
-            assert!(
-                lon_err < 1.0 / 3600.0,
-                "({}, {}): Longitude error {:.6} arcsec",
-                lat,
-                lon,
-                lon_err * 3600.0,
-            );
+            // Two rotations and their inverses, so a few units in the last place of a radian.
+            let error = original.angular_separation(&recovered).radians();
+            assert!(error < 1e-15, "({lat}, {lon}): {error:e} rad");
         }
     }
 

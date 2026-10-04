@@ -1,4 +1,4 @@
-use celestial_coords::CoordError;
+use celestial_coords::errors::CoordError;
 use celestial_core::angle::wrap_pm_pi;
 use celestial_core::angle::Angle;
 use celestial_core::constants::RAD_TO_DEG;

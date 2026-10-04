@@ -30,6 +30,7 @@ impl RotationMatrix3 {
     /// let v = m.apply_to_vector([0.0, 1.0, 0.0]);
     /// assert_eq!(v, [0.0, 6.123233995736766e-17, -1.0]);
     /// ```
+    #[inline]
     pub fn rotate_x(&mut self, phi: f64) {
         let (s, c) = libm::sincos(phi);
 
@@ -77,6 +78,7 @@ impl RotationMatrix3 {
     /// let v = m.apply_to_vector([1.0, 0.0, 0.0]);
     /// assert_eq!(v, [6.123233995736766e-17, -1.0, 0.0]);
     /// ```
+    #[inline]
     pub fn rotate_z(&mut self, psi: f64) {
         let (s, c) = libm::sincos(psi);
 
@@ -123,6 +125,7 @@ impl RotationMatrix3 {
     /// let v = m.apply_to_vector([0.0, 0.0, 1.0]);
     /// assert_eq!(v, [-1.0, 0.0, 6.123233995736766e-17]);
     /// ```
+    #[inline]
     pub fn rotate_y(&mut self, theta: f64) {
         let (s, c) = libm::sincos(theta);
 

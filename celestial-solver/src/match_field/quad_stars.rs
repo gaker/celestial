@@ -1,5 +1,6 @@
 //! Quad-star construction for image detections and catalog cone searches.
 
+use anyhow::Result;
 use celestial_catalog::query::{
     cone_search, tan_project_star, Catalog, ConeSearchParams, ConeSearchResult, QuadStar,
 };
@@ -28,7 +29,7 @@ pub(super) fn catalog_cone_search(
     radius_deg: f64,
     max_stars: usize,
     epoch: JulianDate,
-) -> (Vec<QuadStar>, Vec<ConeSearchResult>) {
+) -> Result<(Vec<QuadStar>, Vec<ConeSearchResult>)> {
     let params = ConeSearchParams {
         ra_deg,
         dec_deg,
@@ -37,7 +38,7 @@ pub(super) fn catalog_cone_search(
         max_results: None,
         epoch: Some(epoch),
     };
-    let mut results = cone_search(catalog, &params);
+    let mut results = cone_search(catalog, &params)?;
     results.sort_by(|a, b| {
         a.star
             .mag
@@ -58,7 +59,7 @@ pub(super) fn catalog_cone_search(
         })
         .collect();
 
-    (stars, results)
+    Ok((stars, results))
 }
 
 pub(super) fn stars_to_quad_stars(
@@ -240,7 +241,7 @@ mod tests {
         let epoch = JulianDate::new(2451545.0, 0.0);
 
         let (quad_stars, results) =
-            catalog_cone_search(&catalog, center_ra, center_dec, 1.0, 8, epoch);
+            catalog_cone_search(&catalog, center_ra, center_dec, 1.0, 8, epoch).unwrap();
 
         // truncate(max_stars) → at most 8 entries.
         assert!(quad_stars.len() <= 8);
@@ -268,7 +269,7 @@ mod tests {
         let catalog = Catalog::open(file.path()).unwrap();
         let epoch = JulianDate::new(2451545.0, 0.0);
 
-        let (qs, res) = catalog_cone_search(&catalog, 200.0, 0.0, 0.5, 50, epoch);
+        let (qs, res) = catalog_cone_search(&catalog, 200.0, 0.0, 0.5, 50, epoch).unwrap();
         assert!(qs.is_empty());
         assert!(res.is_empty());
     }
@@ -298,7 +299,8 @@ mod tests {
         let catalog = Catalog::open(file.path()).unwrap();
         let epoch = JulianDate::new(2451545.0, 0.0);
 
-        let (qs, res) = catalog_cone_search(&catalog, center_ra, center_dec, 180.0, 50, epoch);
+        let (qs, res) =
+            catalog_cone_search(&catalog, center_ra, center_dec, 180.0, 50, epoch).unwrap();
         // Both stars are within the cone, but only the near one projects.
         assert!(!res.is_empty());
         assert!(qs.len() < res.len() || qs.iter().all(|s| s.source_id != 2));

@@ -1,4 +1,4 @@
-use celestial_coords::ICRSPosition;
+use celestial_coords::frames::icrs::ICRSPosition;
 use celestial_core::angle::{parse_dms, parse_hms};
 use celestial_images::fits::header::Field;
 use celestial_images::formats::Image;

@@ -1,20 +1,16 @@
-use crate::{
-    aberration::{
-        apply_aberration, apply_light_deflection, compute_earth_state, remove_aberration,
-        remove_light_deflection,
-    },
-    frames::{ICRSPosition, TIRSPosition},
-    transforms::CoordinateFrame,
-    CoordError, CoordResult, Distance,
-};
-use celestial_core::{
-    angle::Angle,
-    matrix::{RotationMatrix3, Vector3},
-};
-use celestial_time::scales::conversions::ut1_tai::ToUT1WithDeltaT;
+use crate::astrom::earth::EarthRotation;
+use crate::astrom::Astrom;
+use crate::distance::Distance;
+use crate::eop::record::EopParameters;
+use crate::errors::CoordResult;
+use crate::frames::direction::spherical_angles;
+use crate::frames::icrs::ICRSPosition;
+use crate::frames::tirs::TIRSPosition;
+use crate::frames::topocentric::HourAnglePosition;
+use crate::transforms::CoordinateFrame;
+use celestial_core::location::Location;
+use celestial_core::{angle::Angle, matrix::Vector3};
 use celestial_time::scales::tt::TT;
-use celestial_time::sidereal::gast::GAST;
-use celestial_time::transforms::nutation::NutationCalculator;
 
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
@@ -92,72 +88,8 @@ impl CIRSPosition {
     }
 
     pub fn from_unit_vector(unit: Vector3, epoch: TT) -> CoordResult<Self> {
-        let r = libm::sqrt(unit.x.powi(2) + unit.y.powi(2) + unit.z.powi(2));
-
-        if r == 0.0 {
-            return Err(CoordError::invalid_coordinate("Zero vector"));
-        }
-
-        let x = unit.x / r;
-        let y = unit.y / r;
-        let z = unit.z / r;
-
-        let d2 = x * x + y * y;
-
-        let ra = if d2 == 0.0 { 0.0 } else { libm::atan2(y, x) };
-        let dec = if z == 0.0 {
-            0.0
-        } else {
-            libm::atan2(z, libm::sqrt(d2))
-        };
-
-        Self::new(Angle::from_radians(ra), Angle::from_radians(dec), epoch)
-    }
-
-    fn icrs_to_cirs_matrix(epoch: &TT) -> CoordResult<RotationMatrix3> {
-        Self::icrs_to_cirs_matrix_with_eop(epoch, None)
-    }
-
-    fn icrs_to_cirs_matrix_with_eop(
-        epoch: &TT,
-        eop: Option<&crate::eop::EopParameters>,
-    ) -> CoordResult<RotationMatrix3> {
-        let jd = epoch.to_julian_date();
-        let t = celestial_core::utils::jd_to_centuries(jd.jd1(), jd.jd2());
-
-        let nutation = epoch
-            .nutation_iau2006a()
-            .map_err(|e| CoordError::CoreError {
-                message: format!("Nutation calculation failed: {}", e),
-            })?;
-
-        let precession_calc = celestial_core::precession::PrecessionIAU2006::new();
-        let npb_matrix = precession_calc.npb_matrix_iau2006a(
-            t,
-            nutation.nutation_longitude(),
-            nutation.nutation_obliquity(),
-        );
-
-        let cio_solution =
-            celestial_core::cio::CioSolution::calculate(&npb_matrix, t).map_err(|e| {
-                CoordError::CoreError {
-                    message: format!("CIO calculation failed: {}", e),
-                }
-            })?;
-
-        let (x, y) = match eop {
-            Some(eop) => (
-                eop.corrected_cip_x(cio_solution.cip.x),
-                eop.corrected_cip_y(cio_solution.cip.y),
-            ),
-            None => (cio_solution.cip.x, cio_solution.cip.y),
-        };
-
-        celestial_core::cio::gcrs_to_cirs_matrix(x, y, cio_solution.s).map_err(|e| {
-            CoordError::CoreError {
-                message: format!("GCRS-to-CIRS matrix failed: {}", e),
-            }
-        })
+        let (ra, dec) = spherical_angles(unit)?;
+        Self::new(ra, dec, epoch)
     }
 
     /// Transforms this CIRS position to Terrestrial Intermediate Reference System (TIRS).
@@ -165,112 +97,26 @@ impl CIRSPosition {
     /// The position vector is scaled by distance (in AU) before transformation. If no distance
     /// is set, a unit vector is used. The resulting TIRS vector will have the same units (AU or
     /// dimensionless) as the input.
-    pub fn to_tirs(&self, eop: &crate::eop::EopParameters) -> CoordResult<TIRSPosition> {
-        let cirs_vec = if let Some(distance) = self.distance {
-            self.unit_vector() * distance.au()
-        } else {
-            self.unit_vector()
-        };
-
-        TIRSPosition::from_cirs(cirs_vec, &self.epoch, eop)
+    pub fn to_tirs(&self, eop: &EopParameters) -> CoordResult<TIRSPosition> {
+        EarthRotation::new(&self.epoch, eop)?.cirs_to_tirs(self)
     }
 
     pub fn to_hour_angle(
         &self,
-        observer: &celestial_core::location::Location,
-        delta_t: f64,
-    ) -> CoordResult<crate::frames::HourAnglePosition> {
-        let ut1 = self.epoch.to_ut1_with_delta_t(delta_t)?;
-        let gast = GAST::from_ut1_and_tt(&ut1, &self.epoch)?;
-
-        let last = gast.to_last(observer)?;
-
-        let ha_rad = last.radians() - self.ra.radians();
-        let ha = celestial_core::angle::wrap_pm_pi(ha_rad)?;
-
-        crate::frames::HourAnglePosition::new(
-            Angle::from_radians(ha),
-            self.dec,
-            *observer,
-            self.epoch,
-        )
+        observer: &Location,
+        eop: &EopParameters,
+    ) -> CoordResult<HourAnglePosition> {
+        EarthRotation::new(&self.epoch, eop)?.cirs_to_hour_angle(self, observer)
     }
 }
 
 impl CoordinateFrame for CIRSPosition {
     fn to_icrs(&self, _epoch: &TT) -> CoordResult<ICRSPosition> {
-        let icrs_to_cirs = Self::icrs_to_cirs_matrix(&self.epoch)?;
-        let cirs_to_icrs = icrs_to_cirs.transpose();
-
-        // Step 1: Remove precession-nutation
-        let cirs_vec = self.unit_vector();
-        let apparent_vec = cirs_to_icrs * cirs_vec;
-
-        let earth_state = compute_earth_state(&self.epoch)?;
-        let sun_earth_dist = earth_state.heliocentric_position.magnitude();
-
-        // Step 2: Remove stellar aberration
-        let deflected_vec = remove_aberration(
-            apparent_vec,
-            earth_state.barycentric_velocity,
-            sun_earth_dist,
-        )?;
-
-        // Sun to observer unit vector (heliocentric position normalized)
-        let sun_to_earth = Vector3::new(
-            earth_state.heliocentric_position.x / sun_earth_dist,
-            earth_state.heliocentric_position.y / sun_earth_dist,
-            earth_state.heliocentric_position.z / sun_earth_dist,
-        );
-
-        // Step 3: Remove gravitational light deflection
-        let icrs_vec = remove_light_deflection(deflected_vec, sun_to_earth, sun_earth_dist)?;
-
-        let mut icrs = ICRSPosition::from_unit_vector(icrs_vec)?;
-
-        if let Some(distance) = self.distance {
-            icrs.set_distance(distance);
-        }
-
-        Ok(icrs)
+        Astrom::new(&self.epoch)?.cirs_to_icrs(self)
     }
 
     fn from_icrs(icrs: &ICRSPosition, epoch: &TT) -> CoordResult<Self> {
-        let icrs_to_cirs = Self::icrs_to_cirs_matrix(epoch)?;
-
-        let icrs_vec = icrs.unit_vector();
-
-        let earth_state = compute_earth_state(epoch)?;
-        let sun_earth_dist = earth_state.heliocentric_position.magnitude();
-
-        // Sun to observer unit vector (heliocentric position normalized)
-        // heliocentric_position is Earth's position relative to Sun, so normalizing gives Sun→Earth direction
-        let sun_to_earth = Vector3::new(
-            earth_state.heliocentric_position.x / sun_earth_dist,
-            earth_state.heliocentric_position.y / sun_earth_dist,
-            earth_state.heliocentric_position.z / sun_earth_dist,
-        );
-
-        // Step 1: Apply gravitational light deflection by the Sun
-        let deflected_vec = apply_light_deflection(icrs_vec, sun_to_earth, sun_earth_dist);
-
-        // Step 2: Apply stellar aberration
-        let apparent_vec = apply_aberration(
-            deflected_vec,
-            earth_state.barycentric_velocity,
-            sun_earth_dist,
-        );
-
-        // Step 3: Apply precession-nutation (C2I matrix)
-        let cirs_vec = icrs_to_cirs * apparent_vec;
-
-        let mut cirs = Self::from_unit_vector(cirs_vec, *epoch)?;
-
-        if let Some(distance) = icrs.distance() {
-            cirs.distance = Some(distance);
-        }
-
-        Ok(cirs)
+        Astrom::new(epoch)?.icrs_to_cirs(icrs)
     }
 }
 
@@ -295,6 +141,8 @@ impl std::fmt::Display for CIRSPosition {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::frames::gcrs::GCRSPosition;
+    use celestial_core::constants::{ARCSEC_PER_RAD, J2000_JD};
 
     #[test]
     fn test_cirs_creation() {
@@ -326,7 +174,6 @@ mod tests {
     fn test_unit_vector_conversion() {
         let epoch = TT::j2000();
 
-        // Test vernal equinox direction
         let vernal_equinox = CIRSPosition::from_degrees(0.0, 0.0, epoch).unwrap();
         let unit_vec = vernal_equinox.unit_vector();
 
@@ -334,7 +181,6 @@ mod tests {
         assert_eq!(unit_vec.y, 0.0);
         assert_eq!(unit_vec.z, 0.0);
 
-        // Test round-trip
         let recovered = CIRSPosition::from_unit_vector(unit_vec, epoch).unwrap();
         assert_eq!(recovered.ra().degrees(), vernal_equinox.ra().degrees());
         assert_eq!(recovered.dec().degrees(), vernal_equinox.dec().degrees());
@@ -344,45 +190,44 @@ mod tests {
     fn test_icrs_to_cirs_transformation() {
         let epoch = TT::j2000();
         let icrs = ICRSPosition::from_degrees(180.0, 45.0).unwrap();
-
-        // Transform to CIRS
         let cirs = CIRSPosition::from_icrs(&icrs, &epoch).unwrap();
-
-        // At J2000, CIRS should be very close to ICRS (small precession/nutation effects)
-        // But not exactly equal due to frame bias
-        assert!((cirs.ra().degrees() - icrs.ra().degrees()).abs() < 1.0);
-        assert!((cirs.dec().degrees() - icrs.dec().degrees()).abs() < 1.0);
+        // eraAtci13 with no proper motion or parallax.
+        assert_eq!(
+            [cirs.ra().radians(), cirs.dec().radians()],
+            [3.1415883485583755, 0.7853497187153947]
+        );
     }
+
+    // The inverse iterates, so the place comes back up to 1e-13 rad off. These are eraAtic13
+    // applied to eraAtci13's output, at J2000: (ra, dec) in degrees and the recovered radians.
+    const ROUND_TRIPS: [(f64, f64, [f64; 2]); 6] = [
+        (120.0, 30.0, [2.094395102393274, 0.5235987755982817]),
+        (0.0, 0.0, [6.283185307179421, -7.180864054642573e-14]),
+        (90.0, 0.0, [1.5707963267949248, -2.0438947981007283e-15]),
+        (180.0, 45.0, [3.1415926535898935, 0.7853981633971286]),
+        (270.0, -60.0, [4.712388980384646, -1.0471975511965956]),
+        (45.0, 89.0, [0.7853981633977007, 1.5533430342749595]),
+    ];
 
     #[test]
     fn test_cirs_to_icrs_roundtrip() {
         let epoch = TT::j2000();
-        let original_icrs = ICRSPosition::from_degrees(120.0, 30.0).unwrap();
-
-        // ICRS → CIRS → ICRS
-        let cirs = CIRSPosition::from_icrs(&original_icrs, &epoch).unwrap();
-        let recovered_icrs = cirs.to_icrs(&epoch).unwrap();
-
-        // Iterative inverse (aberration + light deflection) gives ~50 nano-arcsec precision
-        let diff_arcsec = original_icrs
-            .angular_separation(&recovered_icrs)
-            .arcseconds();
-        assert!(
-            diff_arcsec < 1e-7,
-            "CIRS roundtrip should be < 100 nano-arcsec, got {:.2e} arcsec",
-            diff_arcsec
-        );
+        for (ra, dec, back) in ROUND_TRIPS {
+            let icrs = ICRSPosition::from_degrees(ra, dec).unwrap();
+            let cirs = CIRSPosition::from_icrs(&icrs, &epoch).unwrap();
+            let recovered = cirs.to_icrs(&epoch).unwrap();
+            let radians = [recovered.ra().radians(), recovered.dec().radians()];
+            assert_eq!(radians, back, "({ra}, {dec})");
+        }
     }
 
     #[test]
     fn test_coordinate_validation() {
         let epoch = TT::j2000();
 
-        // Valid coordinates
         assert!(CIRSPosition::from_degrees(0.0, 0.0, epoch).is_ok());
         assert!(CIRSPosition::from_degrees(359.99, 89.99, epoch).is_ok());
 
-        // Invalid declination
         assert!(CIRSPosition::from_degrees(0.0, 91.0, epoch).is_err());
         assert!(CIRSPosition::from_degrees(0.0, -91.0, epoch).is_err());
     }
@@ -393,7 +238,6 @@ mod tests {
         let distance = Distance::from_parsecs(100.0).unwrap();
         let icrs = ICRSPosition::from_degrees_with_distance(90.0, 45.0, distance).unwrap();
 
-        // Distance should be preserved through transformation
         let cirs = CIRSPosition::from_icrs(&icrs, &epoch).unwrap();
         assert_eq!(cirs.distance().unwrap(), distance);
 
@@ -418,16 +262,16 @@ mod tests {
         let epoch = TT::j2000();
         let icrs = ICRSPosition::from_degrees(90.0, 23.0).unwrap();
 
-        let icrs_vec = icrs.unit_vector();
         let cirs = CIRSPosition::from_icrs(&icrs, &epoch).unwrap();
         let cirs_vec = cirs.unit_vector();
 
-        let npb_only = CIRSPosition::icrs_to_cirs_matrix(&epoch).unwrap() * icrs_vec;
+        let npb_only = GCRSPosition::new(icrs.ra(), icrs.dec(), epoch)
+            .unwrap()
+            .to_cirs()
+            .unwrap()
+            .unit_vector();
 
-        let diff_with_aberr = (cirs_vec.x - npb_only.x).powi(2)
-            + (cirs_vec.y - npb_only.y).powi(2)
-            + (cirs_vec.z - npb_only.z).powi(2);
-        let aberr_arcsec = libm::sqrt(diff_with_aberr) * 206264.806247;
+        let aberr_arcsec = (cirs_vec - npb_only).magnitude() * ARCSEC_PER_RAD;
 
         assert!(
             aberr_arcsec > 15.0 && aberr_arcsec < 25.0,
@@ -441,15 +285,15 @@ mod tests {
         let icrs = ICRSPosition::from_degrees(180.0, 45.0).unwrap();
 
         let epoch_jan =
-            TT::from_julian_date(celestial_time::julian::JulianDate::new(2451545.0, 0.0));
+            TT::from_julian_date(celestial_time::julian::JulianDate::new(J2000_JD, 0.0));
         let epoch_jul =
-            TT::from_julian_date(celestial_time::julian::JulianDate::new(2451545.0, 182.5));
+            TT::from_julian_date(celestial_time::julian::JulianDate::new(J2000_JD, 182.5));
 
         let cirs_jan = CIRSPosition::from_icrs(&icrs, &epoch_jan).unwrap();
         let cirs_jul = CIRSPosition::from_icrs(&icrs, &epoch_jul).unwrap();
 
-        let ra_diff_arcsec = (cirs_jan.ra().degrees() - cirs_jul.ra().degrees()).abs() * 3600.0;
-        let dec_diff_arcsec = (cirs_jan.dec().degrees() - cirs_jul.dec().degrees()).abs() * 3600.0;
+        let ra_diff_arcsec = libm::fabs((cirs_jan.ra() - cirs_jul.ra()).arcseconds());
+        let dec_diff_arcsec = libm::fabs((cirs_jan.dec() - cirs_jul.dec()).arcseconds());
 
         assert!(
             ra_diff_arcsec > 1.0 || dec_diff_arcsec > 1.0,
@@ -460,41 +304,13 @@ mod tests {
     }
 
     #[test]
-    fn test_aberration_roundtrip_precision() {
-        let test_positions = [
-            (0.0, 0.0),
-            (90.0, 0.0),
-            (180.0, 45.0),
-            (270.0, -60.0),
-            (45.0, 89.0),
-        ];
-
-        for (ra, dec) in test_positions {
-            let epoch = TT::j2000();
-            let icrs = ICRSPosition::from_degrees(ra, dec).unwrap();
-            let cirs = CIRSPosition::from_icrs(&icrs, &epoch).unwrap();
-            let recovered = cirs.to_icrs(&epoch).unwrap();
-
-            // Iterative inverse (aberration + light deflection) gives ~70 nano-arcsec precision
-            let diff_arcsec = icrs.angular_separation(&recovered).arcseconds();
-            assert!(
-                diff_arcsec < 1e-7,
-                "Roundtrip for ({}, {}) should be < 100 nano-arcsec, got {:.2e} arcsec",
-                ra,
-                dec,
-                diff_arcsec
-            );
-        }
-    }
-
-    #[test]
     fn test_from_unit_vector_north_pole() {
         let epoch = TT::j2000();
         let north_pole_vec = Vector3::new(0.0, 0.0, 1.0);
         let pos = CIRSPosition::from_unit_vector(north_pole_vec, epoch).unwrap();
 
         assert_eq!(pos.ra().radians(), 0.0);
-        assert_eq!(pos.dec().radians(), std::f64::consts::FRAC_PI_2);
+        assert_eq!(pos.dec().radians(), celestial_core::constants::HALF_PI);
     }
 
     #[test]
@@ -504,7 +320,7 @@ mod tests {
         let pos = CIRSPosition::from_unit_vector(south_pole_vec, epoch).unwrap();
 
         assert_eq!(pos.ra().radians(), 0.0);
-        assert_eq!(pos.dec().radians(), -std::f64::consts::FRAC_PI_2);
+        assert_eq!(pos.dec().radians(), -celestial_core::constants::HALF_PI);
     }
 
     #[test]

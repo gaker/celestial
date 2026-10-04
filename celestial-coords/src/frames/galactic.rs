@@ -1,7 +1,11 @@
-use crate::{
-    constants::GALACTIC_TO_ICRS, transforms::CoordinateFrame, CoordResult, Distance, ICRSPosition,
-};
+use super::direction::spherical_angles;
+use crate::constants::ICRS_TO_GALACTIC;
+use crate::distance::Distance;
+use crate::errors::CoordResult;
+use crate::frames::icrs::ICRSPosition;
+use crate::transforms::CoordinateFrame;
 use celestial_core::angle::Angle;
+use celestial_core::matrix::{RotationMatrix3, Vector3};
 use celestial_time::scales::tt::TT;
 
 #[cfg(feature = "serde")]
@@ -114,84 +118,25 @@ impl GalacticPosition {
 
 impl CoordinateFrame for GalacticPosition {
     fn to_icrs(&self, _epoch: &TT) -> CoordResult<ICRSPosition> {
-        let (sin_b, cos_b) = self.b.sin_cos();
-        let (sin_l, cos_l) = self.l.sin_cos();
-        let gal_cartesian = [cos_l * cos_b, sin_l * cos_b, sin_b];
-
-        // Matrix multiplication: icrs = M^T * gal (transpose because matrix is stored as columns)
-        // This works correctly because GALACTIC_TO_ICRS is orthonormal (rotation matrix).
-        let icrs_cartesian = [
-            GALACTIC_TO_ICRS[0][0] * gal_cartesian[0]
-                + GALACTIC_TO_ICRS[1][0] * gal_cartesian[1]
-                + GALACTIC_TO_ICRS[2][0] * gal_cartesian[2],
-            GALACTIC_TO_ICRS[0][1] * gal_cartesian[0]
-                + GALACTIC_TO_ICRS[1][1] * gal_cartesian[1]
-                + GALACTIC_TO_ICRS[2][1] * gal_cartesian[2],
-            GALACTIC_TO_ICRS[0][2] * gal_cartesian[0]
-                + GALACTIC_TO_ICRS[1][2] * gal_cartesian[1]
-                + GALACTIC_TO_ICRS[2][2] * gal_cartesian[2],
-        ];
-
-        let d2 = icrs_cartesian[0] * icrs_cartesian[0] + icrs_cartesian[1] * icrs_cartesian[1];
-        let ra = if d2 != 0.0 {
-            libm::atan2(icrs_cartesian[1], icrs_cartesian[0])
-        } else {
-            0.0
-        };
-        let dec = if d2 != 0.0 || icrs_cartesian[2] != 0.0 {
-            libm::atan2(icrs_cartesian[2], libm::sqrt(d2))
-        } else {
-            0.0
-        };
-
-        let mut icrs = ICRSPosition::new(Angle::from_radians(ra), Angle::from_radians(dec))?;
-
+        let galactic = Vector3::from_spherical(self.l.radians(), self.b.radians());
+        let mut icrs = ICRSPosition::from_unit_vector(icrs_to_galactic()?.transpose() * galactic)?;
         if let Some(distance) = self.distance {
             icrs.set_distance(distance);
         }
-
         Ok(icrs)
     }
 
     fn from_icrs(icrs: &ICRSPosition, _epoch: &TT) -> CoordResult<Self> {
-        let (sin_dec, cos_dec) = icrs.dec().sin_cos();
-        let (sin_ra, cos_ra) = icrs.ra().sin_cos();
-        let icrs_cartesian = [cos_ra * cos_dec, sin_ra * cos_dec, sin_dec];
-
-        // Matrix multiplication: gal = M * icrs (standard row-major access)
-        // For orthonormal matrices, M^T = M^(-1), so this is the inverse of to_icrs.
-        let gal_cartesian = [
-            GALACTIC_TO_ICRS[0][0] * icrs_cartesian[0]
-                + GALACTIC_TO_ICRS[0][1] * icrs_cartesian[1]
-                + GALACTIC_TO_ICRS[0][2] * icrs_cartesian[2],
-            GALACTIC_TO_ICRS[1][0] * icrs_cartesian[0]
-                + GALACTIC_TO_ICRS[1][1] * icrs_cartesian[1]
-                + GALACTIC_TO_ICRS[1][2] * icrs_cartesian[2],
-            GALACTIC_TO_ICRS[2][0] * icrs_cartesian[0]
-                + GALACTIC_TO_ICRS[2][1] * icrs_cartesian[1]
-                + GALACTIC_TO_ICRS[2][2] * icrs_cartesian[2],
-        ];
-
-        let d2 = gal_cartesian[0] * gal_cartesian[0] + gal_cartesian[1] * gal_cartesian[1];
-        let l = if d2 != 0.0 {
-            libm::atan2(gal_cartesian[1], gal_cartesian[0])
-        } else {
-            0.0
-        };
-        let b = if d2 != 0.0 || gal_cartesian[2] != 0.0 {
-            libm::atan2(gal_cartesian[2], libm::sqrt(d2))
-        } else {
-            0.0
-        };
-
-        let mut galactic = Self::new(Angle::from_radians(l), Angle::from_radians(b))?;
-
-        if let Some(distance) = icrs.distance() {
-            galactic.set_distance(distance);
-        }
-
+        let direction = Vector3::from_spherical(icrs.ra().radians(), icrs.dec().radians());
+        let (l, b) = spherical_angles(icrs_to_galactic()? * direction)?;
+        let mut galactic = Self::new(l, b)?;
+        galactic.distance = icrs.distance();
         Ok(galactic)
     }
+}
+
+fn icrs_to_galactic() -> CoordResult<RotationMatrix3> {
+    Ok(RotationMatrix3::from_array(ICRS_TO_GALACTIC)?)
 }
 
 impl std::fmt::Display for GalacticPosition {
@@ -218,22 +163,20 @@ mod tests {
     #[test]
     fn test_galactic_creation() {
         let pos = GalacticPosition::from_degrees(45.0, 30.0).unwrap();
-        assert!((pos.longitude().degrees() - 45.0).abs() < 1e-12);
-        assert!((pos.latitude().degrees() - 30.0).abs() < 1e-12);
+        assert_eq!(pos.longitude(), Angle::from_degrees(45.0));
+        assert_eq!(pos.latitude(), Angle::from_degrees(30.0));
         assert!(pos.distance().is_none());
     }
 
     #[test]
     fn test_galactic_validation() {
-        // Valid coordinates
         assert!(GalacticPosition::from_degrees(0.0, 0.0).is_ok());
         assert!(GalacticPosition::from_degrees(359.999, 89.999).is_ok());
 
-        // Longitude gets normalized
+        // eraAnp of 380 degrees: 20 degrees, less the rounding of 380 degrees in radians.
         let pos = GalacticPosition::from_degrees(380.0, 45.0).unwrap();
-        assert!((pos.longitude().degrees() - 20.0).abs() < 1e-12);
+        assert_eq!(pos.longitude().radians(), 0.3490658503988664);
 
-        // Invalid latitude
         assert!(GalacticPosition::from_degrees(0.0, 95.0).is_err());
         assert!(GalacticPosition::from_degrees(0.0, -95.0).is_err());
     }
@@ -245,28 +188,25 @@ mod tests {
         assert_eq!(gc.latitude().degrees(), 0.0);
 
         let gac = GalacticPosition::galactic_anticenter();
-        assert!((gac.longitude().degrees() - 180.0).abs() < 1e-12);
+        assert_eq!(gac.longitude().degrees(), 180.0);
         assert_eq!(gac.latitude().degrees(), 0.0);
 
         let ngp = GalacticPosition::north_galactic_pole();
-        assert!((ngp.latitude().degrees() - 90.0).abs() < 1e-12);
+        assert_eq!(ngp.latitude().degrees(), 90.0);
 
         let sgp = GalacticPosition::south_galactic_pole();
-        assert!((sgp.latitude().degrees() - (-90.0)).abs() < 1e-12);
+        assert_eq!(sgp.latitude().degrees(), -90.0);
     }
 
     #[test]
     fn test_galactic_regions() {
-        // Galactic plane
         let plane_pos = GalacticPosition::from_degrees(45.0, 5.0).unwrap();
         assert!(plane_pos.is_near_galactic_plane());
         assert!(!plane_pos.is_near_galactic_pole());
 
-        // Galactic bulge
         let bulge_pos = GalacticPosition::from_degrees(5.0, 5.0).unwrap();
         assert!(bulge_pos.is_in_galactic_bulge());
 
-        // Galactic pole
         let pole_pos = GalacticPosition::from_degrees(0.0, 85.0).unwrap();
         assert!(pole_pos.is_near_galactic_pole());
         assert!(!pole_pos.is_near_galactic_plane());
@@ -277,13 +217,8 @@ mod tests {
         let pos1 = GalacticPosition::from_degrees(0.0, 0.0).unwrap();
         let pos2 = GalacticPosition::from_degrees(90.0, 0.0).unwrap();
 
-        let sep = pos1.angular_separation(&pos2);
-        // Should be approximately 90 degrees
-        assert!((sep.degrees() - 90.0).abs() < 1.0); // Allow 1° tolerance for approximation
-
-        // Distance from galactic center
-        let gc_dist = pos2.angular_distance_from_gc();
-        assert!((gc_dist.degrees() - 90.0).abs() < 1.0);
+        assert_eq!(pos1.angular_separation(&pos2).degrees(), 90.0);
+        assert_eq!(pos2.angular_distance_from_gc().degrees(), 90.0);
     }
 
     #[test]
@@ -291,14 +226,17 @@ mod tests {
         let epoch = TT::j2000();
         let gal_pos = GalacticPosition::from_degrees(45.0, 30.0).unwrap();
 
-        // Test Galactic -> ICRS -> Galactic round trip
+        // eraG2icrs, then eraIcrs2g on its output.
         let icrs = gal_pos.to_icrs(&epoch).unwrap();
-        let gal_recovered = GalacticPosition::from_icrs(&icrs, &epoch).unwrap();
-
-        assert!(
-            (gal_recovered.longitude().degrees() - gal_pos.longitude().degrees()).abs() < 1e-12
+        assert_eq!(
+            [icrs.ra().radians(), icrs.dec().radians()],
+            [4.5324553575768585, 0.3996934769842426]
         );
-        assert!((gal_recovered.latitude().degrees() - gal_pos.latitude().degrees()).abs() < 1e-12);
+        let back = GalacticPosition::from_icrs(&icrs, &epoch).unwrap();
+        assert_eq!(
+            [back.longitude().radians(), back.latitude().radians()],
+            [0.7853981633974482, 0.5235987755982991]
+        );
     }
 
     #[test]
@@ -313,7 +251,6 @@ mod tests {
 
         assert_eq!(pos.distance().unwrap().parsecs(), 100.0);
 
-        // Test coordinate transformation preserves distance
         let epoch = TT::j2000();
         let icrs = pos.to_icrs(&epoch).unwrap();
         assert_eq!(icrs.distance().unwrap().parsecs(), 100.0);

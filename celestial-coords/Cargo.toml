@@ -15,16 +15,13 @@ celestial-eop-data.workspace = true
 celestial-time.workspace = true
 libm.workspace = true
 serde = { workspace = true, optional = true }
-serde_json = { workspace = true, optional = true }
 thiserror.workspace = true
 
 [features]
 default = []
-serde = ["dep:serde", "dep:serde_json", "celestial-core/serde", "celestial-time/serde"]
+serde = ["dep:serde", "celestial-core/serde", "celestial-time/serde"]
 
 [dev-dependencies]
 celestial-core = { workspace = true, features = ["test-support"] }
-criterion.workspace = true
 reqwest.workspace = true
-serde_json.workspace = true
 tokio.workspace = true

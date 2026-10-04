@@ -1,6 +1,6 @@
-use celestial_coords::Vector3;
 use celestial_core::constants::{AU_KM, MOON_EMB_MASS_RATIO};
 use celestial_core::errors::AstroResult;
+use celestial_core::matrix::Vector3;
 use celestial_time::julian::JulianDate;
 use celestial_time::scales::tdb::TDB;
 

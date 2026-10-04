@@ -5,6 +5,7 @@ use celestial_time::scales::tdb::TDB;
 
 // VSOP2013.ctl reference values (ICRS, from official Fortran output)
 // Line 3 for each epoch: Equatorial Heliocentric Coordinates X,Y,Z (au) - ICRS Frame J2000
+// The coefficient tables keep terms above 1e-10, so EMB lands within 0.71 km of these.
 const EMB_VSOP2013_REF: &[(f64, f64, f64, f64)] = &[
     (2411545.0, 0.1117527004, -0.9270100498, -0.4021802015),
     (2415545.0, -0.1884496475, -0.9153016306, -0.3970809941),
@@ -34,8 +35,8 @@ fn vsop2013_vs_reference() {
         let error_km = error_au * AU_KM;
 
         assert!(
-            error_km < 75.0,
-            "JD {}: error {:.0} km exceeds 75 km threshold",
+            error_km < 1.0,
+            "JD {}: error {:.3} km exceeds 1 km threshold",
             jd,
             error_km
         );
@@ -57,8 +58,8 @@ fn vsop2013_j2000() {
     let dz = pos.z - expected.2;
     let error_km = libm::sqrt(dx * dx + dy * dy + dz * dz) * AU_KM;
     assert!(
-        error_km < 75.0,
-        "Error {:.0} km exceeds 75 km threshold",
+        error_km < 1.0,
+        "Error {:.3} km exceeds 1 km threshold",
         error_km
     );
 }

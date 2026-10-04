@@ -1,6 +1,8 @@
-use celestial_coords::frames::{EclipticPosition, GalacticPosition, ICRSPosition};
+use celestial_coords::distance::Distance;
+use celestial_coords::frames::ecliptic::EclipticPosition;
+use celestial_coords::frames::galactic::GalacticPosition;
+use celestial_coords::frames::icrs::ICRSPosition;
 use celestial_coords::transforms::CoordinateFrame;
-use celestial_coords::Distance;
 use celestial_time::scales::tt::tt_from_calendar;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -48,7 +50,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     println!("  Near pole? {}\n", gal.is_near_galactic_pole());
 
-    // Roundtrip: galactic → ICRS
     let gc = GalacticPosition::galactic_center();
     let icrs = gc.to_icrs(&tt)?;
     println!("Galactic center reference point:");

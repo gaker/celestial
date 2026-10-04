@@ -1,4 +1,5 @@
 pub mod cirs;
+mod direction;
 pub mod ecliptic;
 pub mod ecliptic_cartesian;
 pub mod galactic;
@@ -9,15 +10,3 @@ pub mod itrs;
 pub mod selenographic;
 pub mod tirs;
 pub mod topocentric;
-
-pub use cirs::CIRSPosition;
-pub use ecliptic::EclipticPosition;
-pub use ecliptic_cartesian::EclipticCartesian;
-pub use galactic::GalacticPosition;
-pub use gcrs::GCRSPosition;
-pub use heliographic::{HeliographicCarrington, HeliographicStonyhurst};
-pub use icrs::ICRSPosition;
-pub use itrs::ITRSPosition;
-pub use selenographic::SelenographicPosition;
-pub use tirs::TIRSPosition;
-pub use topocentric::{HourAnglePosition, TopocentricPosition};

@@ -1,22 +1,32 @@
 use super::record::{EopFlags, EopQuality, EopRecord, EopSource};
-use crate::CoordResult;
+use crate::errors::CoordResult;
 
 pub fn load_bundled_c04() -> CoordResult<Vec<EopRecord>> {
     let entries = celestial_eop_data::c04_data();
     convert_entries(entries, EopSource::IersC04)
 }
 
-pub fn load_bundled_combined() -> CoordResult<Vec<EopRecord>> {
-    let c04 = celestial_eop_data::c04_data();
+pub(crate) fn load_bundled_combined() -> CoordResult<Vec<EopRecord>> {
+    let c04_end = c04_end();
+    let mut records = convert_entries(celestial_eop_data::c04_data(), EopSource::IersC04)?;
     let finals = celestial_eop_data::finals_data();
-    let c04_max = c04.last().map(|e| e.mjd).unwrap_or(0.0);
-
-    let mut records = convert_entries(c04, EopSource::IersC04)?;
-    let finals_ext = finals.iter().filter(|e| e.mjd > c04_max);
-    for entry in finals_ext {
+    for entry in finals.iter().filter(|e| e.mjd > c04_end) {
         records.push(convert_entry(entry, EopSource::IersFinals)?);
     }
     Ok(records)
+}
+
+// C04 is the IERS reference series, so finals values only fill in after it ends.
+fn c04_end() -> f64 {
+    match celestial_eop_data::c04_data().last() {
+        Some(entry) => entry.mjd,
+        None => f64::NEG_INFINITY,
+    }
+}
+
+pub(super) fn after_c04(records: Vec<EopRecord>) -> Vec<EopRecord> {
+    let c04_end = c04_end();
+    records.into_iter().filter(|r| r.mjd > c04_end).collect()
 }
 
 pub fn bundled_time_span() -> (f64, f64) {
@@ -42,22 +52,28 @@ fn convert_entry(
     entry: &celestial_eop_data::EopEntry,
     source: EopSource,
 ) -> CoordResult<EopRecord> {
-    let mut record = EopRecord::new(entry.mjd, entry.x_p, entry.y_p, entry.ut1_utc, entry.lod)?;
-
-    let has_cip = entry.dx != 0.0 || entry.dy != 0.0;
-    if has_cip {
-        record = record.with_cip_offsets(entry.dx, entry.dy)?;
-    }
-
+    let record = record_with_present_columns(entry)?;
     let flags = EopFlags {
         source,
         quality: EopQuality::HighPrecision,
         has_polar_motion: true,
         has_ut1_utc: true,
-        has_cip_offsets: has_cip,
+        has_cip_offsets: record.dx_encoded.is_some(),
         has_pole_rates: false,
     };
-    record = record.with_flags(flags);
+    Ok(record.with_flags(flags))
+}
+
+// The bundled data stores a blank column as zero, so a zero reads as absent. C04 also
+// holds zero dX and dY through 1983.
+fn record_with_present_columns(entry: &celestial_eop_data::EopEntry) -> CoordResult<EopRecord> {
+    let mut record = EopRecord::new(entry.mjd, entry.x_p, entry.y_p, entry.ut1_utc)?;
+    if entry.lod != 0.0 {
+        record = record.with_lod(entry.lod)?;
+    }
+    if entry.dx != 0.0 || entry.dy != 0.0 {
+        record = record.with_cip_offsets(entry.dx, entry.dy)?;
+    }
     Ok(record)
 }
 
@@ -109,10 +125,10 @@ mod tests {
         let records = load_bundled_c04().unwrap();
         for record in records.iter().take(100) {
             let params = record.to_parameters();
-            assert!(params.x_p.abs() < 1.0);
-            assert!(params.y_p.abs() < 1.0);
-            assert!(params.ut1_utc.abs() < 1.0);
-            assert!(params.lod.abs() < 0.01);
+            assert!(libm::fabs(params.x_p) < 1.0);
+            assert!(libm::fabs(params.y_p) < 1.0);
+            assert!(libm::fabs(params.ut1_utc) < 1.0);
+            assert!(params.lod.is_some_and(|lod| libm::fabs(lod) < 0.01));
         }
     }
 }

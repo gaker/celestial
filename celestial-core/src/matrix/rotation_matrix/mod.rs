@@ -160,6 +160,7 @@ impl RotationMatrix3 {
     /// let result = m.apply_to_vector(v);
     /// assert_eq!(result, v);
     /// ```
+    #[inline]
     pub fn identity() -> Self {
         Self {
             elements: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
@@ -170,6 +171,7 @@ impl RotationMatrix3 {
     ///
     /// Useful when you need direct access to all elements, for example when
     /// passing to external APIs or serialization.
+    #[inline]
     pub fn elements(&self) -> &[[f64; 3]; 3] {
         &self.elements
     }

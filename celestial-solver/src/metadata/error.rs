@@ -61,7 +61,7 @@ pub enum MetadataError {
 
     /// The computed position is invalid (out-of-range declination, non-finite value).
     #[error("invalid position: {0}")]
-    InvalidPosition(#[from] celestial_coords::CoordError),
+    InvalidPosition(#[from] celestial_coords::errors::CoordError),
 
     #[error("invalid observation time: {0}")]
     InvalidTime(#[from] celestial_time::TimeError),
@@ -139,7 +139,8 @@ mod tests {
 
     #[test]
     fn coord_error_converts_via_from_impl() {
-        let coord_err = celestial_coords::ICRSPosition::from_degrees(f64::NAN, 0.0).unwrap_err();
+        let coord_err =
+            celestial_coords::frames::icrs::ICRSPosition::from_degrees(f64::NAN, 0.0).unwrap_err();
         let err: MetadataError = coord_err.into();
         assert!(matches!(err, MetadataError::InvalidPosition(_)));
     }

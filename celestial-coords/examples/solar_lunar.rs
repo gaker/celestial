@@ -1,6 +1,5 @@
-use celestial_coords::frames::{
-    HeliographicCarrington, HeliographicStonyhurst, SelenographicPosition,
-};
+use celestial_coords::frames::heliographic::HeliographicStonyhurst;
+use celestial_coords::frames::selenographic::SelenographicPosition;
 use celestial_coords::lunar::compute_lunar_orientation;
 use celestial_coords::solar::{
     carrington_rotation_number, compute_solar_orientation, sun_earth_distance,
@@ -9,7 +8,7 @@ use celestial_time::scales::tt::tt_from_calendar;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // --- Solar orientation ---
-    // B0: heliographic latitude of the sub-solar point (disk center tilt)
+    // B0: heliographic latitude of the disk center (the sub-Earth point)
     // L0: Carrington longitude of central meridian
     // P:  position angle of the solar rotation axis
 
@@ -23,8 +22,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ("Vernal equinox 2024", &equinox),
     ] {
         let orient = compute_solar_orientation(epoch)?;
-        let dist = sun_earth_distance(epoch);
-        let cr = carrington_rotation_number(epoch);
+        let dist = sun_earth_distance(epoch)?;
+        let cr = carrington_rotation_number(epoch)?;
 
         println!("{label}:");
         println!(
@@ -40,7 +39,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             orient.p.degrees()
         );
         println!("  Sun-Earth = {:.6} AU", dist);
-        println!("  Carrington rotation #{cr}\n");
+        println!("  Carrington rotation {cr:.4}\n");
     }
 
     // --- Heliographic coordinates ---
@@ -53,7 +52,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let spot_stonyhurst = HeliographicStonyhurst::from_degrees(15.0, -10.0)?;
     let spot_carrington = spot_stonyhurst.to_carrington(&solstice)?;
 
-    println!("Sunspot at Stonyhurst (15°N, 10°W):");
+    println!("Sunspot at Stonyhurst (15°N, 10°E):");
     println!(
         "  Stonyhurst: lat = {:.1}°, lon = {:.1}°",
         spot_stonyhurst.latitude().degrees(),
@@ -65,7 +64,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         spot_carrington.longitude().degrees()
     );
 
-    // Roundtrip
     let back = spot_carrington.to_stonyhurst(&solstice)?;
     println!(
         "  Roundtrip:  lat = {:.1}°, lon = {:.1}°\n",
@@ -82,8 +80,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         center.longitude().degrees()
     );
 
-    // Carrington rotation number (fractional)
-    let cr = HeliographicCarrington::carrington_rotation_number(&solstice);
+    let cr = carrington_rotation_number(&solstice)?;
     println!("Carrington rotation number: {:.3}", cr);
     println!("  (integer part = rotation count, fraction = phase within rotation)\n");
 
@@ -141,7 +138,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     println!(
         "  Visible from Earth? {}\n",
-        apollo11.is_visible_from_earth(&solstice)
+        apollo11.is_visible_from_earth(&solstice)?
     );
 
     // Tycho crater
@@ -154,7 +151,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     println!(
         "  Visible from Earth? {}\n",
-        tycho.is_visible_from_earth(&solstice)
+        tycho.is_visible_from_earth(&solstice)?
     );
 
     // South Pole-Aitken Basin (far side)
@@ -167,10 +164,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     println!(
         "  Visible from Earth? {}\n",
-        spa.is_visible_from_earth(&solstice)
+        spa.is_visible_from_earth(&solstice)?
     );
 
-    // Sub-Earth point
     let sub_earth = SelenographicPosition::sub_earth_point(&solstice)?;
     println!("Sub-Earth point at solstice:");
     println!(
@@ -179,14 +175,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         sub_earth.longitude().degrees()
     );
 
-    // Angular separation between Apollo 11 and Tycho
     let sep = apollo11.angular_separation(&tycho);
     println!(
         "\nApollo 11 ↔ Tycho = {:.2}° on lunar surface",
         sep.degrees()
     );
 
-    // Reference points
     let nearside = SelenographicPosition::nearside_center();
     let farside = SelenographicPosition::farside_center();
     println!(

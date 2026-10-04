@@ -1,4 +1,4 @@
-use celestial_coords::ICRSPosition;
+use celestial_coords::frames::icrs::ICRSPosition;
 use celestial_images::formats::Image;
 use celestial_time::julian::JulianDate;
 
@@ -19,7 +19,7 @@ use super::time::jd_from_image;
 ///
 /// ```rust,ignore
 /// use celestial_solver::metadata::ImageMetadata;
-/// use celestial_coords::ICRSPosition;
+/// use celestial_coords::frames::icrs::ICRSPosition;
 /// use celestial_time::scales::utc::utc_from_calendar;
 ///
 /// let meta = ImageMetadata {

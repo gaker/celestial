@@ -35,7 +35,7 @@ let results = cone_search(&catalog, &ConeSearchParams {
     max_mag: Some(12.0),
     max_results: Some(100),
     epoch: None,
-});
+}).unwrap();
 
 for r in &results {
     println!("{} mag={:.2} dist={:.4}°", r.star.source_id, r.star.mag, r.distance_deg);

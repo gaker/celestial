@@ -1,4 +1,4 @@
-use crate::transforms::CartesianFrame;
+use crate::transforms::cartesian::CartesianFrame;
 use celestial_core::constants::{VSOP2013_OBLIQUITY_RAD, VSOP2013_PHI_RAD};
 use celestial_core::matrix::Vector3;
 
@@ -34,8 +34,8 @@ impl CartesianFrame for EclipticCartesian {
         let z1 = self.y * sin_eps + self.z * cos_eps;
 
         Vector3::new(
-            self.x * cos_phi + y1 * sin_phi,
-            -self.x * sin_phi + y1 * cos_phi,
+            self.x * cos_phi - y1 * sin_phi,
+            self.x * sin_phi + y1 * cos_phi,
             z1,
         )
     }
@@ -46,8 +46,8 @@ impl CartesianFrame for EclipticCartesian {
         let (sin_eps, cos_eps) = libm::sincos(eps);
         let (sin_phi, cos_phi) = libm::sincos(phi);
 
-        let x1 = icrs.x * cos_phi - icrs.y * sin_phi;
-        let y1 = icrs.x * sin_phi + icrs.y * cos_phi;
+        let x1 = icrs.x * cos_phi + icrs.y * sin_phi;
+        let y1 = icrs.y * cos_phi - icrs.x * sin_phi;
 
         Self {
             x: x1,
@@ -64,13 +64,7 @@ mod tests {
     #[test]
     fn test_roundtrip() {
         let ecl = EclipticCartesian::new(-9.8753625435, -27.9588613710, 5.8504463318);
-        let icrs = ecl.to_icrs();
-        let back = EclipticCartesian::from_icrs(&icrs);
-
-        let tol = 1e-14;
-        assert!((ecl.x - back.x).abs() < tol, "X roundtrip error");
-        assert!((ecl.y - back.y).abs() < tol, "Y roundtrip error");
-        assert!((ecl.z - back.z).abs() < tol, "Z roundtrip error");
+        assert_eq!(EclipticCartesian::from_icrs(&ecl.to_icrs()), ecl);
     }
 
     #[test]
@@ -84,15 +78,24 @@ mod tests {
     }
 
     #[test]
-    fn test_ecliptic_x_axis() {
-        let ecl = EclipticCartesian::new(1.0, 0.0, 0.0);
-        let icrs = ecl.to_icrs();
+    fn test_axes_follow_vsop2013_equation_3() {
+        // VSOP2013 eq. (3): ecliptic = R1(eps) R3(phi) ICRS. These are the rows of that matrix.
+        let (se, ce) = libm::sincos(VSOP2013_OBLIQUITY_RAD);
+        let (sp, cp) = libm::sincos(VSOP2013_PHI_RAD);
+        let rows = [
+            [cp, sp, 0.0],
+            [-sp * ce, cp * ce, se],
+            [sp * se, -cp * se, ce],
+        ];
+        let axes = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
+        for (i, [x, y, z]) in axes.into_iter().enumerate() {
+            let row = rows[i];
+            let ecl = EclipticCartesian::new(x, y, z);
+            assert_eq!(ecl.to_icrs(), Vector3::new(row[0], row[1], row[2]), "{i}");
 
-        assert!(
-            (icrs.x - 1.0).abs() < 1e-10,
-            "X-axis X component should be ~1"
-        );
-        assert!(icrs.y.abs() < 1e-6, "X-axis Y component should be ~0");
-        assert!(icrs.z.abs() < 1e-10, "X-axis Z component should be ~0");
+            let column = EclipticCartesian::new(rows[0][i], rows[1][i], rows[2][i]);
+            let icrs = Vector3::new(x, y, z);
+            assert_eq!(EclipticCartesian::from_icrs(&icrs), column, "{i}");
+        }
     }
 }

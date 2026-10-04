@@ -5,7 +5,7 @@
 
 use anyhow::{ensure, Result};
 use celestial_catalog::query::Catalog;
-use celestial_coords::ICRSPosition;
+use celestial_coords::frames::icrs::ICRSPosition;
 use celestial_core::{angle::Angle, math::angular_separation};
 use celestial_time::julian::JulianDate;
 
@@ -185,7 +185,7 @@ impl<'a> Solver<'a> {
     /// # Examples
     ///
     /// ```rust,ignore
-    /// use celestial_coords::ICRSPosition;
+    /// use celestial_coords::frames::icrs::ICRSPosition;
     ///
     /// # let img = celestial_images::formats::Image::open("f.fits")?;
     /// # let catalog = celestial_catalog::query::Catalog::open("cat.bin")?;
@@ -293,7 +293,7 @@ impl<'a> Solver<'a> {
     ///
     /// ```rust,ignore
     /// use celestial_solver::metadata::ImageMetadata;
-    /// use celestial_coords::ICRSPosition;
+    /// use celestial_coords::frames::icrs::ICRSPosition;
     /// use celestial_time::scales::utc::utc_from_calendar;
     ///
     /// # let img = celestial_images::formats::Image::open("frame.png")?;

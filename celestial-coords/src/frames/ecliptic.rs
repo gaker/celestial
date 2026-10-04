@@ -1,5 +1,10 @@
-use crate::{transforms::CoordinateFrame, CoordResult, Distance, ICRSPosition};
-use celestial_core::{angle::Angle, matrix::RotationMatrix3};
+use super::direction::spherical_angles;
+use crate::distance::Distance;
+use crate::errors::CoordResult;
+use crate::frames::icrs::ICRSPosition;
+use crate::transforms::CoordinateFrame;
+use celestial_core::angle::Angle;
+use celestial_core::matrix::{RotationMatrix3, Vector3};
 use celestial_time::scales::tt::TT;
 use celestial_time::transforms::precession::PrecessionCalculator;
 
@@ -76,12 +81,7 @@ impl EclipticPosition {
     pub fn true_obliquity(&self) -> CoordResult<Angle> {
         use celestial_time::transforms::nutation::NutationCalculator;
 
-        let nutation =
-            self.epoch
-                .nutation_iau2006a()
-                .map_err(|e| crate::CoordError::CoreError {
-                    message: format!("Nutation calculation failed: {}", e),
-                })?;
+        let nutation = self.epoch.nutation_iau2006a()?;
 
         let true_obliquity = self.mean_obliquity()?.radians() + nutation.nutation_obliquity();
 
@@ -173,7 +173,7 @@ impl EclipticPosition {
     }
 }
 
-fn ecm06_matrix(epoch: &TT) -> CoordResult<RotationMatrix3> {
+pub(crate) fn ecm06_matrix(epoch: &TT) -> CoordResult<RotationMatrix3> {
     let precession = epoch.precession()?;
     let bias_precession_matrix = precession.bias_precession_matrix;
 
@@ -187,96 +187,23 @@ fn ecm06_matrix(epoch: &TT) -> CoordResult<RotationMatrix3> {
 }
 
 impl CoordinateFrame for EclipticPosition {
-    fn to_icrs(&self, epoch: &TT) -> CoordResult<ICRSPosition> {
-        let lambda = self.lambda.radians();
-        let beta = self.beta.radians();
-
-        let (sin_beta, cos_beta) = libm::sincos(beta);
-        let (sin_lambda, cos_lambda) = libm::sincos(lambda);
-
-        let ecliptic_cartesian = [cos_beta * cos_lambda, cos_beta * sin_lambda, sin_beta];
-
-        let icrs_to_ecliptic_matrix = ecm06_matrix(epoch)?;
-        let icrs_cartesian = icrs_to_ecliptic_matrix
-            .transpose()
-            .apply_to_vector(ecliptic_cartesian);
-
-        let x = icrs_cartesian[0];
-        let y = icrs_cartesian[1];
-        let z = icrs_cartesian[2];
-
-        let rxy2 = x * x + y * y;
-        let ra = if rxy2 == 0.0 { 0.0 } else { libm::atan2(y, x) };
-        let dec = if z == 0.0 {
-            0.0
-        } else {
-            libm::atan2(z, libm::sqrt(rxy2))
-        };
-
-        let d2pi = celestial_core::constants::TWOPI;
-        let mut ra_normalized = ra % d2pi;
-        if ra_normalized < 0.0 {
-            ra_normalized += d2pi;
-        }
-
-        let dpi = celestial_core::constants::PI;
-        let mut dec_normalized = dec % d2pi;
-        if dec_normalized.abs() >= dpi {
-            dec_normalized -= libm::copysign(d2pi, dec);
-        }
-
-        let mut icrs = ICRSPosition::new(
-            Angle::from_radians(ra_normalized),
-            Angle::from_radians(dec_normalized),
-        )?;
-
+    fn to_icrs(&self, _epoch: &TT) -> CoordResult<ICRSPosition> {
+        let ecliptic = Vector3::from_spherical(self.lambda.radians(), self.beta.radians());
+        let (ra, dec) = spherical_angles(ecm06_matrix(&self.epoch)?.transpose() * ecliptic)?;
+        let mut icrs = ICRSPosition::new(ra, dec)?;
         if let Some(distance) = self.distance {
             icrs.set_distance(distance);
         }
-
         Ok(icrs)
     }
 
     fn from_icrs(icrs: &ICRSPosition, epoch: &TT) -> CoordResult<Self> {
-        let ra = icrs.ra().radians();
-        let dec = icrs.dec().radians();
-
-        let (sin_dec, cos_dec) = libm::sincos(dec);
-        let (sin_ra, cos_ra) = libm::sincos(ra);
-
-        let icrs_cartesian = [cos_dec * cos_ra, cos_dec * sin_ra, sin_dec];
-
-        let icrs_to_ecliptic_matrix = ecm06_matrix(epoch)?;
-        let ecliptic_cartesian = icrs_to_ecliptic_matrix.apply_to_vector(icrs_cartesian);
-
-        let x = ecliptic_cartesian[0];
-        let y = ecliptic_cartesian[1];
-        let z = ecliptic_cartesian[2];
-
-        let rxy2 = x * x + y * y;
-        let lambda = if rxy2 != 0.0 { libm::atan2(y, x) } else { 0.0 };
-        let beta = if rxy2 != 0.0 || z != 0.0 {
-            libm::atan2(z, libm::sqrt(rxy2))
-        } else {
-            0.0
-        };
-
-        let d2pi = celestial_core::constants::TWOPI;
-        let mut lambda_normalized = lambda % d2pi;
-        if lambda_normalized < 0.0 {
-            lambda_normalized += d2pi;
-        }
-
-        let mut ecliptic = Self::new(
-            Angle::from_radians(lambda_normalized),
-            Angle::from_radians(beta),
-            *epoch,
-        )?;
-
+        let direction = Vector3::from_spherical(icrs.ra().radians(), icrs.dec().radians());
+        let (lambda, beta) = spherical_angles(ecm06_matrix(epoch)? * direction)?;
+        let mut ecliptic = Self::new(lambda, beta, *epoch)?;
         if let Some(distance) = icrs.distance() {
             ecliptic.set_distance(distance);
         }
-
         Ok(ecliptic)
     }
 }
@@ -302,24 +229,19 @@ impl std::fmt::Display for EclipticPosition {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::Distance;
+    use crate::distance::Distance;
 
-    // ERFA reference values, pasted verbatim from the C library output for
-    // direct comparison. Clippy flags the trailing digits beyond f64 precision
-    // as "excessive precision", but these are the literal byte-for-byte ERFA
-    // outputs — we want them in the source so a future change is obviously a
-    // regression against ERFA, not a precision-tweak. The f64 parser rounds the
-    // trailing digits identically each time, so assert_eq! is stable.
-    #[allow(clippy::excessive_precision)]
+    // Expected values are ERFA's (eraObl06, eraEcm06, eraEceq06).
     mod erfa_reference {
         use super::*;
+        use celestial_core::constants::{HALF_PI, PI};
 
         #[test]
         fn test_obliquity_at_j2000() {
             let epoch = TT::j2000();
             let pos = EclipticPosition::from_degrees(0.0, 0.0, epoch).unwrap();
             let mean_obliquity = pos.mean_obliquity().unwrap();
-            assert_eq!(mean_obliquity.radians(), 4.09092600600582889658e-01);
+            assert_eq!(mean_obliquity.radians(), 0.4090926006005829);
         }
 
         #[test]
@@ -328,15 +250,15 @@ mod tests {
             let matrix = ecm06_matrix(&epoch).unwrap();
             let m = matrix.elements();
 
-            assert_eq!(m[0][0], 9.99999999999994115818e-01);
-            assert_eq!(m[0][1], -7.07836896097155612759e-08);
-            assert_eq!(m[0][2], 8.05621397761318608390e-08);
-            assert_eq!(m[1][0], 3.28970040774196464850e-08);
-            assert_eq!(m[1][1], 9.17482129914958366435e-01);
-            assert_eq!(m[1][2], 3.97776999444047929533e-01);
-            assert_eq!(m[2][0], -1.02070447254843554005e-07);
-            assert_eq!(m[2][1], -3.97776999444043044551e-01);
-            assert_eq!(m[2][2], 9.17482129914955590877e-01);
+            assert_eq!(m[0][0], 0.9999999999999941);
+            assert_eq!(m[0][1], -7.078368960971556e-8);
+            assert_eq!(m[0][2], 8.056213977613186e-8);
+            assert_eq!(m[1][0], 3.2897004077419646e-8);
+            assert_eq!(m[1][1], 0.9174821299149584);
+            assert_eq!(m[1][2], 0.39777699944404793);
+            assert_eq!(m[2][0], -1.0207044725484355e-7);
+            assert_eq!(m[2][1], -0.39777699944404304);
+            assert_eq!(m[2][2], 0.9174821299149556);
         }
 
         #[test]
@@ -345,8 +267,8 @@ mod tests {
             let north_pole = EclipticPosition::north_ecliptic_pole(epoch);
             let icrs = north_pole.to_icrs(&epoch).unwrap();
 
-            assert_eq!(icrs.ra().radians(), 4.71238872378250484019e+00);
-            assert_eq!(icrs.dec().radians(), 1.16170369313486876450e+00);
+            assert_eq!(icrs.ra().radians(), 4.712388723782505);
+            assert_eq!(icrs.dec().radians(), 1.1617036931348688);
         }
 
         #[test]
@@ -355,63 +277,76 @@ mod tests {
             let south_pole = EclipticPosition::south_ecliptic_pole(epoch);
             let icrs = south_pole.to_icrs(&epoch).unwrap();
 
-            assert_eq!(icrs.ra().radians(), 1.57079607019271128010e+00);
-            assert_eq!(icrs.dec().radians(), -1.16170369313486876450e+00);
+            assert_eq!(icrs.ra().radians(), 1.5707960701927113);
+            assert_eq!(icrs.dec().radians(), -1.1617036931348688);
         }
 
+        // eraEceq06 then eraEqec06 at J2000: (lambda, beta) in degrees, the ICRS place
+        // (ra, dec) and the ecliptic place recovered from it, in radians.
+        const ROUND_TRIPS: [(f64, f64, [f64; 2], [f64; 2]); 8] = [
+            (
+                123.456789,
+                45.678901,
+                [2.565485497265132, 1.0935584854954725],
+                [2.1547274519899178, 0.7972472211425305],
+            ),
+            (
+                267.314159,
+                -23.271828,
+                [4.649606254950768, -0.8146774167786783],
+                [4.6655122117496335, -0.4061700215578071],
+            ),
+            (
+                45.123456,
+                67.890123,
+                [5.846910916176382, 1.2734169633587697],
+                [0.7875528770787902, 1.1849061759339308],
+            ),
+            (
+                90.0,
+                0.0,
+                [1.5707962909391529, 0.40909263366001886],
+                [HALF_PI, 0.0],
+            ),
+            (
+                180.0,
+                0.0,
+                [3.1415925828061035, -8.056213972741833e-8],
+                [PI, 9.248752751069707e-18],
+            ),
+            (
+                270.0,
+                0.0,
+                [4.7123889445289455, -0.40909263366001886],
+                [4.712388980384689, 0.0],
+            ),
+            // The equinox comes back just below 2 pi, not at 0.
+            (
+                0.0,
+                0.0,
+                [6.283185236395896, 8.056213977613197e-8],
+                [6.283185307179585, 2.608072413413319e-16],
+            ),
+            (
+                0.0,
+                90.0,
+                [4.712388723782505, 1.1617036931348688],
+                [5.423206103920281, HALF_PI],
+            ),
+        ];
+
         #[test]
-        fn test_roundtrip_decimal_coords() {
+        fn test_round_trips() {
             let epoch = TT::j2000();
-
-            // (123.456789°, 45.678901°)
-            let original = EclipticPosition::from_degrees(123.456789, 45.678901, epoch).unwrap();
-            let icrs = original.to_icrs(&epoch).unwrap();
-            let roundtrip = EclipticPosition::from_icrs(&icrs, &epoch).unwrap();
-
-            assert_eq!(
-                original.lambda().radians(),
-                roundtrip.lambda().radians(),
-                "Lambda mismatch: orig={}, round={}",
-                original.lambda().degrees(),
-                roundtrip.lambda().degrees()
-            );
-        }
-
-        #[test]
-        fn test_roundtrip_negative_beta() {
-            let epoch = TT::j2000();
-
-            // (267.314159°, -23.271828°) roundtrip: ERFA shows lambda diff = 0 exactly
-            let original = EclipticPosition::from_degrees(267.314159, -23.271828, epoch).unwrap();
-            let icrs = original.to_icrs(&epoch).unwrap();
-            let roundtrip = EclipticPosition::from_icrs(&icrs, &epoch).unwrap();
-
-            assert_eq!(
-                original.lambda().radians(),
-                roundtrip.lambda().radians(),
-                "Lambda mismatch: orig={}, round={}",
-                original.lambda().degrees(),
-                roundtrip.lambda().degrees()
-            );
-        }
-
-        #[test]
-        fn test_roundtrip_high_latitude() {
-            let epoch = TT::j2000();
-
-            // (45.123456°, 67.890123°) roundtrip
-            let original = EclipticPosition::from_degrees(45.123456, 67.890123, epoch).unwrap();
-            let icrs = original.to_icrs(&epoch).unwrap();
-            let roundtrip = EclipticPosition::from_icrs(&icrs, &epoch).unwrap();
-
-            // ERFA shows lambda diff = -1.11e-16 rad which wraps to 0
-            // Our implementation should also produce 0 or very close
-            let lambda_diff = (original.lambda().radians() - roundtrip.lambda().radians()).abs();
-            assert!(
-                lambda_diff < 1e-14,
-                "Lambda diff too large: {} rad",
-                lambda_diff
-            );
+            for (lambda, beta, icrs, back) in ROUND_TRIPS {
+                let original = EclipticPosition::from_degrees(lambda, beta, epoch).unwrap();
+                let place = original.to_icrs(&epoch).unwrap();
+                let radians = [place.ra().radians(), place.dec().radians()];
+                assert_eq!(radians, icrs, "({lambda}, {beta})");
+                let recovered = EclipticPosition::from_icrs(&place, &epoch).unwrap();
+                let radians = [recovered.lambda().radians(), recovered.beta().radians()];
+                assert_eq!(radians, back, "({lambda}, {beta})");
+            }
         }
     }
 
@@ -518,53 +453,6 @@ mod tests {
 
         let sep_self = vernal.angular_separation(&vernal);
         assert_eq!(sep_self.degrees(), 0.0);
-    }
-
-    #[test]
-    fn test_coordinate_transformations_roundtrip() {
-        let epoch = TT::j2000();
-
-        // Test roundtrip coordinate transformations
-        // Lambda diff can be ~1e-15 rad due to numerical paths, but angular separation is ~0
-        let test_cases = [(90.0, 0.0), (180.0, 0.0), (270.0, 0.0)];
-
-        for (lambda_deg, beta_deg) in test_cases {
-            let original = EclipticPosition::from_degrees(lambda_deg, beta_deg, epoch).unwrap();
-
-            let icrs = original.to_icrs(&epoch).unwrap();
-            let roundtrip = EclipticPosition::from_icrs(&icrs, &epoch).unwrap();
-
-            // Verify angular separation is essentially zero
-            // Accounts for ~1e-15 rad lambda drift and ~1e-16 rad beta drift
-            let separation = original.angular_separation(&roundtrip);
-            assert!(
-                separation.radians() < 1e-14,
-                "Separation too large for ({}, {}): {} rad",
-                lambda_deg,
-                beta_deg,
-                separation.radians()
-            );
-        }
-    }
-
-    #[test]
-    fn test_coordinate_transformations_roundtrip_zero_boundary() {
-        // The 0/360 boundary: lambda 0° can become 6.28... due to atan2 returning near-2π
-        // ERFA shows same behavior: lambda roundtrip from 0° goes through RA ~360° back to λ ~360°
-        let epoch = TT::j2000();
-
-        let original = EclipticPosition::from_degrees(0.0, 0.0, epoch).unwrap();
-        let icrs = original.to_icrs(&epoch).unwrap();
-        let roundtrip = EclipticPosition::from_icrs(&icrs, &epoch).unwrap();
-
-        // Angular separation should be essentially zero even if lambda differs by ~2π
-        // ERFA shows wrapped lambda diff = 0
-        let separation = original.angular_separation(&roundtrip);
-        assert!(
-            separation.radians() < 1e-14,
-            "Angular separation too large: {} rad",
-            separation.radians()
-        );
     }
 
     #[test]
@@ -681,24 +569,15 @@ mod tests {
 
     #[test]
     fn test_pole_singularity_different_longitudes() {
-        // At the poles, longitude is mathematically undefined (singularity).
-        // Two points at beta=90° with different lambda values represent the same point.
-        // Due to cos(90°) ≈ 6e-17 (not exactly 0), Vincenty formula returns tiny non-zero.
-        // This test documents this known floating-point limitation.
+        // The cosine of the double nearest pi/2 is 6.1e-17, not 0, so two poles with different
+        // longitudes sit a hair apart; eraSeps gives the same.
         let epoch = TT::j2000();
 
         let north_pole = EclipticPosition::north_ecliptic_pole(epoch);
         let same_pole_diff_lon = EclipticPosition::from_degrees(123.456, 90.0, epoch).unwrap();
 
         let separation = north_pole.angular_separation(&same_pole_diff_lon);
-
-        // The separation should be essentially zero (within floating-point noise)
-        // cos(π/2) ≈ 6.12e-17, which propagates through Vincenty formula
-        assert!(
-            separation.degrees() < 1e-12,
-            "Pole singularity: expected ~0, got {} degrees",
-            separation.degrees()
-        );
+        assert_eq!(separation.radians(), 1.0785573740246409e-16);
     }
 
     #[test]
@@ -756,5 +635,16 @@ mod tests {
 
         let neg_85_deg = EclipticPosition::from_degrees(0.0, -85.01, epoch).unwrap();
         assert!(neg_85_deg.is_near_ecliptic_pole());
+    }
+
+    #[test]
+    fn test_nutation_failure_is_an_epoch_error() {
+        let epoch = TT::from_julian_date(celestial_time::julian::JulianDate::new(f64::NAN, 0.0));
+        let pos = EclipticPosition::new(Angle::ZERO, Angle::ZERO, epoch).unwrap();
+        let result = pos.true_obliquity();
+        assert!(
+            matches!(result, Err(crate::errors::CoordError::EpochError(_))),
+            "{result:?}"
+        );
     }
 }

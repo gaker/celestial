@@ -1,9 +1,8 @@
 pub mod cartesian;
 
-use crate::{frames::ICRSPosition, CoordResult};
+use crate::errors::CoordResult;
+use crate::frames::icrs::ICRSPosition;
 use celestial_time::scales::tt::TT;
-
-pub use cartesian::CartesianFrame;
 
 pub trait CoordinateFrame: Sized {
     fn to_icrs(&self, epoch: &TT) -> CoordResult<ICRSPosition>;

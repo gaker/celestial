@@ -1,7 +1,12 @@
+use celestial_coords::distance::Distance;
 use celestial_coords::eop::record::EopRecord;
-use celestial_coords::frames::{CIRSPosition, ICRSPosition};
+use celestial_coords::eop::EopProvider;
+use celestial_coords::frames::cirs::CIRSPosition;
+use celestial_coords::frames::icrs::ICRSPosition;
+use celestial_coords::frames::topocentric::refraction::Refraction;
 use celestial_coords::transforms::CoordinateFrame;
-use celestial_coords::{Distance, EopProvider, Location};
+use celestial_core::constants::MJD_ZERO_POINT;
+use celestial_core::location::Location;
 use celestial_time::scales::conversions::{ToTAI, ToUTC};
 use celestial_time::scales::tt::tt_from_calendar;
 
@@ -25,11 +30,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Realistic EOP data around this date
     let eop_records = vec![
-        EopRecord::new(60108.0, 0.183, 0.343, -0.0298, 0.00071)?.with_cip_offsets(0.198, -0.102)?,
-        EopRecord::new(60109.0, 0.184, 0.341, -0.0305, 0.00073)?.with_cip_offsets(0.201, -0.105)?,
-        EopRecord::new(60110.0, 0.185, 0.339, -0.0312, 0.00075)?.with_cip_offsets(0.204, -0.108)?,
-        EopRecord::new(60111.0, 0.186, 0.337, -0.0319, 0.00077)?.with_cip_offsets(0.207, -0.111)?,
-        EopRecord::new(60112.0, 0.187, 0.335, -0.0326, 0.00079)?.with_cip_offsets(0.210, -0.114)?,
+        EopRecord::new(60108.0, 0.183, 0.343, -0.0298)?.with_cip_offsets(0.198, -0.102)?,
+        EopRecord::new(60109.0, 0.184, 0.341, -0.0305)?.with_cip_offsets(0.201, -0.105)?,
+        EopRecord::new(60110.0, 0.185, 0.339, -0.0312)?.with_cip_offsets(0.204, -0.108)?,
+        EopRecord::new(60111.0, 0.186, 0.337, -0.0319)?.with_cip_offsets(0.207, -0.111)?,
+        EopRecord::new(60112.0, 0.187, 0.335, -0.0326)?.with_cip_offsets(0.210, -0.114)?,
     ];
 
     let provider = EopProvider::from_records(eop_records)?;
@@ -52,13 +57,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         cirs.dec().degrees()
     );
 
-    // CIRS → Hour Angle / Declination
-    let mjd = tt.to_julian_date().to_f64() - 2400000.5;
-    let mut eop = provider.get(mjd)?;
-    eop.compute_s_prime();
-    let delta_t = eop.ut1_utc; // UT1-UTC in seconds
+    // CIRS → Hour Angle / Declination. EOP tables are indexed by UTC MJD.
+    let utc_jd = utc.to_julian_date();
+    let eop = provider.get((utc_jd.jd1() - MJD_ZERO_POINT) + utc_jd.jd2())?;
 
-    let ha_pos = cirs.to_hour_angle(&observer, -delta_t)?;
+    let ha_pos = cirs.to_hour_angle(&observer, &eop)?;
     println!(
         "HA/Dec: HA = {:.5}h  Dec = {:+.5}°",
         ha_pos.hour_angle().hours(),
@@ -75,7 +78,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("       Air mass = {:.3}", topo.air_mass());
 
     // Atmospheric refraction at standard conditions
-    let refraction = topo.atmospheric_refraction(1013.25, 15.0, 0.3, 0.55);
+    let refraction = topo.atmospheric_refraction(&Refraction::new(1013.25, 15.0, 0.3, 0.55)?);
     println!("       Refraction = {:.2}\"", refraction.degrees() * 3600.0);
     println!();
 
@@ -85,7 +88,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let tirs = cirs.to_tirs(&eop)?;
     println!("TIRS:  ({:.9}, {:.9}, {:.9})", tirs.x(), tirs.y(), tirs.z());
 
-    let itrs = tirs.to_itrs(&tt, &eop)?;
+    let itrs = tirs.to_itrs(&eop)?;
     println!("ITRS:  ({:.9}, {:.9}, {:.9})", itrs.x(), itrs.y(), itrs.z());
     println!();
 
@@ -110,7 +113,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     let cirs = CIRSPosition::from_icrs(&sirius, &tt)?;
-    let ha_pos = cirs.to_hour_angle(&observer, -delta_t)?;
+    let ha_pos = cirs.to_hour_angle(&observer, &eop)?;
     let topo = ha_pos.to_topocentric()?;
     println!(
         "ICRS:  RA = {:.5}h  Dec = {:+.5}°",

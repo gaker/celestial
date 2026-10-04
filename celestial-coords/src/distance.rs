@@ -1,8 +1,18 @@
-use crate::{CoordError, CoordResult};
+use crate::errors::{CoordError, CoordResult};
 use celestial_core::angle::Angle;
+use celestial_core::constants::{
+    ARCSEC_PER_RAD, AU_KM, AU_M, DAYS_PER_JULIAN_YEAR, MILLIARCSEC_TO_RAD, SECONDS_PER_DAY_F64,
+    SPEED_OF_LIGHT_M_PER_S,
+};
 
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
+
+// IAU 2015 B2 defines the parsec as 648000/π au. The light year is c times a Julian year.
+const AU_PER_PARSEC: f64 = ARCSEC_PER_RAD;
+const KM_PER_PARSEC: f64 = ARCSEC_PER_RAD * AU_KM;
+const LIGHT_YEAR_M: f64 = SPEED_OF_LIGHT_M_PER_S * SECONDS_PER_DAY_F64 * DAYS_PER_JULIAN_YEAR;
+const LIGHT_YEARS_PER_PARSEC: f64 = ARCSEC_PER_RAD * (AU_M / LIGHT_YEAR_M);
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
@@ -31,34 +41,32 @@ impl Distance {
     /// Creates a Distance from light-years.
     ///
     /// # Valid Range
-    /// Must be positive and finite (0 < ly < ∞)
+    /// Must be positive and finite (0 < ly < ∞), and not so small that it underflows to 0 pc
     pub fn from_light_years(ly: f64) -> CoordResult<Self> {
-        const LY_TO_PC: f64 = 0.3066013937;
-        Self::from_parsecs(ly * LY_TO_PC)
+        Self::from_parsecs(ly / LIGHT_YEARS_PER_PARSEC)
     }
 
     /// Creates a Distance from astronomical units.
     ///
     /// # Valid Range
-    /// Must be positive and finite (0 < au < ∞)
+    /// Must be positive and finite (0 < au < ∞), and not so small that it underflows to 0 pc
     pub fn from_au(au: f64) -> CoordResult<Self> {
-        const AU_TO_PC: f64 = 4.84813681109536e-6;
-        Self::from_parsecs(au * AU_TO_PC)
+        Self::from_parsecs(au / AU_PER_PARSEC)
     }
 
     /// Creates a Distance from kilometers.
     ///
     /// # Valid Range
-    /// Must be positive and finite (0 < km < ∞)
+    /// Must be positive and finite (0 < km < ∞), and not so small that it underflows to 0 pc
     pub fn from_kilometers(km: f64) -> CoordResult<Self> {
-        const KM_TO_PC: f64 = 3.24077929e-14;
-        Self::from_parsecs(km * KM_TO_PC)
+        Self::from_parsecs(km / KM_PER_PARSEC)
     }
 
     /// Creates a Distance from parallax in arcseconds.
     ///
     /// # Valid Range
-    /// Must be positive and finite (0 < parallax_arcsec < ∞)
+    /// Must be positive and finite (0 < parallax_arcsec < ∞), and not so small that the distance
+    /// overflows to ∞ pc
     ///
     /// # Note
     /// Distance (parsecs) = 1 / parallax (arcsec)
@@ -85,19 +93,15 @@ impl Distance {
     }
 
     pub fn light_years(self) -> f64 {
-        const PC_TO_LY: f64 = 3.2615637769;
-        self.parsecs * PC_TO_LY
+        self.parsecs * LIGHT_YEARS_PER_PARSEC
     }
 
     pub fn au(self) -> f64 {
-        const PC_TO_AU: f64 = 206264.806247096;
-        self.parsecs * PC_TO_AU
+        self.parsecs * AU_PER_PARSEC
     }
 
     pub fn kilometers(self) -> f64 {
-        #[allow(clippy::excessive_precision)]
-        const PC_TO_KM: f64 = 3.0856775814913673e13;
-        self.parsecs * PC_TO_KM
+        self.parsecs * KM_PER_PARSEC
     }
 
     pub fn parallax_arcsec(self) -> f64 {
@@ -117,7 +121,7 @@ impl Distance {
     }
 
     pub fn from_distance_modulus(dm: f64) -> CoordResult<Self> {
-        let parsecs = 10.0_f64.powf((dm + 5.0) / 5.0);
+        let parsecs = libm::pow(10.0, (dm + 5.0) / 5.0);
         Self::from_parsecs(parsecs)
     }
 
@@ -135,9 +139,7 @@ impl Distance {
     }
 
     pub fn proper_motion_distance_au(self, pm_mas_per_year: f64, dt_years: f64) -> f64 {
-        let pm_rad_per_year =
-            pm_mas_per_year * 1e-3 * (celestial_core::constants::PI / (180.0 * 3600.0));
-        let angular_distance_rad = pm_rad_per_year * dt_years;
+        let angular_distance_rad = pm_mas_per_year * MILLIARCSEC_TO_RAD * dt_years;
         self.au() * angular_distance_rad
     }
 }
@@ -197,6 +199,7 @@ impl std::fmt::Display for Distance {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::rounded;
 
     #[test]
     fn test_distance_creation() {
@@ -211,24 +214,63 @@ mod tests {
         assert!(Distance::from_parallax_arcsec(0.0).is_err());
     }
 
+    // Expected values are the defining ratios rounded once to f64.
     #[test]
-    fn test_from_light_years() {
-        let d = Distance::from_light_years(1.0).unwrap();
-        assert!((d.parsecs() - 0.3066013937).abs() < 1e-9);
+    fn test_parsec_is_648000_over_pi_au() {
+        assert_eq!(
+            Distance::from_parsecs(1.0).unwrap().au(),
+            206264.80624709636
+        );
+        assert_eq!(
+            Distance::from_au(206264.80624709636).unwrap().parsecs(),
+            1.0
+        );
+    }
+
+    #[test]
+    fn test_light_year_is_c_times_julian_year() {
+        assert_eq!(
+            Distance::from_parsecs(1.0).unwrap().light_years(),
+            3.2615637771674337
+        );
+        assert_eq!(
+            Distance::from_light_years(3.2615637771674337)
+                .unwrap()
+                .parsecs(),
+            1.0
+        );
+        assert_eq!(
+            Distance::from_light_years(1.0).unwrap().parsecs(),
+            0.30660139378555057
+        );
+    }
+
+    #[test]
+    fn test_kilometres_round_trip() {
+        assert_eq!(
+            Distance::from_parsecs(1.0).unwrap().kilometers(),
+            30856775814913.67
+        );
+        assert_eq!(
+            Distance::from_kilometers(30856775814913.67)
+                .unwrap()
+                .parsecs(),
+            1.0
+        );
     }
 
     #[test]
     fn test_parallax_angle() {
         let angle = Angle::from_arcseconds(0.1);
         let d = Distance::from_parallax_angle(angle).unwrap();
-        assert!((d.parsecs() - 10.0).abs() < 1e-12);
+        assert_eq!(d.parsecs(), 10.0);
     }
 
     #[test]
     fn test_parallax_uncertainty_mas() {
         let d = Distance::from_parsecs(100.0).unwrap();
         let unc = d.parallax_uncertainty_mas(0.01);
-        assert!((unc - 0.1).abs() < 1e-6);
+        assert_eq!(unc, 0.1);
     }
 
     #[test]
@@ -239,34 +281,22 @@ mod tests {
     }
 
     #[test]
-    fn test_unit_conversions() {
-        let distance = Distance::from_parsecs(1.0).unwrap();
-
-        #[allow(clippy::excessive_precision)]
-        {
-            assert!((distance.light_years() - 3.261_563_776_9).abs() < 1e-9);
-            assert!((distance.au() - 206264.806_247_096).abs() < 1e-6);
-            assert!((distance.kilometers() - 3.085_677_581_491_367_3e13).abs() < 1e6);
-        }
-    }
-
-    #[test]
     fn test_parallax_calculations() {
         let proxima = Distance::from_parallax_arcsec(0.7687).unwrap();
-        assert!((proxima.parsecs() - 1.3009).abs() < 0.001);
+        assert_eq!(rounded(proxima.parsecs(), 4), 1.3009);
 
         let distance = Distance::from_parallax_milliarcsec(768.7).unwrap();
-        assert!((distance.parsecs() - 1.3009).abs() < 0.001);
+        assert_eq!(distance, proxima);
     }
 
     #[test]
     fn test_distance_modulus() {
         let distance = Distance::from_parsecs(10.0).unwrap();
         let dm = distance.distance_modulus();
-        assert!((dm - 0.0).abs() < 1e-12);
+        assert_eq!(dm, 0.0);
 
         let recovered = Distance::from_distance_modulus(dm).unwrap();
-        assert!((recovered.parsecs() - 10.0).abs() < 1e-12);
+        assert_eq!(recovered.parsecs(), 10.0);
     }
 
     #[test]
@@ -282,12 +312,9 @@ mod tests {
 
     #[test]
     fn test_proper_motion_distance() {
+        // At 1 pc an arcsecond spans 1 au, by the definition of the parsec.
         let distance = Distance::from_parsecs(1.0).unwrap();
-
-        let linear_dist = distance.proper_motion_distance_au(1.0, 1.0);
-
-        assert!(linear_dist > 0.0);
-        assert!(linear_dist < 10.0);
+        assert_eq!(distance.proper_motion_distance_au(1.0, 1.0), 0.001);
     }
 
     #[test]

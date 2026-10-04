@@ -98,7 +98,7 @@ pub fn refine_wcs(
     params: &RefineParams,
 ) -> Result<RefineResult> {
     let (catalog_stars, _mag) =
-        prep_catalog_for_refine(initial, catalog, epoch, params.target_stars);
+        prep_catalog_for_refine(initial, catalog, epoch, params.target_stars)?;
     let mut wcs = initial.clone();
     let mut final_pairs = Vec::new();
     log::debug!(
@@ -141,7 +141,7 @@ fn prep_catalog_for_refine(
     catalog: &Catalog,
     epoch: JulianDate,
     target_stars: usize,
-) -> (Vec<CatalogEntry>, f64) {
+) -> Result<(Vec<CatalogEntry>, f64)> {
     let radius_deg = field_radius_deg(initial);
     let (catalog_stars, mag_limit) = search_optimal_magnitude(
         catalog,
@@ -150,7 +150,7 @@ fn prep_catalog_for_refine(
         radius_deg,
         epoch,
         target_stars,
-    );
+    )?;
     log::debug!(
         "refine_wcs: {} catalog stars to mag {:.2} within {:.3} deg (target {})",
         catalog_stars.len(),
@@ -158,7 +158,7 @@ fn prep_catalog_for_refine(
         radius_deg,
         target_stars,
     );
-    (catalog_stars, mag_limit)
+    Ok((catalog_stars, mag_limit))
 }
 
 enum RefineIterStep {
@@ -373,7 +373,7 @@ pub(crate) fn cone_search_at_mag(
     radius_deg: f64,
     max_mag: f64,
     epoch: JulianDate,
-) -> Vec<CatalogEntry> {
+) -> Result<Vec<CatalogEntry>> {
     let params = ConeSearchParams {
         ra_deg,
         dec_deg,
@@ -382,13 +382,13 @@ pub(crate) fn cone_search_at_mag(
         max_results: None,
         epoch: Some(epoch),
     };
-    cone_search(catalog, &params)
+    Ok(cone_search(catalog, &params)?
         .into_iter()
         .map(|r| CatalogEntry {
             ra_deg: r.ra_deg,
             dec_deg: r.dec_deg,
         })
-        .collect()
+        .collect())
 }
 
 pub(crate) fn search_optimal_magnitude(
@@ -398,14 +398,14 @@ pub(crate) fn search_optimal_magnitude(
     radius_deg: f64,
     epoch: JulianDate,
     target: usize,
-) -> (Vec<CatalogEntry>, f64) {
+) -> Result<(Vec<CatalogEntry>, f64)> {
     let mut lo = 8.0_f64;
     let mut hi = 20.0_f64;
     let max_iters = 8;
 
     for _ in 0..max_iters {
         let mid = (lo + hi) / 2.0;
-        let n = cone_search_at_mag(catalog, ra_deg, dec_deg, radius_deg, mid, epoch).len();
+        let n = cone_search_at_mag(catalog, ra_deg, dec_deg, radius_deg, mid, epoch)?.len();
         log::debug!("  mag search: m={:.2}, {} stars", mid, n);
         if n < target {
             lo = mid;
@@ -418,8 +418,8 @@ pub(crate) fn search_optimal_magnitude(
     }
 
     let mag = hi;
-    let stars = cone_search_at_mag(catalog, ra_deg, dec_deg, radius_deg, mag, epoch);
-    (stars, mag)
+    let stars = cone_search_at_mag(catalog, ra_deg, dec_deg, radius_deg, mag, epoch)?;
+    Ok((stars, mag))
 }
 
 pub(crate) struct MatchResult {
@@ -686,11 +686,11 @@ mod tests {
         let (c, _f) = synth_catalog(stars);
         let epoch = JulianDate::new(2451545.0, 0.0);
 
-        let bright_only = cone_search_at_mag(&c, 0.0, 0.0, 1.0, 10.0, epoch);
+        let bright_only = cone_search_at_mag(&c, 0.0, 0.0, 1.0, 10.0, epoch).unwrap();
         assert_eq!(bright_only.len(), 1);
         assert!((bright_only[0].ra_deg - 0.0).abs() < 1e-6);
 
-        let all = cone_search_at_mag(&c, 0.0, 0.0, 1.0, 20.0, epoch);
+        let all = cone_search_at_mag(&c, 0.0, 0.0, 1.0, 20.0, epoch).unwrap();
         assert_eq!(all.len(), 3);
     }
 
@@ -705,7 +705,7 @@ mod tests {
         let (c, _f) = synth_catalog(stars);
         let epoch = JulianDate::new(2451545.0, 0.0);
 
-        let out = cone_search_at_mag(&c, 200.0, 0.0, 0.5, 20.0, epoch);
+        let out = cone_search_at_mag(&c, 200.0, 0.0, 0.5, 20.0, epoch).unwrap();
         assert!(out.is_empty());
     }
 
@@ -724,7 +724,7 @@ mod tests {
         let (c, _f) = synth_catalog(stars);
         let epoch = JulianDate::new(2451545.0, 0.0);
 
-        let (results, mag) = search_optimal_magnitude(&c, 0.0, 0.0, 1.0, epoch, 10);
+        let (results, mag) = search_optimal_magnitude(&c, 0.0, 0.0, 1.0, epoch, 10).unwrap();
         assert!(
             results.len() >= 10,
             "got {} stars at mag {mag}",
@@ -757,7 +757,7 @@ mod tests {
         let (c, _f) = synth_catalog(stars);
         let epoch = JulianDate::new(2451545.0, 0.0);
 
-        let (results, mag) = search_optimal_magnitude(&c, 0.0, 0.0, 1.0, epoch, 100);
+        let (results, mag) = search_optimal_magnitude(&c, 0.0, 0.0, 1.0, epoch, 100).unwrap();
         assert_eq!(results.len(), 2);
         assert!(mag > 19.0, "expected mag near 20.0 cap, got {mag}");
     }

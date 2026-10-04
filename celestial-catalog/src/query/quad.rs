@@ -1,3 +1,4 @@
+use celestial_coords::errors::CoordResult;
 use celestial_core::constants::{DEG_TO_RAD, RAD_TO_DEG};
 use celestial_time::julian::JulianDate;
 
@@ -299,7 +300,7 @@ pub fn get_quad_hashes(
     max_stars: usize,
     epoch: Option<JulianDate>,
     min_spine_ratio: Option<f64>,
-) -> Vec<Quad> {
+) -> CoordResult<Vec<Quad>> {
     let params = ConeSearchParams {
         ra_deg,
         dec_deg,
@@ -308,7 +309,7 @@ pub fn get_quad_hashes(
         max_results: None,
         epoch,
     };
-    let mut results = cone_search(catalog, &params);
+    let mut results = cone_search(catalog, &params)?;
     results.sort_by(|a, b| {
         a.star
             .mag
@@ -334,7 +335,7 @@ pub fn get_quad_hashes(
     let min_spine = field_radius_rad * ratio;
     let min_spine_sq = min_spine * min_spine;
 
-    neighbor_quads(&stars, 10, min_spine_sq)
+    Ok(neighbor_quads(&stars, 10, min_spine_sq))
 }
 
 #[cfg(test)]

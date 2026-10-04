@@ -1,4 +1,4 @@
-use celestial_coords::EopProvider;
+use celestial_coords::eop::EopProvider;
 use std::path::PathBuf;
 
 const FINALS_URL: &str = "https://datacenter.iers.org/data/9/finals2000A.all";
@@ -8,9 +8,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cache_dir = cache_dir();
     let finals_path = cache_dir.join("finals2000A.all");
 
-    // Show bundled data coverage
     let bundled = EopProvider::bundled()?;
-    let (bstart, bend) = bundled.time_span().unwrap();
+    let (bstart, bend) = bundled.time_span();
     println!(
         "Bundled EOP data: MJD {bstart:.0} to {bend:.0} ({} records)",
         bundled.record_count()
@@ -27,9 +26,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("\nUsing cached {}", finals_path.display());
     }
 
-    // Load from file only
     let from_file = EopProvider::from_finals_file(&finals_path)?;
-    let (fstart, fend) = from_file.time_span().unwrap();
+    let (fstart, fend) = from_file.time_span();
     println!(
         "\nFinals-only: MJD {fstart:.0} to {fend:.0} ({} records)",
         from_file.record_count()
@@ -37,13 +35,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Bundled + update overlay (the telescope control pattern)
     let merged = EopProvider::bundled_with_update(&finals_path)?;
-    let (mstart, mend) = merged.time_span().unwrap();
+    let (mstart, mend) = merged.time_span();
     println!(
         "Merged:      MJD {mstart:.0} to {mend:.0} ({} records)",
         merged.record_count()
     );
 
-    // Compare a lookup across providers
     let test_mjd = bend - 10.0; // 10 days before end of bundled data
     let bundled_params = bundled.get(test_mjd)?;
     let merged_params = merged.get(test_mjd)?;

@@ -49,9 +49,10 @@ Convert a catalog position (ICRS) to where it appears in the local sky.
 ```rust
 use celestial_core::{angle::Angle, location::Location};
 use celestial_time::scales::tt::{TT, tt_from_calendar};
-use celestial_time::scales::conversions::ut1_tai::ToUT1WithDeltaT;
-use celestial_time::sidereal::gast::GAST;
-use celestial_coords::{ICRSPosition, CoordinateFrame, CIRSPosition};
+use celestial_coords::eop::record::EopRecord;
+use celestial_coords::frames::cirs::CIRSPosition;
+use celestial_coords::frames::icrs::ICRSPosition;
+use celestial_coords::transforms::CoordinateFrame;
 
 // Sirius in ICRS (catalog coordinates)
 let sirius = ICRSPosition::new(
@@ -68,9 +69,11 @@ let cirs = CIRSPosition::from_icrs(&sirius, &tt).unwrap();
 // Observer location
 let observatory = Location::from_degrees(33.0, -117.0, 100.0).unwrap();
 
-// CIRS -> hour angle -> topocentric (needs Delta-T for Earth rotation)
-let delta_t = 69.2; // TT - UT1 in seconds (from IERS)
-let ha = cirs.to_hour_angle(&observatory, delta_t).unwrap();
+// CIRS -> hour angle -> topocentric (needs UT1-UTC for Earth rotation).
+// Values are illustrative; real ones come from IERS data via EopProvider.
+// Arguments: MJD, x_p and y_p (arcsec), UT1-UTC and LOD (seconds).
+let eop = EopRecord::new(60477.0, 0.2, 0.4, 0.01).unwrap().to_parameters();
+let ha = cirs.to_hour_angle(&observatory, &eop).unwrap();
 let topo = ha.to_topocentric().unwrap();
 
 println!("Azimuth:   {}", topo.azimuth());
@@ -79,5 +82,5 @@ println!("Elevation: {}", topo.elevation());
 
 The transformation chain is explicit. Each step requires its physical inputs:
 TT epoch for precession/nutation, observer location for the terrestrial
-conversion, Delta-T for Earth rotation angle. The type system enforces the
-correct order.
+conversion, Earth orientation parameters (UT1-UTC) for the Earth rotation
+angle. The type system enforces the correct order.

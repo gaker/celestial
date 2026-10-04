@@ -41,14 +41,16 @@ celestial-coords = "0.1"
 | `distance`   | Distance type with parsec/AU/ly/km conversions              |
 | `eop`        | Earth Orientation Parameters (polar motion, UT1-UTC)        |
 | `aberration` | Stellar aberration and gravitational light deflection       |
-| `lighttime`  | Light-time correction for proper motion and radial velocity |
+| `astrom`     | Per-epoch context for ICRS, GCRS and CIRS conversions       |
 | `solar`      | Solar orientation (B0, L0, P angle, Carrington rotation)    |
 | `lunar`      | Lunar libration and orientation                             |
 
 ## Example
 
 ```rust
-use celestial_coords::{ICRSPosition, GalacticPosition, Distance};
+use celestial_coords::distance::Distance;
+use celestial_coords::frames::galactic::GalacticPosition;
+use celestial_coords::frames::icrs::ICRSPosition;
 use celestial_coords::transforms::CoordinateFrame;
 use celestial_time::scales::tt::TT;
 
@@ -146,7 +148,9 @@ let provider = EopProvider::from_finals_str(&text_content)?;
 ## Topocentric Observations
 
 ```rust
-use celestial_coords::{TopocentricPosition, Distance};
+use celestial_coords::frames::topocentric::refraction::Refraction;
+use celestial_coords::distance::Distance;
+use celestial_coords::frames::topocentric::TopocentricPosition;
 use celestial_core::{angle::Angle, location::Location};
 use celestial_time::scales::tt::TT;
 
@@ -166,12 +170,14 @@ let moon = TopocentricPosition::with_distance(
 println!("Airmass: {:.2}", moon.air_mass());
 
 // Atmospheric refraction (standard conditions)
-let refraction = moon.atmospheric_refraction(1013.25, 15.0, 0.5, 0.574);
+let standard = Refraction::new(1013.25, 15.0, 0.5, 0.574)?;
+let refraction = moon.atmospheric_refraction(&standard);
 println!("Refraction: {:.1}\"", refraction.arcseconds());
 
-// Diurnal parallax
-let parallax = moon.diurnal_parallax().unwrap();
-println!("Parallax: {:.1}'", parallax.arcminutes());
+// Diurnal parallax, treating the position above as geocentric
+if let Some(parallax) = moon.diurnal_parallax()? {
+    println!("Parallax: {:.1}'", parallax.arcminutes());
+}
 ```
 
 ## Solar and Lunar Coordinates
@@ -184,13 +190,13 @@ use celestial_time::scales::tt::TT;
 let epoch = TT::j2000();
 
 // Solar orientation
-let solar = compute_solar_orientation(&epoch);
+let solar = compute_solar_orientation(&epoch)?;
 println!("B0 = {:.2}°", solar.b0.degrees());
 println!("L0 = {:.2}°", solar.l0.degrees());
-println!("Carrington rotation: {}", carrington_rotation_number(&epoch));
+println!("Carrington rotation: {:.4}", carrington_rotation_number(&epoch)?);
 
 // Lunar libration
-let (lib_lon, lib_lat) = compute_optical_libration(&epoch);
+let (lib_lon, lib_lat) = compute_optical_libration(&epoch)?;
 println!("Libration: lon={:.2}°, lat={:.2}°", lib_lon.degrees(), lib_lat.degrees());
 ```
 

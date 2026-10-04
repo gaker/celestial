@@ -8,9 +8,11 @@
 //! See `book/src/pointing/indat-format.md` for the full input-coordinate
 //! contract.
 
+use crate::error::Result;
 use crate::observation::SiteParams;
-use celestial_coords::frames::HourAnglePosition;
-use celestial_core::{angle::Angle, errors::AstroResult, location::Location};
+use celestial_coords::frames::topocentric::refraction::Refraction;
+use celestial_coords::frames::topocentric::HourAnglePosition;
+use celestial_core::{angle::Angle, location::Location};
 use celestial_time::scales::tt::TT;
 
 /// Adds atmospheric refraction to a sky direction.
@@ -33,7 +35,7 @@ pub(crate) fn apply_refraction(
     lst: Angle,
     location: &Location,
     site: &SiteParams,
-) -> AstroResult<(Angle, Angle)> {
+) -> Result<(Angle, Angle)> {
     refraction_shift(ra, dec, lst, location, site, true)
 }
 
@@ -44,10 +46,16 @@ fn refraction_shift(
     location: &Location,
     site: &SiteParams,
     apply: bool,
-) -> AstroResult<(Angle, Angle)> {
+) -> Result<(Angle, Angle)> {
     if site.pressure <= 0.0 {
         return Ok((ra, dec));
     }
+    let refraction = Refraction::new(
+        site.pressure,
+        site.temperature,
+        site.humidity,
+        site.wavelength,
+    )?;
     let ha = (lst - ra).wrapped()?;
     let epoch = TT::j2000();
     let Ok(hourangle) = HourAnglePosition::new(ha, dec, *location, epoch) else {
@@ -57,19 +65,9 @@ fn refraction_shift(
         return Ok((ra, dec));
     };
     let shifted = if apply {
-        topo.with_refraction(
-            site.pressure,
-            site.temperature,
-            site.humidity,
-            site.wavelength,
-        )
+        topo.with_refraction(&refraction)
     } else {
-        topo.without_refraction(
-            site.pressure,
-            site.temperature,
-            site.humidity,
-            site.wavelength,
-        )
+        topo.without_refraction(&refraction)
     };
     let Ok(shifted_ha) = shifted.to_hour_angle() else {
         return Ok((ra, dec));
@@ -202,11 +200,9 @@ mod tests {
 
     #[test]
     fn apply_and_remove_are_approximately_inverses() {
-        // apply() computes refraction at the true elevation; remove() computes
-        // it at the apparent (refracted) elevation. They are not exact
-        // algebraic inverses because the zenith distance differs by the
-        // refraction amount itself. Round-trip error should be a small
-        // fraction of an arcsecond at moderate altitude.
+        // remove() evaluates the refraction model at the observed zenith
+        // distance; apply() inverts it with a single Newton-Raphson step, so
+        // the round trip keeps that step's small residual.
         let lat = 39.0;
         let lst = Angle::from_hours(0.0);
         let ra = lst;

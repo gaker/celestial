@@ -1,5 +1,9 @@
 use super::record::{EopParameters, EopRecord};
-use crate::{CoordError, CoordResult};
+use super::table::{tai_minus_utc, EopTable};
+use crate::errors::{CoordError, CoordResult};
+use std::sync::Arc;
+
+const LAGRANGE_POINTS: usize = 5;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InterpolationMethod {
@@ -9,7 +13,7 @@ pub enum InterpolationMethod {
 }
 
 pub struct EopInterpolator {
-    records: Vec<EopRecord>,
+    table: Arc<EopTable>,
 
     method: InterpolationMethod,
 
@@ -17,11 +21,13 @@ pub struct EopInterpolator {
 }
 
 impl EopInterpolator {
-    pub fn new(mut records: Vec<EopRecord>) -> Self {
-        records.sort_by(|a, b| a.mjd.partial_cmp(&b.mjd).unwrap());
+    pub fn new(records: Vec<EopRecord>) -> CoordResult<Self> {
+        Ok(Self::from_table(Arc::new(EopTable::new(records)?)))
+    }
 
+    pub(super) fn from_table(table: Arc<EopTable>) -> Self {
         Self {
-            records,
+            table,
             method: InterpolationMethod::Linear,
             max_gap_days: 5.0,
         }
@@ -32,72 +38,75 @@ impl EopInterpolator {
         self
     }
 
-    pub fn with_max_gap(mut self, max_gap_days: f64) -> Self {
+    pub fn with_max_gap(mut self, max_gap_days: f64) -> CoordResult<Self> {
+        if max_gap_days.is_nan() || max_gap_days <= 0.0 {
+            return Err(CoordError::invalid_coordinate(format!(
+                "Maximum EOP gap {} days must be positive",
+                max_gap_days
+            )));
+        }
         self.max_gap_days = max_gap_days;
-        self
+        Ok(self)
     }
 
     pub fn get(&self, mjd: f64) -> CoordResult<EopParameters> {
-        if self.records.is_empty() {
-            return Err(CoordError::data_unavailable(
-                "No EOP records available for interpolation",
-            ));
+        if !mjd.is_finite() {
+            return Err(CoordError::invalid_coordinate(format!(
+                "EOP lookup MJD {} is not finite",
+                mjd
+            )));
         }
-
-        if let Ok(idx) = self
-            .records
-            .binary_search_by(|r| r.mjd.partial_cmp(&mjd).unwrap())
-        {
-            let mut params = self.records[idx].to_parameters();
-            params.compute_s_prime();
-            return Ok(params);
+        let records = &self.table.records;
+        if let Ok(idx) = records.binary_search_by(|r| r.mjd.total_cmp(&mjd)) {
+            return Ok(records[idx].to_parameters());
         }
-
         let (before_idx, after_idx) = self.find_interpolation_interval(mjd)?;
+        self.check_gap(before_idx, after_idx)?;
+        let tai_utc = tai_minus_utc(mjd)?;
+        match self.method {
+            InterpolationMethod::Linear => {
+                Ok(self.linear_interpolate(mjd, before_idx, after_idx, tai_utc))
+            }
+            InterpolationMethod::Lagrange5 => self.lagrange_interpolate(mjd, tai_utc),
+        }
+    }
 
-        let gap = self.records[after_idx].mjd - self.records[before_idx].mjd;
+    fn find_interpolation_interval(&self, mjd: f64) -> CoordResult<(usize, usize)> {
+        let (first, last) = self.time_span();
+        if mjd < first {
+            return Err(CoordError::data_unavailable(format!(
+                "MJD {:.1} is before first available record (MJD {:.1})",
+                mjd, first
+            )));
+        }
+        if mjd > last {
+            return Err(CoordError::data_unavailable(format!(
+                "MJD {:.1} is after last available record (MJD {:.1})",
+                mjd, last
+            )));
+        }
+        let after_idx = self.table.records.partition_point(|r| r.mjd <= mjd);
+        Ok((after_idx - 1, after_idx))
+    }
+
+    fn check_gap(&self, before_idx: usize, after_idx: usize) -> CoordResult<()> {
+        let records = &self.table.records;
+        let gap = records[after_idx].mjd - records[before_idx].mjd;
         if gap > self.max_gap_days {
             return Err(CoordError::data_unavailable(format!(
                 "Gap of {:.1} days exceeds maximum interpolation gap of {:.1} days",
                 gap, self.max_gap_days
             )));
         }
-
-        match self.method {
-            InterpolationMethod::Linear => self.linear_interpolate(mjd, before_idx, after_idx),
-            InterpolationMethod::Lagrange5 => self.lagrange_interpolate(mjd, 5),
-        }
+        Ok(())
     }
 
-    fn find_interpolation_interval(&self, mjd: f64) -> CoordResult<(usize, usize)> {
-        if mjd < self.records[0].mjd {
-            return Err(CoordError::data_unavailable(format!(
-                "MJD {:.1} is before first available record (MJD {:.1})",
-                mjd, self.records[0].mjd
-            )));
-        }
-
-        if mjd > self.records.last().unwrap().mjd {
-            return Err(CoordError::data_unavailable(format!(
-                "MJD {:.1} is after last available record (MJD {:.1})",
-                mjd,
-                self.records.last().unwrap().mjd
-            )));
-        }
-
-        let mut left = 0;
-        let mut right = self.records.len() - 1;
-
-        while right - left > 1 {
-            let mid = (left + right) / 2;
-            if self.records[mid].mjd <= mjd {
-                left = mid;
-            } else {
-                right = mid;
-            }
-        }
-
-        Ok((left, right))
+    // UT1-UTC re-expressed against the TAI-UTC in force at the target, so the
+    // interpolated quantity is UT1-TAI and a leap inside the span does not leak in.
+    fn leap_adjusted(&self, idx: usize, tai_utc: f64) -> EopParameters {
+        let mut params = self.table.records[idx].to_parameters();
+        params.ut1_utc += tai_utc - self.table.tai_utc[idx];
+        params
     }
 
     fn linear_interpolate(
@@ -105,206 +114,152 @@ impl EopInterpolator {
         mjd: f64,
         before_idx: usize,
         after_idx: usize,
-    ) -> CoordResult<EopParameters> {
-        let r1 = &self.records[before_idx];
-        let r2 = &self.records[after_idx];
-
-        let t = (mjd - r1.mjd) / (r2.mjd - r1.mjd);
-
-        let p1 = r1.to_parameters();
-        let p2 = r2.to_parameters();
-
-        let x_p = p1.x_p + t * (p2.x_p - p1.x_p);
-        let y_p = p1.y_p + t * (p2.y_p - p1.y_p);
-        let ut1_utc = p1.ut1_utc + t * (p2.ut1_utc - p1.ut1_utc);
-        let lod = p1.lod + t * (p2.lod - p1.lod);
-
-        let dx = match (p1.dx, p2.dx) {
-            (Some(dx1), Some(dx2)) => Some(dx1 + t * (dx2 - dx1)),
-            _ => None,
-        };
-
-        let dy = match (p1.dy, p2.dy) {
-            (Some(dy1), Some(dy2)) => Some(dy1 + t * (dy2 - dy1)),
-            _ => None,
-        };
-
-        let xrt = match (p1.xrt, p2.xrt) {
-            (Some(v1), Some(v2)) => Some(v1 + t * (v2 - v1)),
-            _ => None,
-        };
-
-        let yrt = match (p1.yrt, p2.yrt) {
-            (Some(v1), Some(v2)) => Some(v1 + t * (v2 - v1)),
-            _ => None,
-        };
-
-        let mut params = EopParameters {
+        tai_utc: f64,
+    ) -> EopParameters {
+        let p1 = self.leap_adjusted(before_idx, tai_utc);
+        let p2 = self.leap_adjusted(after_idx, tai_utc);
+        let t = (mjd - p1.mjd) / (p2.mjd - p1.mjd);
+        let lerp = |a: f64, b: f64| a + t * (b - a);
+        let lerp_opt = |a: Option<f64>, b: Option<f64>| Some(lerp(a?, b?));
+        flag_present_columns(EopParameters {
             mjd,
-            x_p,
-            y_p,
-            ut1_utc,
-            lod,
-            dx,
-            dy,
-            xrt,
-            yrt,
-            s_prime: 0.0,
+            x_p: lerp(p1.x_p, p2.x_p),
+            y_p: lerp(p1.y_p, p2.y_p),
+            ut1_utc: lerp(p1.ut1_utc, p2.ut1_utc),
+            lod: lerp_opt(p1.lod, p2.lod),
+            dx: lerp_opt(p1.dx, p2.dx),
+            dy: lerp_opt(p1.dy, p2.dy),
+            xrt: lerp_opt(p1.xrt, p2.xrt),
+            yrt: lerp_opt(p1.yrt, p2.yrt),
             flags: p1.flags,
-        };
-
-        params.compute_s_prime();
-
-        Ok(params)
+        })
     }
 
-    fn lagrange_interpolate(&self, mjd: f64, n: usize) -> CoordResult<EopParameters> {
-        if n > self.records.len() {
-            return Err(CoordError::invalid_coordinate(format!(
+    fn lagrange_interpolate(&self, mjd: f64, tai_utc: f64) -> CoordResult<EopParameters> {
+        let start = self.lagrange_start(mjd)?;
+        let points: [EopParameters; LAGRANGE_POINTS] =
+            std::array::from_fn(|k| self.leap_adjusted(start + k, tai_utc));
+        let weights = lagrange_weights(mjd, &points);
+        let sum = |value: fn(&EopParameters) -> f64| weighted_sum(&weights, &points, value);
+        let sum_opt =
+            |value: fn(&EopParameters) -> Option<f64>| weighted_sum_opt(&weights, &points, value);
+        Ok(flag_present_columns(EopParameters {
+            mjd,
+            x_p: sum(|p| p.x_p),
+            y_p: sum(|p| p.y_p),
+            ut1_utc: sum(|p| p.ut1_utc),
+            lod: sum_opt(|p| p.lod),
+            dx: sum_opt(|p| p.dx),
+            dy: sum_opt(|p| p.dy),
+            xrt: sum_opt(|p| p.xrt),
+            yrt: sum_opt(|p| p.yrt),
+            flags: points[0].flags,
+        }))
+    }
+
+    fn lagrange_start(&self, mjd: f64) -> CoordResult<usize> {
+        let len = self.table.records.len();
+        if len < LAGRANGE_POINTS {
+            return Err(CoordError::data_unavailable(format!(
                 "Not enough records for {}-point Lagrange interpolation",
-                n
+                LAGRANGE_POINTS
             )));
         }
-
-        let center_idx = self.find_center_index(mjd)?;
-        let half_n = n / 2;
-
-        let start_idx = center_idx.saturating_sub(half_n);
-        let end_idx = (start_idx + n).min(self.records.len());
-        let actual_start = end_idx.saturating_sub(n);
-
-        if end_idx - actual_start < n {
-            return Err(CoordError::data_unavailable(
-                "Insufficient records for Lagrange interpolation",
-            ));
-        }
-
-        let points: Vec<_> = self.records[actual_start..actual_start + n]
-            .iter()
-            .map(|r| r.to_parameters())
-            .collect();
-
-        let x_p = self.lagrange_interpolate_value(mjd, &points, |p| p.x_p);
-        let y_p = self.lagrange_interpolate_value(mjd, &points, |p| p.y_p);
-        let ut1_utc = self.lagrange_interpolate_value(mjd, &points, |p| p.ut1_utc);
-        let lod = self.lagrange_interpolate_value(mjd, &points, |p| p.lod);
-
-        let dx = if points.iter().all(|p| p.dx.is_some()) {
-            Some(self.lagrange_interpolate_value(mjd, &points, |p| p.dx.unwrap()))
-        } else {
-            None
-        };
-
-        let dy = if points.iter().all(|p| p.dy.is_some()) {
-            Some(self.lagrange_interpolate_value(mjd, &points, |p| p.dy.unwrap()))
-        } else {
-            None
-        };
-
-        let xrt = if points.iter().all(|p| p.xrt.is_some()) {
-            Some(self.lagrange_interpolate_value(mjd, &points, |p| p.xrt.unwrap()))
-        } else {
-            None
-        };
-
-        let yrt = if points.iter().all(|p| p.yrt.is_some()) {
-            Some(self.lagrange_interpolate_value(mjd, &points, |p| p.yrt.unwrap()))
-        } else {
-            None
-        };
-
-        let mut params = EopParameters {
-            mjd,
-            x_p,
-            y_p,
-            ut1_utc,
-            lod,
-            dx,
-            dy,
-            xrt,
-            yrt,
-            s_prime: 0.0,
-            flags: points[0].flags,
-        };
-
-        params.compute_s_prime();
-
-        Ok(params)
+        let center = self.find_center_index(mjd);
+        Ok(center
+            .saturating_sub(LAGRANGE_POINTS / 2)
+            .min(len - LAGRANGE_POINTS))
     }
 
-    fn find_center_index(&self, mjd: f64) -> CoordResult<usize> {
-        let idx = self
-            .records
-            .binary_search_by(|r| r.mjd.partial_cmp(&mjd).unwrap());
-
-        match idx {
-            Ok(i) => Ok(i),
-            Err(i) => {
-                if i == 0 {
-                    Ok(0)
-                } else if i >= self.records.len() {
-                    Ok(self.records.len() - 1)
-                } else {
-                    let before = (self.records[i - 1].mjd - mjd).abs();
-                    let after = (self.records[i].mjd - mjd).abs();
-                    if before <= after {
-                        Ok(i - 1)
-                    } else {
-                        Ok(i)
-                    }
-                }
-            }
+    fn find_center_index(&self, mjd: f64) -> usize {
+        let records = &self.table.records;
+        let i = records.partition_point(|r| r.mjd < mjd);
+        if i == 0 {
+            return 0;
+        }
+        if i == records.len() {
+            return i - 1;
+        }
+        let before = mjd - records[i - 1].mjd;
+        let after = records[i].mjd - mjd;
+        if before <= after {
+            i - 1
+        } else {
+            i
         }
     }
 
-    fn lagrange_interpolate_value<F>(&self, mjd: f64, points: &[EopParameters], extract: F) -> f64
-    where
-        F: Fn(&EopParameters) -> f64,
-    {
-        let n = points.len();
-        let mut result = 0.0;
-
-        for i in 0..n {
-            let yi = extract(&points[i]);
-            let xi = points[i].mjd;
-
-            let mut li = 1.0;
-            for (j, point) in points.iter().enumerate().take(n) {
-                if i != j {
-                    let xj = point.mjd;
-                    li *= (mjd - xj) / (xi - xj);
-                }
-            }
-
-            result += yi * li;
-        }
-
-        result
-    }
-
-    pub fn time_span(&self) -> Option<(f64, f64)> {
-        if self.records.is_empty() {
-            None
-        } else {
-            Some((self.records[0].mjd, self.records.last().unwrap().mjd))
-        }
+    pub fn time_span(&self) -> (f64, f64) {
+        let records = &self.table.records;
+        (records[0].mjd, records[records.len() - 1].mjd)
     }
 
     pub fn record_count(&self) -> usize {
-        self.records.len()
+        self.table.records.len()
     }
 
-    pub fn extend(&mut self, records: Vec<EopRecord>) {
-        self.records.extend(records);
-        self.records
-            .sort_by(|a, b| a.mjd.partial_cmp(&b.mjd).unwrap());
-        self.records.dedup_by(|a, b| a.mjd == b.mjd);
+    // A record whose MJD is already present replaces the existing one.
+    pub(crate) fn extend(&mut self, records: Vec<EopRecord>) -> CoordResult<()> {
+        let update = EopTable::new(records)?;
+        let kept = self
+            .table
+            .records
+            .iter()
+            .filter(|r| !update.contains_mjd(r.mjd))
+            .cloned();
+        let merged = update.records.iter().cloned().chain(kept).collect();
+        self.table = Arc::new(EopTable::new(merged)?);
+        Ok(())
     }
+}
+
+fn lagrange_weights(mjd: f64, points: &[EopParameters; LAGRANGE_POINTS]) -> [f64; LAGRANGE_POINTS] {
+    std::array::from_fn(|i| {
+        let mut weight = 1.0;
+        for (j, point) in points.iter().enumerate() {
+            if i != j {
+                weight *= (mjd - point.mjd) / (points[i].mjd - point.mjd);
+            }
+        }
+        weight
+    })
+}
+
+fn weighted_sum(
+    weights: &[f64; LAGRANGE_POINTS],
+    points: &[EopParameters; LAGRANGE_POINTS],
+    value: impl Fn(&EopParameters) -> f64,
+) -> f64 {
+    let mut sum = 0.0;
+    for (weight, point) in weights.iter().zip(points) {
+        sum += value(point) * weight;
+    }
+    sum
+}
+
+// An interpolated optional column is present only when every record used has it.
+fn flag_present_columns(mut params: EopParameters) -> EopParameters {
+    params.flags.has_cip_offsets = params.dx.is_some() && params.dy.is_some();
+    params.flags.has_pole_rates = params.xrt.is_some() && params.yrt.is_some();
+    params
+}
+
+fn weighted_sum_opt(
+    weights: &[f64; LAGRANGE_POINTS],
+    points: &[EopParameters; LAGRANGE_POINTS],
+    value: impl Fn(&EopParameters) -> Option<f64>,
+) -> Option<f64> {
+    let mut sum = 0.0;
+    for (weight, point) in weights.iter().zip(points) {
+        sum += value(point)? * weight;
+    }
+    Some(sum)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::eop::EopProvider;
 
     fn create_test_records() -> Vec<EopRecord> {
         let mut records = Vec::new();
@@ -316,40 +271,34 @@ mod tests {
             let ut1_utc = 0.01 + 0.0001 * i as f64;
             let lod = 0.001 + 0.00001 * i as f64;
 
-            let record = EopRecord::new(mjd, x_p, y_p, ut1_utc, lod).unwrap();
+            let record = EopRecord::new(mjd, x_p, y_p, ut1_utc)
+                .unwrap()
+                .with_lod(lod)
+                .unwrap();
             records.push(record);
         }
 
         records
     }
 
+    fn interpolator(records: Vec<EopRecord>) -> EopInterpolator {
+        EopInterpolator::new(records).unwrap()
+    }
+
     #[test]
     fn test_linear_interpolation() {
-        let records = create_test_records();
-        let interpolator = EopInterpolator::new(records);
-
-        let mjd = 59946.5;
-        let params = interpolator.get(mjd).unwrap();
-
-        let expected_x_p = (0.101 + 0.102) / 2.0;
-        let expected_y_p = (0.202 + 0.204) / 2.0;
-
-        assert!((params.x_p - expected_x_p).abs() < 1e-10);
-        assert!((params.y_p - expected_y_p).abs() < 1e-10);
-        assert_eq!(params.mjd, mjd);
+        let params = interpolator(create_test_records()).get(59946.5).unwrap();
+        assert_eq!(params.x_p, 0.1015);
+        assert_eq!(params.y_p, 0.203);
+        assert_eq!(params.mjd, 59946.5);
     }
 
     #[test]
     fn test_exact_match() {
-        let records = create_test_records();
-        let interpolator = EopInterpolator::new(records);
-
-        let mjd = 59947.0;
-        let params = interpolator.get(mjd).unwrap();
-
-        assert_eq!(params.mjd, mjd);
-        assert!((params.x_p - 0.102).abs() < 1e-10);
-        assert!((params.y_p - 0.204).abs() < 1e-10);
+        let params = interpolator(create_test_records()).get(59947.0).unwrap();
+        assert_eq!(params.mjd, 59947.0);
+        assert_eq!(params.x_p, 0.102);
+        assert_eq!(params.y_p, 0.204);
     }
 
     #[test]
@@ -358,34 +307,62 @@ mod tests {
 
         for i in 0..=1 {
             let mjd = 59945.0 + i as f64;
-            let mut record = EopRecord::new(mjd, 0.1 + 0.001 * i as f64, 0.2, 0.01, 0.001).unwrap();
+            let mut record = EopRecord::new(mjd, 0.1 + 0.001 * i as f64, 0.2, 0.01).unwrap();
             let dx = 1.0 + i as f64;
             let dy = -0.2 - 0.1 * i as f64;
             record = record.with_cip_offsets(dx, dy).unwrap();
             records.push(record);
         }
 
-        let interpolator = EopInterpolator::new(records);
-        let params = interpolator.get(59945.5).unwrap();
-
-        assert!(params.dx.is_some());
-        assert!(params.dy.is_some());
-        assert!((params.dx.unwrap() - 1.5).abs() < 1e-10);
-        assert!((params.dy.unwrap() - (-0.25)).abs() < 1e-10);
+        let params = interpolator(records).get(59945.5).unwrap();
+        assert_eq!(params.dx, Some(1.5));
+        assert_eq!(params.dy, Some(-0.25));
         assert!(params.flags.has_cip_offsets);
+    }
+
+    // Every record but the last carries CIP offsets and pole rates.
+    fn records_missing_columns_at_the_end(n: usize) -> Vec<EopRecord> {
+        let record = |i: usize| EopRecord::new(59945.0 + i as f64, 0.1, 0.2, 0.01).unwrap();
+        let full = |i: usize| {
+            record(i)
+                .with_cip_offsets(0.2, -0.1)
+                .and_then(|r| r.with_pole_rates(0.1, 0.1))
+                .unwrap()
+        };
+        (0..n)
+            .map(|i| if i + 1 < n { full(i) } else { record(i) })
+            .collect()
+    }
+
+    fn assert_columns_dropped(params: &EopParameters) {
+        assert_eq!(
+            (params.dx, params.dy, params.xrt, params.yrt),
+            (None, None, None, None)
+        );
+        assert!(!params.flags.has_cip_offsets, "{:?}", params.flags);
+        assert!(!params.flags.has_pole_rates, "{:?}", params.flags);
+    }
+
+    #[test]
+    fn linear_flags_follow_the_dropped_columns() {
+        let interpolator = interpolator(records_missing_columns_at_the_end(2));
+        assert_columns_dropped(&interpolator.get(59945.5).unwrap());
+    }
+
+    #[test]
+    fn lagrange_flags_follow_the_dropped_columns() {
+        let interpolator = interpolator(records_missing_columns_at_the_end(5))
+            .with_method(InterpolationMethod::Lagrange5);
+        assert_columns_dropped(&interpolator.get(59946.5).unwrap());
     }
 
     #[test]
     fn test_lagrange_interpolation() {
-        let records = create_test_records();
         let interpolator =
-            EopInterpolator::new(records).with_method(InterpolationMethod::Lagrange5);
-
-        let mjd = 59947.0;
-        let params = interpolator.get(mjd).unwrap();
-
-        assert!((params.x_p - 0.102).abs() < 1e-10);
-        assert!((params.y_p - 0.204).abs() < 1e-10);
+            interpolator(create_test_records()).with_method(InterpolationMethod::Lagrange5);
+        let params = interpolator.get(59947.0).unwrap();
+        assert_eq!(params.x_p, 0.102);
+        assert_eq!(params.y_p, 0.204);
     }
 
     #[test]
@@ -393,39 +370,78 @@ mod tests {
         let mut records = Vec::new();
         for i in 0..6 {
             let mjd = 59945.0 + i as f64;
-            let mut record = EopRecord::new(mjd, 0.1 + 0.001 * i as f64, 0.2, 0.01, 0.001).unwrap();
+            let mut record = EopRecord::new(mjd, 0.1 + 0.001 * i as f64, 0.2, 0.01).unwrap();
             let dx = 1.0 + 0.5 * i as f64;
             let dy = -0.2 + 0.05 * i as f64;
             record = record.with_cip_offsets(dx, dy).unwrap();
             records.push(record);
         }
 
-        let interpolator =
-            EopInterpolator::new(records).with_method(InterpolationMethod::Lagrange5);
-
-        let target_mjd = 59947.5;
-        let params = interpolator.get(target_mjd).unwrap();
-
-        let expected_dx = 1.0 + 0.5 * (target_mjd - 59945.0);
-        let expected_dy = -0.2 + 0.05 * (target_mjd - 59945.0);
-
-        assert!(params.dx.is_some());
-        assert!(params.dy.is_some());
-        assert!((params.dx.unwrap() - expected_dx).abs() < 1e-10);
-        assert!((params.dy.unwrap() - expected_dy).abs() < 1e-10);
+        let interpolator = interpolator(records).with_method(InterpolationMethod::Lagrange5);
+        let params = interpolator.get(59947.5).unwrap();
+        assert_eq!(params.dx, Some(2.25));
+        assert_eq!(params.dy, Some(-0.075));
         assert!(params.flags.has_cip_offsets);
+    }
+
+    // Bundled C04 at the 2016-12-31 leap: UT1-UTC is -0.4077697 s on MJD 57753 and
+    // +0.591287 s on 57754. Expected values are the UT1-TAI interpolation, recomputed
+    // outside the crate with the same operation order.
+    #[test]
+    fn interpolation_inside_leap_day_follows_ut1_minus_tai() {
+        let provider = EopProvider::bundled().unwrap();
+        assert_eq!(provider.get(57753.75).unwrap().ut1_utc, -0.408477175);
+        let lagrange = provider.with_interpolation(InterpolationMethod::Lagrange5);
+        assert_eq!(lagrange.get(57753.75).unwrap().ut1_utc, -0.4084669794433594);
+    }
+
+    #[test]
+    fn lagrange_next_to_leap_does_not_ring() {
+        let provider = EopProvider::bundled()
+            .unwrap()
+            .with_interpolation(InterpolationMethod::Lagrange5);
+        assert_eq!(provider.get(57752.5).unwrap().ut1_utc, -0.40733358593749996);
+    }
+
+    #[test]
+    fn non_finite_lookup_is_an_error() {
+        let interpolator = interpolator(create_test_records());
+        for mjd in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            assert!(interpolator.get(mjd).is_err());
+        }
+    }
+
+    #[test]
+    fn non_finite_record_mjd_is_rejected() {
+        let mut records = create_test_records();
+        records[2].mjd = f64::NAN;
+        assert!(EopInterpolator::new(records).is_err());
+    }
+
+    #[test]
+    fn duplicate_record_mjd_is_rejected() {
+        let mut records = create_test_records();
+        records[3].mjd = records[1].mjd;
+        let err = EopInterpolator::new(records).err().unwrap();
+        assert!(err
+            .to_string()
+            .contains("Duplicate EOP records at MJD 59946"));
+    }
+
+    #[test]
+    fn max_gap_must_be_positive() {
+        for gap in [f64::NAN, 0.0, -1.0] {
+            assert!(interpolator(create_test_records())
+                .with_max_gap(gap)
+                .is_err());
+        }
     }
 
     #[test]
     fn test_out_of_range() {
-        let records = create_test_records();
-        let interpolator = EopInterpolator::new(records);
-
-        let result = interpolator.get(59944.0);
-        assert!(result.is_err());
-
-        let result = interpolator.get(59950.0);
-        assert!(result.is_err());
+        let interpolator = interpolator(create_test_records());
+        assert!(interpolator.get(59944.0).is_err());
+        assert!(interpolator.get(59950.0).is_err());
     }
 
     #[test]
@@ -435,71 +451,46 @@ mod tests {
         records[3].mjd = 59955.0;
         records[4].mjd = 59956.0;
 
-        let interpolator = EopInterpolator::new(records).with_max_gap(3.0);
-
-        let result = interpolator.get(59950.0);
-        assert!(result.is_err());
+        let interpolator = interpolator(records).with_max_gap(3.0).unwrap();
+        assert!(interpolator.get(59950.0).is_err());
     }
 
     #[test]
     fn test_time_span() {
-        let records = create_test_records();
-        let interpolator = EopInterpolator::new(records);
-
-        let (start, end) = interpolator.time_span().unwrap();
-        assert_eq!(start, 59945.0);
-        assert_eq!(end, 59949.0);
+        assert_eq!(
+            interpolator(create_test_records()).time_span(),
+            (59945.0, 59949.0)
+        );
     }
 
     #[test]
     fn test_empty_records() {
-        let interpolator = EopInterpolator::new(vec![]);
-        let result = interpolator.get(59945.0);
-        assert!(result.is_err());
-        let err = result.unwrap_err();
-        assert!(err.to_string().contains("No EOP records available"));
-    }
-
-    #[test]
-    fn test_empty_records_time_span() {
-        let interpolator = EopInterpolator::new(vec![]);
-        assert_eq!(interpolator.time_span(), None);
+        let err = EopInterpolator::new(vec![]).err().unwrap();
+        assert!(err.to_string().contains("No EOP records supplied"));
     }
 
     #[test]
     fn test_lagrange_insufficient_points() {
         let records = vec![
-            EopRecord::new(59945.0, 0.1, 0.2, 0.01, 0.001).unwrap(),
-            EopRecord::new(59946.0, 0.101, 0.202, 0.0101, 0.0011).unwrap(),
+            EopRecord::new(59945.0, 0.1, 0.2, 0.01).unwrap(),
+            EopRecord::new(59946.0, 0.101, 0.202, 0.0101).unwrap(),
         ];
 
-        let interpolator =
-            EopInterpolator::new(records).with_method(InterpolationMethod::Lagrange5);
-
-        let result = interpolator.get(59945.5);
-        assert!(result.is_err());
+        let interpolator = interpolator(records).with_method(InterpolationMethod::Lagrange5);
+        assert!(interpolator.get(59945.5).is_err());
     }
 
     #[test]
     fn test_record_count() {
-        let records = create_test_records();
-        let interpolator = EopInterpolator::new(records);
-        assert_eq!(interpolator.record_count(), 5);
-
-        let empty = EopInterpolator::new(vec![]);
-        assert_eq!(empty.record_count(), 0);
+        assert_eq!(interpolator(create_test_records()).record_count(), 5);
     }
 
     #[test]
     fn test_find_center_index() {
-        let records = create_test_records();
-        let interpolator = EopInterpolator::new(records);
-
-        let center = interpolator.find_center_index(59947.0).unwrap();
-        assert_eq!(center, 2);
-
-        let edge = interpolator.find_center_index(59945.1).unwrap();
-        assert_eq!(edge, 0);
+        let interpolator = interpolator(create_test_records());
+        assert_eq!(interpolator.find_center_index(59947.0), 2);
+        assert_eq!(interpolator.find_center_index(59945.1), 0);
+        assert_eq!(interpolator.find_center_index(59948.6), 4);
     }
 
     #[test]
@@ -507,16 +498,25 @@ mod tests {
         let mut records = Vec::new();
         for i in 0..10 {
             let mjd = 59945.0 + i as f64;
-            records.push(EopRecord::new(mjd, 0.1 + 0.001 * i as f64, 0.2, 0.01, 0.001).unwrap());
+            records.push(EopRecord::new(mjd, 0.1 + 0.001 * i as f64, 0.2, 0.01).unwrap());
         }
 
-        let interpolator =
-            EopInterpolator::new(records).with_method(InterpolationMethod::Lagrange5);
+        let interpolator = interpolator(records).with_method(InterpolationMethod::Lagrange5);
+        assert_eq!(interpolator.lagrange_start(59945.5).unwrap(), 0);
+        assert_eq!(interpolator.lagrange_start(59949.5).unwrap(), 2);
+        assert_eq!(interpolator.lagrange_start(59953.5).unwrap(), 5);
+    }
 
-        let near_start = interpolator.get(59946.0).unwrap();
-        assert!(near_start.x_p > 0.1);
-
-        let near_end = interpolator.get(59953.0).unwrap();
-        assert!(near_end.x_p > 0.1);
+    #[test]
+    fn extend_replaces_records_at_the_same_mjd() {
+        let mut interpolator = interpolator(create_test_records());
+        let update = vec![
+            EopRecord::new(59949.0, 0.3, 0.3, -0.5).unwrap(),
+            EopRecord::new(59950.0, 0.3, 0.3, -0.5).unwrap(),
+        ];
+        interpolator.extend(update).unwrap();
+        assert_eq!(interpolator.record_count(), 6);
+        assert_eq!(interpolator.get(59949.0).unwrap().ut1_utc, -0.5);
+        assert_eq!(interpolator.get(59948.0).unwrap().ut1_utc, 0.0103);
     }
 }

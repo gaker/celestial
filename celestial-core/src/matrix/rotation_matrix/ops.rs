@@ -24,6 +24,7 @@ impl RotationMatrix3 {
     /// // Equivalent using operator:
     /// let combined_op = rz * rx;
     /// ```
+    #[inline]
     pub fn multiply(&self, other: &Self) -> Self {
         let mut result = [[0.0; 3]; 3];
 
@@ -56,6 +57,7 @@ impl RotationMatrix3 {
     /// let rotated = m.apply_to_vector(v);
     /// // Result is approximately [0, -1, 0]
     /// ```
+    #[inline]
     pub fn apply_to_vector(&self, vector: [f64; 3]) -> [f64; 3] {
         self.elements
             .map(|row| row.iter().zip(vector).fold(0.0, |sum, (m, v)| sum + m * v))
@@ -83,6 +85,7 @@ impl RotationMatrix3 {
     ///
     /// assert_eq!(restored, [1.0, 2.0, 2.9999999999999996]);
     /// ```
+    #[inline]
     pub fn transpose(&self) -> Self {
         let elements = [
             [
@@ -132,6 +135,7 @@ impl RotationMatrix3 {
     /// assert_eq!(new_ra, -QUARTER_PI);
     /// assert_eq!(new_dec, 0.0);
     /// ```
+    #[inline]
     pub fn transform_spherical(&self, ra: f64, dec: f64) -> (f64, f64) {
         (self * Vector3::from_spherical(ra, dec)).to_spherical()
     }
@@ -140,6 +144,7 @@ impl RotationMatrix3 {
 impl std::ops::Mul for RotationMatrix3 {
     type Output = Self;
 
+    #[inline]
     fn mul(self, rhs: Self) -> Self {
         self.multiply(&rhs)
     }
@@ -148,6 +153,7 @@ impl std::ops::Mul for RotationMatrix3 {
 impl std::ops::Mul<&Self> for RotationMatrix3 {
     type Output = Self;
 
+    #[inline]
     fn mul(self, rhs: &Self) -> Self {
         self.multiply(rhs)
     }
@@ -156,6 +162,7 @@ impl std::ops::Mul<&Self> for RotationMatrix3 {
 impl std::ops::Mul<RotationMatrix3> for &RotationMatrix3 {
     type Output = RotationMatrix3;
 
+    #[inline]
     fn mul(self, rhs: RotationMatrix3) -> RotationMatrix3 {
         self.multiply(&rhs)
     }
@@ -164,6 +171,7 @@ impl std::ops::Mul<RotationMatrix3> for &RotationMatrix3 {
 impl std::ops::Mul<&RotationMatrix3> for &RotationMatrix3 {
     type Output = RotationMatrix3;
 
+    #[inline]
     fn mul(self, rhs: &RotationMatrix3) -> RotationMatrix3 {
         self.multiply(rhs)
     }
@@ -172,6 +180,7 @@ impl std::ops::Mul<&RotationMatrix3> for &RotationMatrix3 {
 impl std::ops::Mul<Vector3> for RotationMatrix3 {
     type Output = Vector3;
 
+    #[inline]
     fn mul(self, vec: Vector3) -> Vector3 {
         let result = self.apply_to_vector([vec.x, vec.y, vec.z]);
         Vector3::from_array(result)
@@ -181,6 +190,7 @@ impl std::ops::Mul<Vector3> for RotationMatrix3 {
 impl std::ops::Mul<Vector3> for &RotationMatrix3 {
     type Output = Vector3;
 
+    #[inline]
     fn mul(self, vec: Vector3) -> Vector3 {
         let result = self.apply_to_vector([vec.x, vec.y, vec.z]);
         Vector3::from_array(result)

@@ -12,7 +12,7 @@ mod verify;
 
 use anyhow::Result;
 use celestial_catalog::query::{neighbor_quads, Quad};
-use celestial_coords::ICRSPosition;
+use celestial_coords::frames::icrs::ICRSPosition;
 use celestial_core::constants::PI;
 use celestial_images::formats::Image;
 use celestial_time::julian::JulianDate;
@@ -141,7 +141,7 @@ pub struct FieldMatch {
 /// # let stars = vec![];
 /// # let img = celestial_images::formats::Image::open("f.fits")?;
 /// # let catalog = celestial_catalog::query::Catalog::open("cat.bin")?;
-/// # let hint = celestial_coords::ICRSPosition::from_degrees(180.0, 30.0)?;
+/// # let hint = celestial_coords::frames::icrs::ICRSPosition::from_degrees(180.0, 30.0)?;
 /// # let epoch = celestial_time::julian::JulianDate::new(2_400_000.5, 0.0);
 /// let field = match_field(&stars, &img, &catalog, &hint, 1.5, epoch, &MatchParams::default())?;
 /// # Ok::<(), Box<dyn std::error::Error>>(())
@@ -166,7 +166,7 @@ pub fn match_field(
     let min_spine_sq = min_spine * min_spine;
 
     let (catalog_stars, catalog_results) =
-        catalog_cone_search(catalog, ra, dec, radius, params.max_stars, epoch);
+        catalog_cone_search(catalog, ra, dec, radius, params.max_stars, epoch)?;
     let catalog_quads = neighbor_quads(&catalog_stars, 10, min_spine_sq);
     let index = build_hash_index(&catalog_quads);
 

@@ -1,9 +1,11 @@
-use crate::{frames::ITRSPosition, CoordResult};
-use celestial_core::constants::ARCSEC_TO_RAD;
+use crate::astrom::earth::EarthRotation;
+use crate::eop::record::EopParameters;
+use crate::errors::CoordError;
+use crate::errors::CoordResult;
+use crate::frames::cirs::CIRSPosition;
+use crate::frames::itrs::ITRSPosition;
 use celestial_core::matrix::Vector3;
-use celestial_time::scales::conversions::ut1_tai::ToUT1WithDeltaT;
 use celestial_time::scales::tt::TT;
-use celestial_time::transforms::rotation::earth_rotation_angle;
 
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
@@ -18,8 +20,13 @@ pub struct TIRSPosition {
 }
 
 impl TIRSPosition {
-    pub fn new(x: f64, y: f64, z: f64, epoch: TT) -> Self {
-        Self { x, y, z, epoch }
+    pub fn new(x: f64, y: f64, z: f64, epoch: TT) -> CoordResult<Self> {
+        if !(x.is_finite() && y.is_finite() && z.is_finite()) {
+            return Err(CoordError::invalid_coordinate(
+                "TIRS position must be finite",
+            ));
+        }
+        Ok(Self { x, y, z, epoch })
     }
 
     pub fn x(&self) -> f64 {
@@ -42,204 +49,24 @@ impl TIRSPosition {
         Vector3::new(self.x, self.y, self.z)
     }
 
-    pub fn from_position_vector(pos: Vector3, epoch: TT) -> Self {
+    pub fn from_position_vector(pos: Vector3, epoch: TT) -> CoordResult<Self> {
         Self::new(pos.x, pos.y, pos.z, epoch)
     }
 
     pub fn geocentric_distance(&self) -> f64 {
-        libm::sqrt(self.x * self.x + self.y * self.y + self.z * self.z)
+        self.position_vector().magnitude()
     }
 
     pub fn distance_to(&self, other: &Self) -> f64 {
-        let dx = self.x - other.x;
-        let dy = self.y - other.y;
-        let dz = self.z - other.z;
-        libm::sqrt(dx * dx + dy * dy + dz * dz)
+        (self.position_vector() - other.position_vector()).magnitude()
     }
 
-    fn polar_motion_matrix(xp: f64, yp: f64, sp: f64) -> [[f64; 3]; 3] {
-        let mut matrix = [[0.0; 3]; 3];
-        matrix[0][0] = 1.0;
-        matrix[1][1] = 1.0;
-        matrix[2][2] = 1.0;
-
-        Self::apply_rotation_z(&mut matrix, sp);
-        Self::apply_rotation_y(&mut matrix, -xp);
-        Self::apply_rotation_x(&mut matrix, -yp);
-
-        matrix
+    pub fn to_cirs(&self, eop: &EopParameters) -> CoordResult<CIRSPosition> {
+        EarthRotation::new(&self.epoch, eop)?.tirs_to_cirs(self)
     }
 
-    fn apply_rotation_z(matrix: &mut [[f64; 3]; 3], angle: f64) {
-        let (s, c) = libm::sincos(angle);
-        let temp = *matrix;
-
-        for j in 0..3 {
-            matrix[0][j] = c * temp[0][j] + s * temp[1][j];
-            matrix[1][j] = -s * temp[0][j] + c * temp[1][j];
-        }
-    }
-
-    fn apply_rotation_y(matrix: &mut [[f64; 3]; 3], angle: f64) {
-        let (s, c) = libm::sincos(angle);
-        let temp = *matrix;
-
-        for j in 0..3 {
-            matrix[0][j] = c * temp[0][j] - s * temp[2][j];
-            matrix[2][j] = s * temp[0][j] + c * temp[2][j];
-        }
-    }
-
-    fn apply_rotation_x(matrix: &mut [[f64; 3]; 3], angle: f64) {
-        let (s, c) = libm::sincos(angle);
-        let temp = *matrix;
-
-        for j in 0..3 {
-            matrix[1][j] = c * temp[1][j] + s * temp[2][j];
-            matrix[2][j] = -s * temp[1][j] + c * temp[2][j];
-        }
-    }
-
-    /// Computes ΔT (TT - UT1) using EOP parameters.
-    ///
-    /// # EOP Freshness Check
-    /// Rejects EOP data >1 day from the target epoch. This ensures UT1-UTC is current, as
-    /// Earth's rotation is irregular. For sparse datasets, consider:
-    /// - Using an interpolator to fill gaps (see `EopManager`)
-    /// - Relaxing this check if lower precision is acceptable (modify this threshold)
-    /// - Pre-fetching/caching EOP data for your observation window
-    ///
-    /// Typical use cases handle this via interpolation, so sparse raw data should be rare.
-    pub fn compute_delta_t(epoch: &TT, eop: &crate::eop::EopParameters) -> CoordResult<f64> {
-        use celestial_time::scales::conversions::{ToTAI, ToUTC};
-
-        let epoch_jd = epoch.to_julian_date().to_f64();
-        let eop_jd = eop.mjd + celestial_core::constants::MJD_ZERO_POINT;
-
-        if (epoch_jd - eop_jd).abs() > 1.0 {
-            return Err(crate::CoordError::data_unavailable(
-                "EOP data is more than 1 day from epoch - Delta-T computation may be inaccurate",
-            ));
-        }
-
-        let tai = epoch
-            .to_tai()
-            .map_err(|e| crate::CoordError::external_library("TT to TAI", &e.to_string()))?;
-        let utc = tai
-            .to_utc()
-            .map_err(|e| crate::CoordError::external_library("TAI to UTC", &e.to_string()))?;
-
-        let utc_jd = utc.to_julian_date().to_f64();
-        let ut1_jd = utc_jd + eop.ut1_utc / celestial_core::constants::SECONDS_PER_DAY_F64;
-
-        let delta_t_days = epoch_jd - ut1_jd;
-        let delta_t_seconds = delta_t_days * celestial_core::constants::SECONDS_PER_DAY_F64;
-
-        Ok(delta_t_seconds)
-    }
-
-    pub fn to_itrs(
-        &self,
-        epoch: &TT,
-        eop: &crate::eop::EopParameters,
-    ) -> CoordResult<ITRSPosition> {
-        let delta_t_seconds = Self::compute_delta_t(epoch, eop)?;
-        let ut1 = epoch.to_ut1_with_delta_t(delta_t_seconds)?;
-        let era = earth_rotation_angle(&ut1.to_julian_date())?;
-
-        let (sin_era, cos_era) = libm::sincos(era);
-
-        let x_after_era = cos_era * self.x + sin_era * self.y;
-        let y_after_era = -sin_era * self.x + cos_era * self.y;
-        let z_after_era = self.z;
-
-        let xp_rad = eop.x_p * ARCSEC_TO_RAD;
-        let yp_rad = eop.y_p * ARCSEC_TO_RAD;
-
-        let polar_motion_matrix = Self::polar_motion_matrix(xp_rad, yp_rad, eop.s_prime);
-
-        let x_itrs = polar_motion_matrix[0][0] * x_after_era
-            + polar_motion_matrix[0][1] * y_after_era
-            + polar_motion_matrix[0][2] * z_after_era;
-        let y_itrs = polar_motion_matrix[1][0] * x_after_era
-            + polar_motion_matrix[1][1] * y_after_era
-            + polar_motion_matrix[1][2] * z_after_era;
-        let z_itrs = polar_motion_matrix[2][0] * x_after_era
-            + polar_motion_matrix[2][1] * y_after_era
-            + polar_motion_matrix[2][2] * z_after_era;
-
-        Ok(ITRSPosition::new(x_itrs, y_itrs, z_itrs, *epoch))
-    }
-
-    pub fn from_itrs(
-        itrs: &ITRSPosition,
-        epoch: &TT,
-        eop: &crate::eop::EopParameters,
-    ) -> CoordResult<Self> {
-        let xp_rad = eop.x_p * ARCSEC_TO_RAD;
-        let yp_rad = eop.y_p * ARCSEC_TO_RAD;
-
-        let polar_motion_matrix = Self::polar_motion_matrix(xp_rad, yp_rad, eop.s_prime);
-
-        let x_before_pm = polar_motion_matrix[0][0] * itrs.x()
-            + polar_motion_matrix[1][0] * itrs.y()
-            + polar_motion_matrix[2][0] * itrs.z();
-        let y_before_pm = polar_motion_matrix[0][1] * itrs.x()
-            + polar_motion_matrix[1][1] * itrs.y()
-            + polar_motion_matrix[2][1] * itrs.z();
-        let z_before_pm = polar_motion_matrix[0][2] * itrs.x()
-            + polar_motion_matrix[1][2] * itrs.y()
-            + polar_motion_matrix[2][2] * itrs.z();
-
-        let delta_t_seconds = Self::compute_delta_t(epoch, eop)?;
-        let ut1 = epoch.to_ut1_with_delta_t(delta_t_seconds)?;
-        let era = earth_rotation_angle(&ut1.to_julian_date())?;
-
-        let (sin_era, cos_era) = libm::sincos(era);
-
-        let x_tirs = cos_era * x_before_pm - sin_era * y_before_pm;
-        let y_tirs = sin_era * x_before_pm + cos_era * y_before_pm;
-        let z_tirs = z_before_pm;
-
-        Ok(Self::new(x_tirs, y_tirs, z_tirs, *epoch))
-    }
-
-    pub fn from_cirs(
-        cirs_vec: Vector3,
-        epoch: &TT,
-        eop: &crate::eop::EopParameters,
-    ) -> CoordResult<Self> {
-        let delta_t_seconds = Self::compute_delta_t(epoch, eop)?;
-        let ut1 = epoch.to_ut1_with_delta_t(delta_t_seconds)?;
-        let era = earth_rotation_angle(&ut1.to_julian_date())?;
-
-        let (sin_era, cos_era) = libm::sincos(era);
-
-        let x_tirs = cos_era * cirs_vec.x - sin_era * cirs_vec.y;
-        let y_tirs = sin_era * cirs_vec.x + cos_era * cirs_vec.y;
-        let z_tirs = cirs_vec.z;
-
-        Ok(Self::new(x_tirs, y_tirs, z_tirs, *epoch))
-    }
-
-    pub fn to_cirs(
-        &self,
-        eop: &crate::eop::EopParameters,
-    ) -> CoordResult<crate::frames::CIRSPosition> {
-        use crate::frames::CIRSPosition;
-
-        let delta_t_seconds = Self::compute_delta_t(&self.epoch, eop)?;
-        let ut1 = self.epoch.to_ut1_with_delta_t(delta_t_seconds)?;
-        let era = earth_rotation_angle(&ut1.to_julian_date())?;
-
-        let (sin_era, cos_era) = libm::sincos(era);
-
-        let x_cirs = cos_era * self.x + sin_era * self.y;
-        let y_cirs = -sin_era * self.x + cos_era * self.y;
-        let z_cirs = self.z;
-
-        let cirs_vec = Vector3::new(x_cirs, y_cirs, z_cirs);
-        CIRSPosition::from_unit_vector(cirs_vec, self.epoch)
+    pub fn to_itrs(&self, eop: &EopParameters) -> CoordResult<ITRSPosition> {
+        EarthRotation::new(&self.epoch, eop)?.tirs_to_itrs(self)
     }
 }
 
@@ -247,7 +74,7 @@ impl std::fmt::Display for TIRSPosition {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "TIRS(X={:.3}m, Y={:.3}m, Z={:.3}m, epoch=J{:.1})",
+            "TIRS(X={:.3}, Y={:.3}, Z={:.3}, epoch=J{:.1})",
             self.x,
             self.y,
             self.z,
@@ -259,12 +86,15 @@ impl std::fmt::Display for TIRSPosition {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use celestial_core::constants::TWOPI;
+    use celestial_core::constants::{J2000_JD, MJD_ZERO_POINT, WGS84_SEMI_MAJOR_AXIS};
+    use celestial_core::test_helpers::assert_ulp_le;
+
+    const MJD_J2000: f64 = J2000_JD - MJD_ZERO_POINT;
 
     #[test]
     fn test_tirs_creation() {
         let epoch = TT::j2000();
-        let pos = TIRSPosition::new(1000000.0, 2000000.0, 3000000.0, epoch);
+        let pos = TIRSPosition::new(1000000.0, 2000000.0, 3000000.0, epoch).unwrap();
 
         assert_eq!(pos.x(), 1000000.0);
         assert_eq!(pos.y(), 2000000.0);
@@ -275,14 +105,14 @@ mod tests {
     #[test]
     fn test_vector_operations() {
         let epoch = TT::j2000();
-        let original = TIRSPosition::new(1000.0, 2000.0, 3000.0, epoch);
+        let original = TIRSPosition::new(1000.0, 2000.0, 3000.0, epoch).unwrap();
 
         let vec = original.position_vector();
         assert_eq!(vec.x, 1000.0);
         assert_eq!(vec.y, 2000.0);
         assert_eq!(vec.z, 3000.0);
 
-        let recovered = TIRSPosition::from_position_vector(vec, epoch);
+        let recovered = TIRSPosition::from_position_vector(vec, epoch).unwrap();
         assert_eq!(recovered.x(), original.x());
         assert_eq!(recovered.y(), original.y());
         assert_eq!(recovered.z(), original.z());
@@ -292,199 +122,175 @@ mod tests {
     fn test_distance_calculations() {
         let epoch = TT::j2000();
 
-        let pos1 = TIRSPosition::new(1000.0, 0.0, 0.0, epoch);
-        let pos2 = TIRSPosition::new(2000.0, 0.0, 0.0, epoch);
+        let pos1 = TIRSPosition::new(1000.0, 0.0, 0.0, epoch).unwrap();
+        let pos2 = TIRSPosition::new(2000.0, 0.0, 0.0, epoch).unwrap();
 
-        // Distance between positions
         assert_eq!(pos1.distance_to(&pos2), 1000.0);
         assert_eq!(pos2.distance_to(&pos1), 1000.0);
 
-        // Distance from origin
         assert_eq!(pos1.geocentric_distance(), 1000.0);
         assert_eq!(pos2.geocentric_distance(), 2000.0);
     }
 
     #[test]
     fn test_itrs_transformation_roundtrip() {
-        use crate::eop::EopRecord;
+        use crate::eop::record::EopRecord;
 
         let epoch = TT::j2000();
-        let original_tirs = TIRSPosition::new(4000000.0, 3000000.0, 5000000.0, epoch);
+        let original_tirs = TIRSPosition::new(4000000.0, 3000000.0, 5000000.0, epoch).unwrap();
 
-        let eop = EopRecord::new(51544.5, 0.0, 0.0, 0.3, 0.0)
+        // Without polar motion the two frames coincide at J2000, so give it some to undo.
+        let eop = EopRecord::new(MJD_J2000, 0.1, 0.2, 0.3)
             .unwrap()
             .to_parameters();
 
-        // Transform to ITRS and back
-        let itrs = original_tirs.to_itrs(&epoch, &eop).unwrap();
-        let recovered_tirs = TIRSPosition::from_itrs(&itrs, &epoch, &eop).unwrap();
+        let itrs = original_tirs.to_itrs(&eop).unwrap();
+        let recovered_tirs = itrs.to_tirs(&eop).unwrap();
 
-        // Should roundtrip with floating-point precision (rotation with EOP-based Delta-T)
-        // Allow 2 ULP due to additional operations in Delta-T calculation
-        celestial_core::test_helpers::assert_ulp_le(
-            recovered_tirs.x(),
-            original_tirs.x(),
-            2,
-            "X roundtrip",
-        );
-        celestial_core::test_helpers::assert_ulp_le(
-            recovered_tirs.y(),
-            original_tirs.y(),
-            2,
-            "Y roundtrip",
-        );
-        celestial_core::test_helpers::assert_ulp_le(
-            recovered_tirs.z(),
-            original_tirs.z(),
-            2,
-            "Z roundtrip",
-        );
+        assert_ulp_le(recovered_tirs.x(), original_tirs.x(), 1, "X roundtrip");
+        assert_ulp_le(recovered_tirs.y(), original_tirs.y(), 1, "Y roundtrip");
+        assert_ulp_le(recovered_tirs.z(), original_tirs.z(), 1, "Z roundtrip");
     }
 
     #[test]
-    fn test_itrs_transformation_properties() {
-        use crate::eop::EopRecord;
+    fn test_itrs_is_tirs_without_polar_motion_at_j2000() {
+        use crate::eop::record::EopRecord;
 
+        // s' is zero at J2000, so with no polar motion the two frames coincide.
         let epoch = TT::j2000();
-        let tirs = TIRSPosition::new(1000000.0, 0.0, 0.0, epoch);
-
-        let eop = EopRecord::new(51544.5, 0.0, 0.0, 0.3, 0.0)
+        let tirs = TIRSPosition::new(1000000.0, -2000000.0, 3000000.0, epoch).unwrap();
+        let eop = EopRecord::new(MJD_J2000, 0.0, 0.0, 0.3)
             .unwrap()
             .to_parameters();
 
-        let itrs = tirs.to_itrs(&epoch, &eop).unwrap();
+        let itrs = tirs.to_itrs(&eop).unwrap();
 
-        // Z coordinate should be unchanged (rotation around Z-axis)
-        assert_eq!(itrs.z(), tirs.z());
+        assert_eq!(itrs.position_vector(), tirs.position_vector());
+    }
 
-        // Distance from origin should be preserved
-        celestial_core::test_helpers::assert_ulp_le(
-            itrs.geocentric_distance(),
-            tirs.geocentric_distance(),
-            1,
-            "Distance preservation",
+    #[test]
+    fn test_polar_motion_moves_the_pole_toward_x_p() {
+        use crate::eop::record::EopRecord;
+
+        // The CIP sits at (x_p, -y_p) in the ITRS.
+        let epoch = TT::j2000();
+        let pole = TIRSPosition::new(0.0, 0.0, 1.0, epoch).unwrap();
+        let eop = EopRecord::new(MJD_J2000, 0.3, 0.0, 0.3)
+            .unwrap()
+            .to_parameters();
+        let xp = eop.x_p * celestial_core::constants::ARCSEC_TO_RAD;
+
+        let itrs = pole.to_itrs(&eop).unwrap();
+
+        assert_eq!(
+            itrs.position_vector(),
+            Vector3::new(libm::sin(xp), 0.0, libm::cos(xp))
         );
-
-        // X and Y should change due to Earth rotation (unless ERA = 0)
-        let delta_t_seconds = 69.184;
-        let ut1 = epoch.to_ut1_with_delta_t(delta_t_seconds).unwrap();
-        let era = earth_rotation_angle(&ut1.to_julian_date()).unwrap();
-        if era != 0.0 {
-            // Only test if ERA is non-zero (it should be for J2000)
-            assert!(itrs.x() != tirs.x() || itrs.y() != tirs.y());
-        }
     }
 
     #[test]
     fn test_display_formatting() {
-        let epoch = TT::j2000();
-        let pos = TIRSPosition::new(1234567.89, -987654.32, 555666.77, epoch);
+        let pos = TIRSPosition::new(1234567.89, -987654.32, 555666.77, TT::j2000()).unwrap();
+        assert_eq!(
+            pos.to_string(),
+            "TIRS(X=1234567.890, Y=-987654.320, Z=555666.770, epoch=J2000.0)"
+        );
+    }
 
-        let display = format!("{}", pos);
-        assert!(display.contains("TIRS"));
-        assert!(display.contains("1234567.890m"));
-        assert!(display.contains("-987654.320m"));
-        assert!(display.contains("555666.770m"));
-        assert!(display.contains("J2000.0"));
+    #[test]
+    fn test_non_finite_position_is_err() {
+        let epoch = TT::j2000();
+        for (x, y, z) in [
+            (f64::NAN, 0.0, 0.0),
+            (0.0, f64::INFINITY, 0.0),
+            (1.0, 0.0, f64::NEG_INFINITY),
+        ] {
+            assert!(
+                TIRSPosition::new(x, y, z, epoch).is_err(),
+                "({x}, {y}, {z})"
+            );
+        }
+        let vector = Vector3::new(0.0, 0.0, f64::NAN);
+        assert!(TIRSPosition::from_position_vector(vector, epoch).is_err());
     }
 
     #[test]
     fn test_itrs_consistency() {
-        use crate::eop::EopRecord;
+        use crate::eop::record::EopRecord;
 
         let epoch = TT::j2000();
-        let itrs_original = ITRSPosition::new(2000000.0, 1000000.0, 6000000.0, epoch);
+        let itrs_original = ITRSPosition::new(2000000.0, 1000000.0, 6000000.0, epoch).unwrap();
 
-        let eop = EopRecord::new(51544.5, 0.0, 0.0, 0.3, 0.0)
+        let eop = EopRecord::new(MJD_J2000, 0.1, 0.2, 0.3)
             .unwrap()
             .to_parameters();
 
-        // Transform ITRS -> TIRS -> ITRS
-        let tirs = TIRSPosition::from_itrs(&itrs_original, &epoch, &eop).unwrap();
-        let itrs_recovered = tirs.to_itrs(&epoch, &eop).unwrap();
+        let tirs = itrs_original.to_tirs(&eop).unwrap();
+        let itrs_recovered = tirs.to_itrs(&eop).unwrap();
 
-        // Should roundtrip with floating-point precision
-        celestial_core::test_helpers::assert_ulp_le(
-            itrs_recovered.x(),
-            itrs_original.x(),
-            1,
-            "ITRS X roundtrip",
-        );
-        celestial_core::test_helpers::assert_ulp_le(
-            itrs_recovered.y(),
-            itrs_original.y(),
-            1,
-            "ITRS Y roundtrip",
-        );
-        celestial_core::test_helpers::assert_ulp_le(
-            itrs_recovered.z(),
-            itrs_original.z(),
-            1,
-            "ITRS Z roundtrip",
-        );
+        assert_ulp_le(itrs_recovered.x(), itrs_original.x(), 1, "ITRS X roundtrip");
+        assert_ulp_le(itrs_recovered.y(), itrs_original.y(), 1, "ITRS Y roundtrip");
+        assert_ulp_le(itrs_recovered.z(), itrs_original.z(), 1, "ITRS Z roundtrip");
     }
 
     #[test]
-    fn test_earth_rotation_angle_usage() {
-        use crate::eop::EopRecord;
+    fn test_non_finite_eop_is_rejected() {
+        use crate::eop::record::{EopParameters, EopRecord};
+        use crate::frames::cirs::CIRSPosition;
 
         let epoch = TT::j2000();
-
-        let eop = EopRecord::new(51544.5, 0.0, 0.0, 0.3, 0.0)
+        let good = EopRecord::new(MJD_J2000, 0.1, 0.2, 0.3)
             .unwrap()
             .to_parameters();
-
-        let delta_t_seconds = TIRSPosition::compute_delta_t(&epoch, &eop).unwrap();
-        let ut1 = epoch.to_ut1_with_delta_t(delta_t_seconds).unwrap();
-        let era = earth_rotation_angle(&ut1.to_julian_date()).unwrap();
-
-        assert!(era >= 0.0);
-        assert!(era < TWOPI);
-
-        let tirs_x_axis = TIRSPosition::new(6378137.0, 0.0, 0.0, epoch);
-        let itrs = tirs_x_axis.to_itrs(&epoch, &eop).unwrap();
-
-        let expected_x = 6378137.0 * libm::cos(era);
-        let expected_y = -6378137.0 * libm::sin(era);
-
-        celestial_core::test_helpers::assert_ulp_le(
-            itrs.x(),
-            expected_x,
-            1,
-            "ERA X transformation",
-        );
-        celestial_core::test_helpers::assert_ulp_le(
-            itrs.y(),
-            expected_y,
-            1,
-            "ERA Y transformation",
-        );
-        assert_eq!(itrs.z(), 0.0);
-    }
-
-    #[test]
-    fn test_eop_timing_check() {
-        use crate::eop::EopRecord;
-
-        let epoch = TT::j2000();
-        let eop_old = EopRecord::new(51542.0, 0.0, 0.0, 0.3, 0.0)
-            .unwrap()
-            .to_parameters();
-
-        let result = TIRSPosition::compute_delta_t(&epoch, &eop_old);
-        assert!(result.is_err());
+        let cirs = CIRSPosition::from_degrees(10.0, 20.0, epoch).unwrap();
+        let tirs = TIRSPosition::new(1.0, 0.0, 0.0, epoch).unwrap();
+        let cases = [
+            (
+                "mjd",
+                EopParameters {
+                    mjd: f64::NAN,
+                    ..good.clone()
+                },
+            ),
+            (
+                "ut1_utc",
+                EopParameters {
+                    ut1_utc: f64::NAN,
+                    ..good.clone()
+                },
+            ),
+            (
+                "x_p",
+                EopParameters {
+                    x_p: f64::NAN,
+                    ..good.clone()
+                },
+            ),
+            (
+                "y_p",
+                EopParameters {
+                    y_p: f64::INFINITY,
+                    ..good.clone()
+                },
+            ),
+        ];
+        for (field, eop) in cases {
+            assert!(cirs.to_tirs(&eop).is_err(), "CIRS to TIRS, {field}");
+            assert!(tirs.to_cirs(&eop).is_err(), "TIRS to CIRS, {field}");
+            assert!(tirs.to_itrs(&eop).is_err(), "TIRS to ITRS, {field}");
+        }
     }
 
     #[test]
     fn test_cirs_transformation() {
-        use crate::eop::EopRecord;
+        use crate::eop::record::EopRecord;
 
         let epoch = TT::j2000();
-        let eop = EopRecord::new(51544.5, 0.0, 0.0, 0.3, 0.0)
+        let eop = EopRecord::new(MJD_J2000, 0.0, 0.0, 0.3)
             .unwrap()
             .to_parameters();
 
-        let tirs = TIRSPosition::new(6378137.0, 0.0, 0.0, epoch);
+        let tirs = TIRSPosition::new(WGS84_SEMI_MAJOR_AXIS, 0.0, 0.0, epoch).unwrap();
 
         let cirs = tirs.to_cirs(&eop).unwrap();
 
