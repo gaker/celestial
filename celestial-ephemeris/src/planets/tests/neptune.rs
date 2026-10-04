@@ -26,9 +26,9 @@ fn vsop2013_vs_reference() {
         let tdb = TDB::from_julian_date(JulianDate::new(*jd, 0.0));
         let pos = neptune.heliocentric_position(&tdb).unwrap();
 
-        let dx = pos[0] - x_exp;
-        let dy = pos[1] - y_exp;
-        let dz = pos[2] - z_exp;
+        let dx = pos.x - x_exp;
+        let dy = pos.y - y_exp;
+        let dz = pos.z - z_exp;
         let error_km = libm::sqrt(dx * dx + dy * dy + dz * dz) * AU_KM;
 
         if error_km > max_error_km {
@@ -50,9 +50,9 @@ fn vsop2013_j2000() {
     let pos = neptune.heliocentric_position(&tdb).unwrap();
 
     let expected = (16.8120479567, -22.9801038994, -9.8244204429);
-    let dx = pos[0] - expected.0;
-    let dy = pos[1] - expected.1;
-    let dz = pos[2] - expected.2;
+    let dx = pos.x - expected.0;
+    let dy = pos.y - expected.1;
+    let dz = pos.z - expected.2;
     let error_km = libm::sqrt(dx * dx + dy * dy + dz * dz) * AU_KM;
 
     assert!(

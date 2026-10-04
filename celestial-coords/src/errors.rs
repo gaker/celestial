@@ -1,4 +1,4 @@
-use celestial_core::AstroError;
+use celestial_core::errors::AstroError;
 use thiserror::Error;
 
 #[cfg(feature = "serde")]

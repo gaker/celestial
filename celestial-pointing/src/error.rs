@@ -19,6 +19,12 @@ pub enum Error {
 
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
+
+    #[error("core error: {0}")]
+    Core(#[from] celestial_core::errors::AstroError),
+
+    #[error("coordinate error: {0}")]
+    Coord(#[from] celestial_coords::CoordError),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;

@@ -2,8 +2,9 @@ mod coefficients;
 
 use crate::{CoordError, CoordResult};
 use celestial_core::{
+    angle::Angle,
     constants::{DAYS_PER_JULIAN_YEAR, J2000_JD, SPEED_OF_LIGHT_AU_PER_DAY, TWOPI},
-    Angle, Vector3,
+    matrix::Vector3,
 };
 use celestial_time::TT;
 use coefficients::Coefficients;
@@ -175,7 +176,7 @@ pub fn remove_light_deflection(
     deflected_direction: Vector3,
     sun_to_observer: Vector3,
     sun_observer_distance_au: f64,
-) -> Vector3 {
+) -> CoordResult<Vector3> {
     // We compute: d = forward(estimate) - estimate, then refine: estimate = observed - d
     let mut d = Vector3::zeros();
 
@@ -186,7 +187,7 @@ pub fn remove_light_deflection(
             deflected_direction.y - d.y,
             deflected_direction.z - d.z,
         )
-        .normalize();
+        .normalize()?;
 
         // Apply forward deflection to the estimate
         let after = apply_light_deflection(before, sun_to_observer, sun_observer_distance_au);
@@ -196,12 +197,12 @@ pub fn remove_light_deflection(
     }
 
     // Final result
-    Vector3::new(
+    Ok(Vector3::new(
         deflected_direction.x - d.x,
         deflected_direction.y - d.y,
         deflected_direction.z - d.z,
     )
-    .normalize()
+    .normalize()?)
 }
 
 /// Remove stellar aberration (inverse operation).
@@ -209,7 +210,7 @@ pub fn remove_aberration(
     apparent_direction: Vector3,
     velocity_au_day: Vector3,
     sun_earth_distance_au: f64,
-) -> Vector3 {
+) -> CoordResult<Vector3> {
     // Iterative approach matching ERFA's eraAticq
     let mut d = Vector3::zeros();
 
@@ -220,7 +221,7 @@ pub fn remove_aberration(
             apparent_direction.y - d.y,
             apparent_direction.z - d.z,
         )
-        .normalize();
+        .normalize()?;
 
         // Apply forward aberration to the estimate
         let after = apply_aberration(before, velocity_au_day, sun_earth_distance_au);
@@ -230,12 +231,12 @@ pub fn remove_aberration(
     }
 
     // Final result
-    Vector3::new(
+    Ok(Vector3::new(
         apparent_direction.x - d.x,
         apparent_direction.y - d.y,
         apparent_direction.z - d.z,
     )
-    .normalize()
+    .normalize()?)
 }
 
 pub fn apply_aberration(
@@ -266,26 +267,24 @@ pub fn apply_aberration(
     Vector3::new(p2.x / r, p2.y / r, p2.z / r)
 }
 
-pub fn apply_annual_aberration(ra: Angle, dec: Angle, tt: &TT) -> (Angle, Angle) {
+pub fn apply_annual_aberration(ra: Angle, dec: Angle, tt: &TT) -> CoordResult<(Angle, Angle)> {
     annual_shift(ra, dec, tt, true)
 }
 
-pub fn remove_annual_aberration(ra: Angle, dec: Angle, tt: &TT) -> (Angle, Angle) {
+pub fn remove_annual_aberration(ra: Angle, dec: Angle, tt: &TT) -> CoordResult<(Angle, Angle)> {
     annual_shift(ra, dec, tt, false)
 }
 
-fn annual_shift(ra: Angle, dec: Angle, tt: &TT, apply: bool) -> (Angle, Angle) {
-    let Ok(state) = compute_earth_state(tt) else {
-        return (ra, dec);
-    };
+fn annual_shift(ra: Angle, dec: Angle, tt: &TT, apply: bool) -> CoordResult<(Angle, Angle)> {
+    let state = compute_earth_state(tt)?;
     let sun_distance_au = state.heliocentric_position.magnitude();
     let direction = ra_dec_to_unit(ra, dec);
     let corrected = if apply {
         apply_aberration(direction, state.barycentric_velocity, sun_distance_au)
     } else {
-        remove_aberration(direction, state.barycentric_velocity, sun_distance_au)
+        remove_aberration(direction, state.barycentric_velocity, sun_distance_au)?
     };
-    unit_to_ra_dec(corrected)
+    Ok(unit_to_ra_dec(corrected))
 }
 
 fn ra_dec_to_unit(ra: Angle, dec: Angle) -> Vector3 {
@@ -348,12 +347,13 @@ mod tests {
             Vector3::new(1.0, 0.0, 0.0),
             Vector3::new(0.0, 1.0, 0.0),
             Vector3::new(0.0, 0.0, 1.0),
-            Vector3::new(1.0, 1.0, 1.0).normalize(),
+            Vector3::new(1.0, 1.0, 1.0).normalize().unwrap(),
         ];
 
         for dir in directions {
             let aberrated = apply_aberration(dir, state.barycentric_velocity, sun_dist);
-            let recovered = remove_aberration(aberrated, state.barycentric_velocity, sun_dist);
+            let recovered =
+                remove_aberration(aberrated, state.barycentric_velocity, sun_dist).unwrap();
 
             let diff = libm::sqrt(
                 (dir.x - recovered.x).powi(2)
@@ -370,10 +370,10 @@ mod tests {
     fn test_remove_aberration_is_inverse() {
         let velocity = Vector3::new(0.01, 0.005, 0.002);
         let sun_dist = 1.0;
-        let original = Vector3::new(0.6, 0.7, 0.3).normalize();
+        let original = Vector3::new(0.6, 0.7, 0.3).normalize().unwrap();
 
         let aberrated = apply_aberration(original, velocity, sun_dist);
-        let recovered = remove_aberration(aberrated, velocity, sun_dist);
+        let recovered = remove_aberration(aberrated, velocity, sun_dist).unwrap();
 
         let diff = libm::sqrt(
             (original.x - recovered.x).powi(2)
@@ -394,7 +394,7 @@ mod tests {
     }
 
     fn arcsec_diff(a: Angle, b: Angle) -> f64 {
-        (a - b).wrapped().arcseconds().abs()
+        (a - b).wrapped().unwrap().arcseconds().abs()
     }
 
     #[test]
@@ -402,7 +402,7 @@ mod tests {
         let tt = spring_equinox_tt();
         let ra = Angle::from_hours(0.0);
         let dec = Angle::from_degrees(0.0);
-        let (ra2, dec2) = apply_annual_aberration(ra, dec, &tt);
+        let (ra2, dec2) = apply_annual_aberration(ra, dec, &tt).unwrap();
         let shift = arcsec_diff(ra, ra2) + arcsec_diff(dec, dec2);
         assert!(
             shift > 5.0 && shift < 45.0,
@@ -416,8 +416,8 @@ mod tests {
         let tt = spring_equinox_tt();
         let ra = Angle::from_hours(12.0);
         let dec = Angle::from_degrees(30.0);
-        let (ra2, dec2) = apply_annual_aberration(ra, dec, &tt);
-        let (ra3, dec3) = remove_annual_aberration(ra2, dec2, &tt);
+        let (ra2, dec2) = apply_annual_aberration(ra, dec, &tt).unwrap();
+        let (ra3, dec3) = remove_annual_aberration(ra2, dec2, &tt).unwrap();
         assert!(
             arcsec_diff(ra, ra3) < 0.01,
             "ra drift {}",
@@ -434,8 +434,8 @@ mod tests {
     fn annual_aberration_varies_by_sky_position() {
         let tt = spring_equinox_tt();
         let dec = Angle::from_degrees(0.0);
-        let (ra_a, dec_a) = apply_annual_aberration(Angle::from_hours(0.0), dec, &tt);
-        let (ra_b, dec_b) = apply_annual_aberration(Angle::from_hours(12.0), dec, &tt);
+        let (ra_a, dec_a) = apply_annual_aberration(Angle::from_hours(0.0), dec, &tt).unwrap();
+        let (ra_b, dec_b) = apply_annual_aberration(Angle::from_hours(12.0), dec, &tt).unwrap();
         let shift_a = arcsec_diff(Angle::from_hours(0.0), ra_a) + arcsec_diff(dec, dec_a);
         let shift_b = arcsec_diff(Angle::from_hours(12.0), ra_b) + arcsec_diff(dec, dec_b);
         assert!(

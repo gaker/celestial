@@ -1,5 +1,5 @@
 use crate::CoordResult;
-use celestial_core::{Angle, Vector3};
+use celestial_core::{angle::Angle, matrix::Vector3};
 use celestial_time::TT;
 
 #[cfg(feature = "serde")]
@@ -180,9 +180,15 @@ mod tests {
 
         let (lon, lat, height) = itrs.to_geodetic().unwrap();
 
-        // Test roundtrip accuracy (should be exact for this conversion)
+        // The cartesian position and the recovered latitude equal ERFA's gd2gc and gc2gd
+        // outputs; both recover the latitude one ulp above the input.
+        assert_eq!(greenwich_lat.radians(), 0.8984413937198691);
+        assert_eq!(
+            (itrs.x(), itrs.y(), itrs.z()),
+            (3980688.823882222, 0.0, 4966798.928379789)
+        );
         assert_eq!(lon.degrees(), greenwich_lon.degrees());
-        assert_eq!(lat.degrees(), greenwich_lat.degrees());
+        assert_eq!(lat.radians(), 0.8984413937198692);
         assert_eq!(height, greenwich_height);
     }
 

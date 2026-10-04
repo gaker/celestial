@@ -13,7 +13,8 @@
 //!   2000 nutation model (MHB2000), used in IAU 2000A nutation.
 //!
 //! All methods are implemented on `f64` representing time in Julian centuries (TDB)
-//! from J2000.0. Results are in radians, normalized to [0, 2π) where applicable.
+//! from J2000.0. Results are in radians. Where reduced with `fmod`, they lie in (-2π, 2π)
+//! and keep the sign of the unreduced value, so they can be negative for t < 0.
 //!
 //! # References
 //!
@@ -31,8 +32,8 @@ use crate::math::fmod;
 ///
 /// # Usage
 ///
-/// ```
-/// use celestial_core::nutation::IERS2010FundamentalArgs;
+/// ```ignore
+/// use celestial_core::nutation::fundamental_args::IERS2010FundamentalArgs;
 ///
 /// let t: f64 = 0.1; // Julian centuries from J2000.0
 /// let l = t.moon_mean_anomaly();
@@ -62,8 +63,8 @@ pub trait IERS2010FundamentalArgs {
 
     /// General accumulated precession in longitude (radians).
     ///
-    /// This is the precession of the ecliptic along the equator, not normalized
-    /// to [0, 2π).
+    /// This is the precession of the equator along the ecliptic, not reduced
+    /// modulo 2π.
     fn precession(&self) -> f64;
 
     /// Mean anomaly of the Moon (radians), denoted l.
@@ -83,6 +84,10 @@ pub trait IERS2010FundamentalArgs {
     /// The point where the Moon's orbit crosses the ecliptic from south to
     /// north.
     fn moon_ascending_node_longitude(&self) -> f64;
+
+    fn sun_mean_anomaly(&self) -> f64;
+
+    fn mean_elongation(&self) -> f64;
 }
 
 impl IERS2010FundamentalArgs for f64 {
@@ -123,7 +128,7 @@ impl IERS2010FundamentalArgs for f64 {
 
     #[inline]
     fn precession(&self) -> f64 {
-        0.024381750 * self + 0.00000538691 * self * self
+        (0.024381750 + 0.00000538691 * self) * self
     }
 
     #[inline]
@@ -146,6 +151,30 @@ impl IERS2010FundamentalArgs for f64 {
             + self * (-6962890.5431 + self * (7.4722 + self * (0.007702 - self * 0.00005939)));
         fmod(om, CIRCULAR_ARCSECONDS) * ARCSEC_TO_RAD
     }
+
+    #[inline]
+    fn sun_mean_anomaly(&self) -> f64 {
+        sun_mean_anomaly_from(1287104.793048, *self)
+    }
+
+    #[inline]
+    fn mean_elongation(&self) -> f64 {
+        mean_elongation_from(1072260.703692, *self)
+    }
+}
+
+// IERS 2003/2010 and MHB2000 share these polynomials; MHB2000 rounds the constant terms
+// to 1287104.79305 and 1072260.70369.
+#[inline]
+fn sun_mean_anomaly_from(l0: f64, t: f64) -> f64 {
+    let lp = l0 + t * (129596581.0481 + t * (-0.5532 + t * (0.000136 - t * 0.00001149)));
+    fmod(lp, CIRCULAR_ARCSECONDS) * ARCSEC_TO_RAD
+}
+
+#[inline]
+fn mean_elongation_from(d0: f64, t: f64) -> f64 {
+    let d = d0 + t * (1602961601.2090 + t * (-6.3706 + t * (0.006593 - t * 0.00003169)));
+    fmod(d, CIRCULAR_ARCSECONDS) * ARCSEC_TO_RAD
 }
 
 /// Additional fundamental arguments from the MHB2000 nutation model.
@@ -156,8 +185,8 @@ impl IERS2010FundamentalArgs for f64 {
 ///
 /// # Usage
 ///
-/// ```
-/// use celestial_core::nutation::MHB2000FundamentalArgs;
+/// ```ignore
+/// use celestial_core::nutation::fundamental_args::MHB2000FundamentalArgs;
 ///
 /// let t: f64 = 0.1; // Julian centuries from J2000.0
 /// let lp = t.sun_mean_anomaly_mhb();
@@ -181,20 +210,29 @@ pub trait MHB2000FundamentalArgs {
 impl MHB2000FundamentalArgs for f64 {
     #[inline]
     fn sun_mean_anomaly_mhb(&self) -> f64 {
-        let lp = 1287104.79305
-            + self * (129596581.0481 + self * (-0.5532 + self * (0.000136 - self * 0.00001149)));
-        fmod(lp, CIRCULAR_ARCSECONDS) * ARCSEC_TO_RAD
+        sun_mean_anomaly_from(1287104.79305, *self)
     }
 
     #[inline]
     fn mean_elongation_mhb(&self) -> f64 {
-        let d = 1072260.70369
-            + self * (1602961601.2090 + self * (-6.3706 + self * (0.006593 - self * 0.00003169)));
-        fmod(d, CIRCULAR_ARCSECONDS) * ARCSEC_TO_RAD
+        mean_elongation_from(1072260.70369, *self)
     }
 
     #[inline]
     fn neptune_longitude_mhb(&self) -> f64 {
         fmod(5.321159000 + 3.8127774000 * self, TWOPI)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // eraFapa03 outputs. t_erfa_c.c only uses t = 0.8, where the evaluation order of
+    // the polynomial makes no difference to the result.
+    #[test]
+    fn test_precession_matches_erfa_fapa03() {
+        assert_eq!(6.0_f64.precession(), 0.14648442876);
+        assert_eq!((-12.0_f64).precession(), -0.29180528496);
     }
 }

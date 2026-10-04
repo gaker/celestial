@@ -147,7 +147,7 @@ let provider = EopProvider::from_finals_str(&text_content)?;
 
 ```rust
 use celestial_coords::{TopocentricPosition, Distance};
-use celestial_core::{Angle, Location};
+use celestial_core::{angle::Angle, location::Location};
 use celestial_time::TT;
 
 let observer = Location::from_degrees(19.8283, -155.4783, 4145.0)?; // Keck

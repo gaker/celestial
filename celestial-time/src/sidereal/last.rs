@@ -6,7 +6,7 @@ use crate::scales::{TT, UT1};
 use crate::transforms::nutation::NutationCalculator;
 use crate::TimeResult;
 use celestial_core::angle::wrap_0_2pi;
-use celestial_core::Location;
+use celestial_core::location::Location;
 
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
@@ -22,9 +22,9 @@ impl LAST {
     pub fn from_ut1_tt_and_location(ut1: &UT1, tt: &TT, location: &Location) -> TimeResult<Self> {
         let gast = GAST::from_ut1_and_tt(ut1, tt)?;
 
-        let last_rad = gast.radians() + location.longitude;
+        let last_rad = gast.radians() + location.longitude();
 
-        let last_normalized = wrap_0_2pi(last_rad);
+        let last_normalized = wrap_0_2pi(last_rad)?;
 
         let angle = SiderealAngle::from_radians_exact(last_normalized);
 
@@ -94,7 +94,7 @@ impl LAST {
     }
 
     pub fn to_gast(&self) -> GAST {
-        let longitude_hours = self.location.longitude * 12.0 / celestial_core::constants::PI;
+        let longitude_hours = self.location.longitude() * 12.0 / celestial_core::constants::PI;
 
         let gast_hours = self.hours() - longitude_hours;
 
@@ -105,7 +105,8 @@ impl LAST {
         let nutation = tt.nutation_iau2006a()?;
 
         let jd = tt.to_julian_date();
-        let mean_obliquity = celestial_core::obliquity::iau_2006_mean_obliquity(jd.jd1(), jd.jd2());
+        let mean_obliquity =
+            celestial_core::obliquity::iau_2006_mean_obliquity(jd.jd1(), jd.jd2())?;
 
         let ee_rad = nutation.nutation_longitude() * libm::cos(mean_obliquity);
         let ee_hours = ee_rad * 12.0 / celestial_core::constants::PI;
@@ -124,8 +125,8 @@ impl LAST {
 
 impl std::fmt::Display for LAST {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let lat_deg = self.location.latitude * celestial_core::constants::RAD_TO_DEG;
-        let lon_deg = self.location.longitude * celestial_core::constants::RAD_TO_DEG;
+        let lat_deg = self.location.latitude() * celestial_core::constants::RAD_TO_DEG;
+        let lon_deg = self.location.longitude() * celestial_core::constants::RAD_TO_DEG;
         write!(
             f,
             "LAST {} at ({:.4}°, {:.4}°)",
@@ -226,7 +227,7 @@ mod tests {
         let gast = GAST::from_ut1_and_tt(&ut1, &tt).unwrap();
 
         // Calculate longitude correction manually
-        let longitude_hours = location.longitude * 12.0 / celestial_core::constants::PI;
+        let longitude_hours = location.longitude() * 12.0 / celestial_core::constants::PI;
 
         // LAST should equal GAST + longitude correction
         let expected_last = gast.hours() + longitude_hours;
@@ -293,7 +294,7 @@ mod tests {
         let original_gast = GAST::from_hours(15.5);
 
         // Convert GAST -> LAST -> GAST
-        let longitude_hours = location.longitude * 12.0 / celestial_core::constants::PI;
+        let longitude_hours = location.longitude() * 12.0 / celestial_core::constants::PI;
         let last_hours = original_gast.hours() + longitude_hours;
         let last = LAST::from_hours(last_hours, &location);
         let recovered_gast = last.to_gast();
@@ -368,9 +369,9 @@ mod tests {
 
         // Location is always available and cannot be None/invalid
         let stored_location = last.location();
-        assert_eq!(stored_location.latitude, location.latitude);
-        assert_eq!(stored_location.longitude, location.longitude);
-        assert_eq!(stored_location.height, location.height);
+        assert_eq!(stored_location.latitude(), location.latitude());
+        assert_eq!(stored_location.longitude(), location.longitude());
+        assert_eq!(stored_location.height(), location.height());
     }
 
     #[test]
@@ -459,9 +460,9 @@ mod tests {
 
         // Test location() accessor
         let stored_location = last_deg.location();
-        assert_eq!(stored_location.latitude, location.latitude);
-        assert_eq!(stored_location.longitude, location.longitude);
-        assert_eq!(stored_location.height, location.height);
+        assert_eq!(stored_location.latitude(), location.latitude());
+        assert_eq!(stored_location.longitude(), location.longitude());
+        assert_eq!(stored_location.height(), location.height());
 
         // Test degrees() method
         let degrees = last_deg.degrees();

@@ -6,7 +6,7 @@
 use anyhow::{ensure, Result};
 use celestial_catalog::query::Catalog;
 use celestial_coords::ICRSPosition;
-use celestial_core::math::vincenty_angular_separation;
+use celestial_core::{angle::Angle, math::angular_separation};
 use celestial_time::JulianDate;
 
 use celestial_images::formats::{Image, PixelData};
@@ -526,16 +526,13 @@ pub(crate) fn check_center_offset_sanity(
 }
 
 fn wcs_to_hint_separation_deg(wcs: &WcsSolution, meta: &ImageMetadata) -> f64 {
-    let hint_dec = meta.hint.dec().radians();
-    let wcs_dec = wcs.crval2.to_radians();
-    vincenty_angular_separation(
-        libm::sin(hint_dec),
-        libm::cos(hint_dec),
-        libm::sin(wcs_dec),
-        libm::cos(wcs_dec),
-        wcs.crval1.to_radians() - meta.hint.ra().radians(),
-    )
-    .to_degrees()
+    let separation = angular_separation(
+        meta.hint.ra().radians(),
+        meta.hint.dec().radians(),
+        Angle::from_degrees(wcs.crval1).radians(),
+        Angle::from_degrees(wcs.crval2).radians(),
+    );
+    Angle::from_radians(separation).degrees()
 }
 
 fn fov_diagonal_deg(wcs: &WcsSolution, width: usize, height: usize) -> f64 {

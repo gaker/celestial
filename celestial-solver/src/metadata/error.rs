@@ -54,9 +54,9 @@ pub enum MetadataError {
     AngleParse {
         /// Offending header value.
         value: String,
-        /// Underlying parse error from [`celestial_core::AstroError`].
+        /// Underlying parse error from [`celestial_core::errors::AstroError`].
         #[source]
-        source: celestial_core::AstroError,
+        source: celestial_core::errors::AstroError,
     },
 
     /// The computed position is invalid (out-of-range declination, non-finite value).

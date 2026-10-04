@@ -1,7 +1,7 @@
 use celestial_catalog::query::catalog::FLAG_SOURCE_HIPPARCOS;
 use celestial_catalog::query::{cone_search, Catalog, ConeSearchParams, ConeSearchResult};
+use celestial_core::angle::Angle;
 use celestial_core::angle::{AngleUnits, DmsFmt, HmsFmt};
-use celestial_core::Angle;
 use celestial_time::JulianDate;
 use clap::{Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;

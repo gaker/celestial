@@ -15,7 +15,7 @@ impl From<LAST> for GAST {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use celestial_core::Location;
+    use celestial_core::location::Location;
 
     fn mauna_kea() -> Location {
         Location::from_degrees(19.8283, -155.4783, 4145.0).unwrap()
@@ -45,7 +45,7 @@ mod tests {
     fn test_gmst_to_lmst_conversion() {
         let location = mauna_kea();
         let gmst = GMST::from_hours(12.0);
-        let lmst = gmst.to_lmst(&location);
+        let lmst = gmst.to_lmst(&location).unwrap();
 
         let expected_hours = 12.0 + (-155.4783 / 15.0);
         let expected_normalized = if expected_hours < 0.0 {
@@ -60,7 +60,7 @@ mod tests {
     fn test_gast_to_last_conversion() {
         let location = mauna_kea();
         let gast = GAST::from_hours(12.0);
-        let last = gast.to_last(&location);
+        let last = gast.to_last(&location).unwrap();
 
         let expected_hours = 12.0 + (-155.4783 / 15.0);
         let expected_normalized = if expected_hours < 0.0 {

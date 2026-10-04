@@ -5,7 +5,7 @@
 
 use crate::observation::{Observation, PierSide};
 use crate::solver::{FitResult, IterReport, ObsDiagnostic, RankInfo};
-use celestial_core::Angle;
+use celestial_core::angle::Angle;
 
 /// Build an `Observation` with overridable fields.
 ///

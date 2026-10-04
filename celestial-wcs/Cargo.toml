@@ -14,3 +14,6 @@ celestial-core.workspace = true
 celestial-coords.workspace = true
 thiserror.workspace = true
 libm.workspace = true
+
+[dev-dependencies]
+celestial-core = { workspace = true, features = ["test-support"] }

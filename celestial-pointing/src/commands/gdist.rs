@@ -18,7 +18,7 @@ impl Command for Gdist {
 
     fn execute(&self, session: &mut Session, args: &[&str]) -> Result<CommandOutput> {
         require_fit(session)?;
-        let residuals = compute_residuals(session);
+        let residuals = compute_residuals(session)?;
         if residuals.is_empty() {
             return Ok(CommandOutput::Text("No active observations".to_string()));
         }

@@ -7,7 +7,10 @@ use crate::{
     transforms::CoordinateFrame,
     CoordError, CoordResult, Distance,
 };
-use celestial_core::{matrix::RotationMatrix3, Angle, Vector3};
+use celestial_core::{
+    angle::Angle,
+    matrix::{RotationMatrix3, Vector3},
+};
 use celestial_time::{
     scales::conversions::ToUT1WithDeltaT, sidereal::GAST, transforms::NutationCalculator, TT,
 };
@@ -134,11 +137,12 @@ impl CIRSPosition {
             nutation.nutation_obliquity(),
         );
 
-        let cio_solution = celestial_core::CioSolution::calculate(&npb_matrix, t).map_err(|e| {
-            CoordError::CoreError {
-                message: format!("CIO calculation failed: {}", e),
-            }
-        })?;
+        let cio_solution =
+            celestial_core::cio::CioSolution::calculate(&npb_matrix, t).map_err(|e| {
+                CoordError::CoreError {
+                    message: format!("CIO calculation failed: {}", e),
+                }
+            })?;
 
         let (x, y) = match eop {
             Some(eop) => (
@@ -148,7 +152,11 @@ impl CIRSPosition {
             None => (cio_solution.cip.x, cio_solution.cip.y),
         };
 
-        Ok(celestial_core::gcrs_to_cirs_matrix(x, y, cio_solution.s))
+        celestial_core::cio::gcrs_to_cirs_matrix(x, y, cio_solution.s).map_err(|e| {
+            CoordError::CoreError {
+                message: format!("GCRS-to-CIRS matrix failed: {}", e),
+            }
+        })
     }
 
     /// Transforms this CIRS position to Terrestrial Intermediate Reference System (TIRS).
@@ -168,16 +176,16 @@ impl CIRSPosition {
 
     pub fn to_hour_angle(
         &self,
-        observer: &celestial_core::Location,
+        observer: &celestial_core::location::Location,
         delta_t: f64,
     ) -> CoordResult<crate::frames::HourAnglePosition> {
         let ut1 = self.epoch.to_ut1_with_delta_t(delta_t)?;
         let gast = GAST::from_ut1_and_tt(&ut1, &self.epoch)?;
 
-        let last = gast.to_last(observer);
+        let last = gast.to_last(observer)?;
 
         let ha_rad = last.radians() - self.ra.radians();
-        let ha = celestial_core::angle::wrap_pm_pi(ha_rad);
+        let ha = celestial_core::angle::wrap_pm_pi(ha_rad)?;
 
         crate::frames::HourAnglePosition::new(
             Angle::from_radians(ha),
@@ -205,7 +213,7 @@ impl CoordinateFrame for CIRSPosition {
             apparent_vec,
             earth_state.barycentric_velocity,
             sun_earth_dist,
-        );
+        )?;
 
         // Sun to observer unit vector (heliocentric position normalized)
         let sun_to_earth = Vector3::new(
@@ -215,7 +223,7 @@ impl CoordinateFrame for CIRSPosition {
         );
 
         // Step 3: Remove gravitational light deflection
-        let icrs_vec = remove_light_deflection(deflected_vec, sun_to_earth, sun_earth_dist);
+        let icrs_vec = remove_light_deflection(deflected_vec, sun_to_earth, sun_earth_dist)?;
 
         let mut icrs = ICRSPosition::from_unit_vector(icrs_vec)?;
 

@@ -1,19 +1,9 @@
-use super::core::Angle;
+use super::Angle;
 use crate::constants::{HALF_PI, PI};
-use crate::{AstroError, MathErrorKind};
+use crate::errors::{AstroError, MathErrorKind};
 
 pub fn validate_right_ascension(angle: Angle) -> Result<Angle, AstroError> {
-    let rad = angle.radians();
-    if rad.is_finite() {
-        let normalized = super::normalize::wrap_0_2pi(rad);
-        return Ok(Angle::from_radians(normalized));
-    }
-
-    Err(AstroError::math_error(
-        "validate_right_ascension",
-        MathErrorKind::NotFinite,
-        "RA Not Finite",
-    ))
+    angle.normalized()
 }
 
 /// Validates declination angle.
@@ -21,63 +11,50 @@ pub fn validate_right_ascension(angle: Angle) -> Result<Angle, AstroError> {
 /// - `beyond_pole = false`: standard range [-90°, +90°]
 /// - `beyond_pole = true`: extended range [-180°, +180°] for GEM pier-flipped observations
 ///
-/// The extended range supports the TPOINT beyond-the-pole convention where German Equatorial
+/// The extended range supports the beyond-the-pole convention where German Equatorial
 /// Mounts use Dec values from 90° to 180° for pier-flipped observations.
 pub fn validate_declination(angle: Angle, beyond_pole: bool) -> Result<Angle, AstroError> {
-    let rad = angle.radians();
-    if !rad.is_finite() {
-        return Err(AstroError::math_error(
-            "validate_declination",
-            MathErrorKind::NotFinite,
-            "Dec not Finite",
-        ));
-    }
-
-    let (limit, range_desc) = if beyond_pole {
-        (PI, "[-180°, +180°]")
+    let limit = if beyond_pole {
+        Limit::BEYOND_POLE
     } else {
-        (HALF_PI, "[-90°, +90°]")
+        Limit::POLE
     };
-
-    if (-limit..=limit).contains(&rad) {
-        return Ok(angle);
-    }
-
-    Err(AstroError::math_error(
-        "validate_declination",
-        MathErrorKind::OutOfRange,
-        &format!("Dec {:.2}° out of range {}", angle.degrees(), range_desc),
-    ))
+    check_within(angle, limit, "validate_declination", "Declination")
 }
 
 pub fn validate_latitude(angle: Angle) -> Result<Angle, AstroError> {
-    validate_declination(angle, false)
+    check_within(angle, Limit::POLE, "validate_latitude", "Latitude")
 }
 
-pub fn validate_longitude(angle: Angle, normalize: bool) -> Result<Angle, AstroError> {
+struct Limit {
+    rad: f64,
+    range: &'static str,
+}
+
+impl Limit {
+    const POLE: Self = Self {
+        rad: HALF_PI,
+        range: "[-90°, +90°]",
+    };
+    const BEYOND_POLE: Self = Self {
+        rad: PI,
+        range: "[-180°, +180°]",
+    };
+}
+
+fn check_within(angle: Angle, limit: Limit, op: &str, name: &str) -> Result<Angle, AstroError> {
+    use MathErrorKind::{NotFinite, OutOfRange};
     let rad = angle.radians();
     if !rad.is_finite() {
-        return Err(AstroError::math_error(
-            "validate_longitude",
-            MathErrorKind::NotFinite,
-            "Lon not finite",
-        ));
+        let reason = format!("{name} not finite");
+        return Err(AstroError::math_error(op, NotFinite, &reason));
     }
-
-    if normalize {
-        let normalized = super::normalize::wrap_0_2pi(rad);
-        return Ok(Angle::from_radians(normalized));
-    }
-
-    if (-PI..=PI).contains(&rad) {
+    if (-limit.rad..=limit.rad).contains(&rad) {
         return Ok(angle);
     }
-
-    Err(AstroError::math_error(
-        "validate_longitude",
-        MathErrorKind::OutOfRange,
-        "Lon out of range",
-    ))
+    let degrees = angle.degrees();
+    let reason = format!("{name} {degrees:.2}° out of range {}", limit.range);
+    Err(AstroError::math_error(op, OutOfRange, &reason))
 }
 
 #[cfg(test)]
@@ -87,9 +64,12 @@ mod tests {
 
     #[test]
     fn test_validate_right_ascension_valid() {
-        let angle = Angle::from_degrees(45.0);
-        let result = validate_right_ascension(angle);
-        assert!(result.is_ok());
+        let in_range = Angle::from_radians(0.75);
+        assert_eq!(validate_right_ascension(in_range).unwrap().radians(), 0.75);
+
+        let negative = Angle::from_radians(-HALF_PI);
+        let wrapped = validate_right_ascension(negative).unwrap();
+        assert_eq!(wrapped.radians(), TWOPI - HALF_PI);
     }
 
     #[test]
@@ -116,68 +96,58 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_validate_declination() {
-        // Valid standard range
-        assert!(validate_declination(Angle::from_degrees(45.0), false).is_ok());
-        assert!(validate_declination(Angle::from_degrees(-90.0), false).is_ok());
+    fn message(result: Result<Angle, AstroError>) -> String {
+        result.unwrap_err().to_string()
+    }
 
-        // Out of standard range
-        assert!(validate_declination(Angle::from_degrees(95.0), false).is_err());
-
-        // Valid with beyond_pole
-        assert!(validate_declination(Angle::from_degrees(120.0), true).is_ok());
-
-        // Not finite
-        assert!(validate_declination(Angle::from_radians(f64::NAN), false).is_err());
+    fn accepted(result: Result<Angle, AstroError>) -> f64 {
+        result.unwrap().radians()
     }
 
     #[test]
-    fn test_validate_latitude_delegates_to_declination() {
-        let valid = Angle::from_degrees(45.0);
-        assert!(validate_latitude(valid).is_ok());
-
-        let invalid = Angle::from_degrees(95.0);
-        assert!(validate_latitude(invalid).is_err());
-    }
-
-    #[test]
-    fn test_validate_longitude_valid() {
-        let angle = Angle::from_degrees(45.0);
-        let result = validate_longitude(angle, false);
-        assert!(result.is_ok());
-    }
-
-    #[test]
-    fn test_validate_longitude_not_finite() {
-        let angle = Angle::from_radians(f64::NAN);
-        let result = validate_longitude(angle, false);
-        assert!(result.is_err());
-        if let Err(AstroError::MathError { kind, .. }) = result {
-            assert_eq!(kind, MathErrorKind::NotFinite);
-        } else {
-            panic!("Expected MathError with NotFinite");
+    fn test_validate_declination_accepts_closed_range() {
+        for rad in [-HALF_PI, 0.75, HALF_PI] {
+            let angle = Angle::from_radians(rad);
+            assert_eq!(accepted(validate_declination(angle, false)), rad);
+        }
+        for rad in [-PI, 2.0, PI] {
+            let angle = Angle::from_radians(rad);
+            assert_eq!(accepted(validate_declination(angle, true)), rad);
         }
     }
 
     #[test]
-    fn test_validate_longitude_normalized() {
-        let angle = Angle::from_degrees(370.0);
-        let result = validate_longitude(angle, true);
-        assert!(result.is_ok());
-        let normalized = result.unwrap();
-        assert!(normalized.radians() >= 0.0 && normalized.radians() < TWOPI);
+    fn test_validate_declination_errors() {
+        assert_eq!(
+            message(validate_declination(Angle::from_degrees(95.0), false)),
+            "Math error in validate_declination (out of range): Declination 95.00° out of range [-90°, +90°]"
+        );
+        assert_eq!(
+            message(validate_declination(Angle::from_degrees(-185.0), true)),
+            "Math error in validate_declination (out of range): Declination -185.00° out of range [-180°, +180°]"
+        );
+        assert_eq!(
+            message(validate_declination(Angle::from_radians(f64::NAN), false)),
+            "Math error in validate_declination (not finite): Declination not finite"
+        );
     }
 
     #[test]
-    fn test_validate_longitude_out_of_range() {
-        let angle = Angle::from_degrees(190.0);
-        let result = validate_longitude(angle, false);
-        assert!(result.is_err());
-        if let Err(AstroError::MathError { kind, .. }) = result {
-            assert_eq!(kind, MathErrorKind::OutOfRange);
-        } else {
-            panic!("Expected MathError with OutOfRange");
+    fn test_validate_latitude_accepts_closed_range() {
+        for rad in [-HALF_PI, 0.75, HALF_PI] {
+            assert_eq!(accepted(validate_latitude(Angle::from_radians(rad))), rad);
         }
+    }
+
+    #[test]
+    fn test_validate_latitude_errors_name_latitude() {
+        assert_eq!(
+            message(validate_latitude(Angle::from_degrees(95.0))),
+            "Math error in validate_latitude (out of range): Latitude 95.00° out of range [-90°, +90°]"
+        );
+        assert_eq!(
+            message(validate_latitude(Angle::from_radians(f64::INFINITY))),
+            "Math error in validate_latitude (not finite): Latitude not finite"
+        );
     }
 }

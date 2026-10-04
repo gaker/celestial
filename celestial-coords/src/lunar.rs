@@ -1,7 +1,7 @@
 use crate::{CoordResult, ICRSPosition};
+use celestial_core::angle::Angle;
+use celestial_core::angle::{wrap_0_2pi, wrap_pm_pi};
 use celestial_core::constants::{DEG_TO_RAD, J2000_JD};
-use celestial_core::utils::{normalize_angle_rad, normalize_angle_to_positive};
-use celestial_core::Angle;
 use celestial_time::TT;
 
 const LUNAR_AXIAL_INCLINATION_DEG: f64 = 1.5424;
@@ -18,11 +18,11 @@ pub struct LunarOrientation {
     pub position_angle: Angle,
 }
 
-pub fn compute_lunar_orientation(epoch: &TT) -> LunarOrientation {
-    let (lib_lon, lib_lat) = compute_optical_libration_internal(epoch);
-    let position_angle = compute_position_angle_internal(epoch);
+pub fn compute_lunar_orientation(epoch: &TT) -> CoordResult<LunarOrientation> {
+    let (lib_lon, lib_lat) = compute_optical_libration_internal(epoch)?;
+    let position_angle = compute_position_angle_internal(epoch)?;
 
-    LunarOrientation {
+    Ok(LunarOrientation {
         optical_libration: LunarLibration {
             longitude: Angle::from_radians(lib_lon),
             latitude: Angle::from_radians(lib_lat),
@@ -32,27 +32,27 @@ pub fn compute_lunar_orientation(epoch: &TT) -> LunarOrientation {
             latitude: Angle::from_radians(lib_lat),
         },
         position_angle: Angle::from_radians(position_angle),
-    }
+    })
 }
 
-pub fn compute_optical_libration(epoch: &TT) -> (Angle, Angle) {
-    let (lon, lat) = compute_optical_libration_internal(epoch);
-    (Angle::from_radians(lon), Angle::from_radians(lat))
+pub fn compute_optical_libration(epoch: &TT) -> CoordResult<(Angle, Angle)> {
+    let (lon, lat) = compute_optical_libration_internal(epoch)?;
+    Ok((Angle::from_radians(lon), Angle::from_radians(lat)))
 }
 
-pub fn compute_sub_earth_point(epoch: &TT) -> (Angle, Angle) {
+pub fn compute_sub_earth_point(epoch: &TT) -> CoordResult<(Angle, Angle)> {
     compute_optical_libration(epoch)
 }
 
-fn compute_optical_libration_internal(epoch: &TT) -> (f64, f64) {
+fn compute_optical_libration_internal(epoch: &TT) -> CoordResult<(f64, f64)> {
     let jd = epoch.to_julian_date();
     let d = (jd.jd1() - J2000_JD) + jd.jd2();
     let t = d / celestial_core::constants::DAYS_PER_JULIAN_CENTURY;
 
-    let _mean_anomaly = moon_mean_anomaly(t);
-    let mean_argument_latitude = moon_argument_latitude(t);
-    let mean_elongation = moon_mean_elongation(t);
-    let ascending_node = moon_ascending_node(t);
+    let _mean_anomaly = moon_mean_anomaly(t)?;
+    let mean_argument_latitude = moon_argument_latitude(t)?;
+    let mean_elongation = moon_mean_elongation(t)?;
+    let ascending_node = moon_ascending_node(t)?;
 
     let lib_lon = -0.02752 * libm::cos(ascending_node)
         - 0.02245 * libm::sin(mean_argument_latitude)
@@ -76,18 +76,15 @@ fn compute_optical_libration_internal(epoch: &TT) -> (f64, f64) {
     let lib_lon_rad = lib_lon * 10.0 * DEG_TO_RAD;
     let lib_lat_rad = lib_lat * 10.0 * DEG_TO_RAD;
 
-    (
-        normalize_angle_rad(lib_lon_rad),
-        normalize_angle_rad(lib_lat_rad),
-    )
+    Ok((wrap_pm_pi(lib_lon_rad)?, wrap_pm_pi(lib_lat_rad)?))
 }
 
-fn compute_position_angle_internal(epoch: &TT) -> f64 {
+fn compute_position_angle_internal(epoch: &TT) -> CoordResult<f64> {
     let jd = epoch.to_julian_date();
     let d = (jd.jd1() - J2000_JD) + jd.jd2();
     let t = d / celestial_core::constants::DAYS_PER_JULIAN_CENTURY;
 
-    let ascending_node = moon_ascending_node(t);
+    let ascending_node = moon_ascending_node(t)?;
     let obliquity = mean_obliquity(t);
     let i_prime = LUNAR_AXIAL_INCLINATION_RAD;
 
@@ -100,31 +97,31 @@ fn compute_position_angle_internal(epoch: &TT) -> f64 {
     let x = is * vs;
     let y = is * vc * oc - ic * os;
 
-    libm::atan2(y, x)
+    Ok(libm::atan2(y, x))
 }
 
-fn moon_mean_anomaly(t: f64) -> f64 {
+fn moon_mean_anomaly(t: f64) -> CoordResult<f64> {
     let m_prime = 134.9633964 + 477198.8675055 * t + 0.0087414 * t * t + t * t * t / 69699.0
         - t * t * t * t / 14712000.0;
-    normalize_angle_to_positive(m_prime * DEG_TO_RAD)
+    Ok(wrap_0_2pi(m_prime * DEG_TO_RAD)?)
 }
 
-fn moon_argument_latitude(t: f64) -> f64 {
+fn moon_argument_latitude(t: f64) -> CoordResult<f64> {
     let f = 93.272095 + 483202.0175233 * t - 0.0036539 * t * t - t * t * t / 3526000.0
         + t * t * t * t / 863310000.0;
-    normalize_angle_to_positive(f * DEG_TO_RAD)
+    Ok(wrap_0_2pi(f * DEG_TO_RAD)?)
 }
 
-fn moon_mean_elongation(t: f64) -> f64 {
+fn moon_mean_elongation(t: f64) -> CoordResult<f64> {
     let d = 297.8501921 + 445267.1114034 * t - 0.0018819 * t * t + t * t * t / 545868.0
         - t * t * t * t / 113065000.0;
-    normalize_angle_to_positive(d * DEG_TO_RAD)
+    Ok(wrap_0_2pi(d * DEG_TO_RAD)?)
 }
 
-fn moon_ascending_node(t: f64) -> f64 {
+fn moon_ascending_node(t: f64) -> CoordResult<f64> {
     let omega = 125.0445479 - 1934.1362891 * t + 0.0020754 * t * t + t * t * t / 467441.0
         - t * t * t * t / 60616000.0;
-    normalize_angle_to_positive(omega * DEG_TO_RAD)
+    Ok(wrap_0_2pi(omega * DEG_TO_RAD)?)
 }
 
 fn mean_obliquity(t: f64) -> f64 {
@@ -138,19 +135,19 @@ pub(crate) fn get_moon_icrs(epoch: &TT) -> CoordResult<ICRSPosition> {
     let t = d / celestial_core::constants::DAYS_PER_JULIAN_CENTURY;
 
     let l_prime = 218.3164477 + 481267.88123421 * t;
-    let l_prime = normalize_angle_to_positive(l_prime * DEG_TO_RAD);
+    let l_prime = wrap_0_2pi(l_prime * DEG_TO_RAD)?;
 
     let d_moon = 297.8501921 + 445267.1114034 * t;
-    let d_moon = normalize_angle_to_positive(d_moon * DEG_TO_RAD);
+    let d_moon = wrap_0_2pi(d_moon * DEG_TO_RAD)?;
 
     let m = 357.5291092 + 35999.0502909 * t;
-    let m = normalize_angle_to_positive(m * DEG_TO_RAD);
+    let m = wrap_0_2pi(m * DEG_TO_RAD)?;
 
     let m_prime = 134.9633964 + 477198.8675055 * t;
-    let m_prime = normalize_angle_to_positive(m_prime * DEG_TO_RAD);
+    let m_prime = wrap_0_2pi(m_prime * DEG_TO_RAD)?;
 
     let f = 93.272095 + 483202.0175233 * t;
-    let f = normalize_angle_to_positive(f * DEG_TO_RAD);
+    let f = wrap_0_2pi(f * DEG_TO_RAD)?;
 
     let moon_lon = l_prime
         + 6.289 * DEG_TO_RAD * libm::sin(m_prime)
@@ -175,7 +172,7 @@ pub(crate) fn get_moon_icrs(epoch: &TT) -> CoordResult<ICRSPosition> {
     let dec = libm::asin(sin_lat * cos_eps + cos_lat * sin_eps * sin_lon);
 
     ICRSPosition::new(
-        Angle::from_radians(normalize_angle_to_positive(ra)),
+        Angle::from_radians(wrap_0_2pi(ra)?),
         Angle::from_radians(dec),
     )
 }
@@ -196,7 +193,7 @@ mod tests {
         ];
 
         for epoch in &epochs {
-            let (lon, _) = compute_optical_libration(epoch);
+            let (lon, _) = compute_optical_libration(epoch).unwrap();
             assert!(
                 lon.degrees().abs() <= 8.5,
                 "Libration longitude = {} degrees exceeds expected range ±7.9°",
@@ -216,7 +213,7 @@ mod tests {
         ];
 
         for epoch in &epochs {
-            let (_, lat) = compute_optical_libration(epoch);
+            let (_, lat) = compute_optical_libration(epoch).unwrap();
             assert!(
                 lat.degrees().abs() <= 7.5,
                 "Libration latitude = {} degrees exceeds expected range ±6.7°",
@@ -228,8 +225,8 @@ mod tests {
     #[test]
     fn test_sub_earth_point_equals_optical_libration() {
         let epoch = TT::j2000();
-        let (lib_lon, lib_lat) = compute_optical_libration(&epoch);
-        let (sub_lon, sub_lat) = compute_sub_earth_point(&epoch);
+        let (lib_lon, lib_lat) = compute_optical_libration(&epoch).unwrap();
+        let (sub_lon, sub_lat) = compute_sub_earth_point(&epoch).unwrap();
 
         assert_eq!(lib_lon.radians(), sub_lon.radians());
         assert_eq!(lib_lat.radians(), sub_lat.radians());
@@ -238,7 +235,7 @@ mod tests {
     #[test]
     fn test_lunar_orientation_combined() {
         let epoch = TT::j2000();
-        let orientation = compute_lunar_orientation(&epoch);
+        let orientation = compute_lunar_orientation(&epoch).unwrap();
 
         assert!(
             orientation.optical_libration.longitude.degrees().abs() <= 8.5,
@@ -267,8 +264,8 @@ mod tests {
         let start = TT::j2000();
         let end = TT::from_julian_date(JulianDate::new(J2000_JD + 27.3, 0.0));
 
-        let (lon_start, lat_start) = compute_optical_libration(&start);
-        let (lon_end, lat_end) = compute_optical_libration(&end);
+        let (lon_start, lat_start) = compute_optical_libration(&start).unwrap();
+        let (lon_end, lat_end) = compute_optical_libration(&end).unwrap();
 
         let lon_diff = (lon_end.degrees() - lon_start.degrees()).abs();
         let lat_diff = (lat_end.degrees() - lat_start.degrees()).abs();

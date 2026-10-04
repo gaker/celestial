@@ -1,5 +1,5 @@
 use crate::Distance;
-use celestial_core::Vector3;
+use celestial_core::matrix::Vector3;
 
 const C_AU_PER_DAY: f64 = 173.1446326846693;
 

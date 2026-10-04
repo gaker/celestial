@@ -1,5 +1,5 @@
 use crate::{transforms::CoordinateFrame, CoordError, CoordResult, Distance};
-use celestial_core::{Angle, Vector3};
+use celestial_core::{angle::Angle, matrix::Vector3};
 use celestial_time::TT;
 
 #[cfg(feature = "serde")]
@@ -135,15 +135,12 @@ impl ICRSPosition {
     }
 
     pub fn angular_separation(&self, other: &Self) -> Angle {
-        let (sin_dec1, cos_dec1) = self.dec.sin_cos();
-        let (sin_dec2, cos_dec2) = other.dec.sin_cos();
-        let delta_ra = (self.ra - other.ra).radians();
-
-        let angle_rad = celestial_core::math::vincenty_angular_separation(
-            sin_dec1, cos_dec1, sin_dec2, cos_dec2, delta_ra,
-        );
-
-        Angle::from_radians(angle_rad)
+        Angle::from_radians(celestial_core::math::angular_separation(
+            self.ra.radians(),
+            self.dec.radians(),
+            other.ra.radians(),
+            other.dec.radians(),
+        ))
     }
 
     pub fn is_near_pole(&self) -> bool {

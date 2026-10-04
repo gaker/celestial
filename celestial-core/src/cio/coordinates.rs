@@ -21,13 +21,14 @@
 //! (~0.02 arcseconds). The validation threshold of 0.2 radians (~11 degrees) catches
 //! obviously invalid matrices while allowing for long-term secular drift.
 
+use crate::angle::Angle;
 use crate::errors::{AstroError, AstroResult};
 use crate::matrix::RotationMatrix3;
 
 /// Position of the Celestial Intermediate Pole in the GCRS.
 ///
 /// X and Y are the direction cosines of the CIP unit vector projected onto
-/// the GCRS equatorial plane. They're extracted from elements [2][0] and [2][1]
+/// the GCRS equatorial plane. They're extracted from elements `[2][0]` and `[2][1]`
 /// of the NPB (nutation-precession-bias) matrix.
 ///
 /// Units are radians internally. Use [`to_arcseconds`](Self::to_arcseconds) for display.
@@ -49,7 +50,7 @@ impl CipCoordinates {
     /// Extracts CIP coordinates from a nutation-precession-bias matrix.
     ///
     /// The NPB matrix transforms GCRS to mean-of-date coordinates. X and Y
-    /// are taken from the third row (elements [2][0] and [2][1]), which
+    /// are taken from the third row (elements `[2][0]` and `[2][1]`), which
     /// represents the CIP direction in GCRS.
     ///
     /// # Errors
@@ -62,7 +63,8 @@ impl CipCoordinates {
         let x = matrix[2][0];
         let y = matrix[2][1];
 
-        if x.abs() > 0.2 || y.abs() > 0.2 {
+        let in_range = libm::fabs(x) <= 0.2 && libm::fabs(y) <= 0.2;
+        if !in_range {
             return Err(AstroError::math_error(
                 "CIP coordinate extraction",
                 crate::errors::MathErrorKind::InvalidInput,
@@ -86,8 +88,8 @@ impl CipCoordinates {
     /// Returns (X, Y) converted to degrees.
     pub fn to_degrees(&self) -> (f64, f64) {
         (
-            self.x * crate::constants::RAD_TO_DEG,
-            self.y * crate::constants::RAD_TO_DEG,
+            Angle::from_radians(self.x).degrees(),
+            Angle::from_radians(self.y).degrees(),
         )
     }
 
@@ -97,8 +99,8 @@ impl CipCoordinates {
     /// in publications and IERS bulletins.
     pub fn to_arcseconds(&self) -> (f64, f64) {
         (
-            self.x * crate::constants::RAD_TO_DEG * 3600.0,
-            self.y * crate::constants::RAD_TO_DEG * 3600.0,
+            Angle::from_radians(self.x).arcseconds(),
+            Angle::from_radians(self.y).arcseconds(),
         )
     }
 }
@@ -125,7 +127,20 @@ mod tests {
     #[test]
     fn test_cip_magnitude() {
         let cip = CipCoordinates::new(3e-6, 4e-6);
-        assert!((cip.magnitude() - 5e-6).abs() < 1e-12);
+        assert_eq!(cip.magnitude(), 5e-6);
+    }
+
+    // Inputs where the raw RAD_TO_DEG product (and RAD_TO_DEG * 3600) lands 1 ULP off the
+    // correctly rounded conversion.
+    #[test]
+    fn test_cip_unit_conversions_are_correctly_rounded() {
+        let cip = CipCoordinates::new(0.003, 0.006);
+        assert_eq!(cip.to_degrees(), (0.17188733853924695, 0.3437746770784939));
+        let cip = CipCoordinates::new(1e-7, 2e-7);
+        assert_eq!(
+            cip.to_arcseconds(),
+            (0.020626480624709634, 0.04125296124941927)
+        );
     }
 
     #[test]
@@ -138,30 +153,19 @@ mod tests {
 
     #[test]
     fn test_cip_from_identity_matrix() {
-        // Identity matrix should give CIP coordinates of exactly zero
         let identity = RotationMatrix3::identity();
         let cip = CipCoordinates::from_npb_matrix(&identity).unwrap();
-
-        // For identity matrix, third column is [0, 0, 1]
-        // So X = 0, Y = 0 exactly
         assert_eq!(cip.x, 0.0);
         assert_eq!(cip.y, 0.0);
     }
 
     #[test]
     fn test_cip_validation_error() {
-        // Create a matrix with unreasonably large CIP coordinates in third row
-        // CIP X,Y are extracted from matrix[2][0] and matrix[2][1]
-        // This should trigger the validation error (threshold is 0.2 radians ~= 11.5 degrees)
-        let invalid_matrix = RotationMatrix3::from_array([
-            [1.0, 0.0, 0.0],
-            [0.0, 1.0, 0.0],
-            [0.25, 0.05, 1.0], // X = 0.25 (too large - exceeds 0.2 rad threshold)
-        ]);
+        // CIP X is matrix[2][0]; a 0.3 rad tilt puts sin(0.3) there, past the 0.2 rad limit.
+        let mut invalid_matrix = RotationMatrix3::identity();
+        invalid_matrix.rotate_y(0.3);
 
         let result = CipCoordinates::from_npb_matrix(&invalid_matrix);
-
-        // Should return an error due to coordinates being out of reasonable range
         assert!(result.is_err());
 
         let error_message = format!("{}", result.unwrap_err());
@@ -170,12 +174,16 @@ mod tests {
 
     #[test]
     fn test_cip_reasonable_values() {
-        // Test that reasonable CIP coordinate values work correctly
         let reasonable_cip = CipCoordinates::new(1e-6, 1e-6);
-
-        // These are the exact computed values for our test case
         assert_eq!(reasonable_cip.x, 1e-6);
         assert_eq!(reasonable_cip.y, 1e-6);
-        assert_eq!(reasonable_cip.magnitude(), libm::sqrt(2e-12_f64)); // sqrt(x² + y²)
+        assert_eq!(reasonable_cip.magnitude(), libm::sqrt(2e-12_f64));
+    }
+
+    #[test]
+    fn test_from_npb_matrix_rejects_nan() {
+        let mut nan = RotationMatrix3::identity();
+        nan.rotate_y(f64::NAN);
+        assert!(CipCoordinates::from_npb_matrix(&nan).is_err());
     }
 }

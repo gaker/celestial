@@ -1,8 +1,8 @@
 use crate::{solar, transforms::CoordinateFrame, CoordResult, Distance, ICRSPosition};
+use celestial_core::angle::wrap_0_2pi;
+use celestial_core::angle::Angle;
 use celestial_core::constants::HALF_PI;
 use celestial_core::matrix::RotationMatrix3;
-use celestial_core::utils::normalize_angle_to_positive;
-use celestial_core::Angle;
 use celestial_time::TT;
 
 #[cfg(feature = "serde")]
@@ -19,7 +19,7 @@ pub struct HeliographicStonyhurst {
 impl HeliographicStonyhurst {
     pub fn new(latitude: Angle, longitude: Angle) -> CoordResult<Self> {
         let latitude = latitude.validate_latitude()?;
-        let longitude = longitude.validate_longitude(true)?;
+        let longitude = longitude.normalized()?;
 
         Ok(Self {
             latitude,
@@ -55,10 +55,9 @@ impl HeliographicStonyhurst {
     }
 
     pub fn to_carrington(&self, epoch: &TT) -> CoordResult<HeliographicCarrington> {
-        let l0 = solar::compute_l0(epoch);
+        let l0 = solar::compute_l0(epoch)?;
         let carrington_lon = self.longitude + l0;
-        let normalized_lon =
-            Angle::from_radians(normalize_angle_to_positive(carrington_lon.radians()));
+        let normalized_lon = Angle::from_radians(wrap_0_2pi(carrington_lon.radians())?);
 
         let mut carr = HeliographicCarrington::new(self.latitude, normalized_lon)?;
         if let Some(r) = self.radius {
@@ -67,13 +66,13 @@ impl HeliographicStonyhurst {
         Ok(carr)
     }
 
-    pub fn disk_center(epoch: &TT) -> Self {
-        let orientation = solar::compute_solar_orientation(epoch);
-        Self {
+    pub fn disk_center(epoch: &TT) -> CoordResult<Self> {
+        let orientation = solar::compute_solar_orientation(epoch)?;
+        Ok(Self {
             latitude: orientation.b0,
             longitude: Angle::ZERO,
             radius: None,
-        }
+        })
     }
 }
 
@@ -88,7 +87,7 @@ pub struct HeliographicCarrington {
 impl HeliographicCarrington {
     pub fn new(latitude: Angle, longitude: Angle) -> CoordResult<Self> {
         let latitude = latitude.validate_latitude()?;
-        let longitude = longitude.validate_longitude(true)?;
+        let longitude = longitude.normalized()?;
 
         Ok(Self {
             latitude,
@@ -124,10 +123,9 @@ impl HeliographicCarrington {
     }
 
     pub fn to_stonyhurst(&self, epoch: &TT) -> CoordResult<HeliographicStonyhurst> {
-        let l0 = solar::compute_l0(epoch);
+        let l0 = solar::compute_l0(epoch)?;
         let stonyhurst_lon = self.longitude - l0;
-        let normalized_lon =
-            Angle::from_radians(normalize_angle_to_positive(stonyhurst_lon.radians()));
+        let normalized_lon = Angle::from_radians(wrap_0_2pi(stonyhurst_lon.radians())?);
 
         let mut stony = HeliographicStonyhurst::new(self.latitude, normalized_lon)?;
         if let Some(r) = self.radius {
@@ -147,7 +145,7 @@ impl HeliographicCarrington {
 }
 
 fn heliographic_to_icrs_matrix(epoch: &TT) -> CoordResult<RotationMatrix3> {
-    let orientation = solar::compute_solar_orientation(epoch);
+    let orientation = solar::compute_solar_orientation(epoch)?;
     let b0 = orientation.b0.radians();
     let p = orientation.p.radians();
 
@@ -171,7 +169,7 @@ impl CoordinateFrame for HeliographicStonyhurst {
             .transform_spherical(self.longitude.radians(), self.latitude.radians());
 
         let mut icrs = ICRSPosition::new(
-            Angle::from_radians(normalize_angle_to_positive(ra)),
+            Angle::from_radians(wrap_0_2pi(ra)?),
             Angle::from_radians(dec),
         )?;
 
@@ -187,7 +185,7 @@ impl CoordinateFrame for HeliographicStonyhurst {
 
         let mut pos = Self::new(
             Angle::from_radians(lat),
-            Angle::from_radians(normalize_angle_to_positive(lon)),
+            Angle::from_radians(wrap_0_2pi(lon)?),
         )?;
 
         if let Some(dist) = icrs.distance() {
@@ -284,10 +282,9 @@ mod tests {
             carrington.latitude().degrees()
         );
 
-        let l0 = solar::compute_l0(&epoch);
-        let expected_carr_lon =
-            normalize_angle_to_positive((stonyhurst.longitude() + l0).radians())
-                * celestial_core::constants::RAD_TO_DEG;
+        let l0 = solar::compute_l0(&epoch).unwrap();
+        let expected_carr_lon = wrap_0_2pi((stonyhurst.longitude() + l0).radians()).unwrap()
+            * celestial_core::constants::RAD_TO_DEG;
 
         assert!((carrington.longitude().degrees() - expected_carr_lon).abs() < 1e-10);
     }
@@ -306,9 +303,9 @@ mod tests {
     #[test]
     fn test_disk_center() {
         let epoch = TT::j2000();
-        let center = HeliographicStonyhurst::disk_center(&epoch);
+        let center = HeliographicStonyhurst::disk_center(&epoch).unwrap();
 
-        let b0 = solar::compute_b0(&epoch);
+        let b0 = solar::compute_b0(&epoch).unwrap();
         assert!((center.latitude().degrees() - b0.degrees()).abs() < 1e-12);
         assert_eq!(center.longitude().degrees(), 0.0);
     }

@@ -11,7 +11,7 @@
 
 use std::io::{self, Write};
 
-use celestial_core::Angle;
+use celestial_core::{angle::Angle, errors::AstroResult};
 use celestial_time::scales::conversions::utc_tai::julian_to_calendar;
 
 use crate::observation::{IndatFile, IndatOption, MountType, Observation, PierSide, SiteParams};
@@ -107,7 +107,8 @@ fn write_site_line(w: &mut impl Write, site: &SiteParams, jd1: f64, jd2: f64) ->
 }
 
 fn write_observation_line(w: &mut impl Write, obs: &Observation) -> io::Result<()> {
-    let (tel_ra, tel_dec_raw) = encode_pier_side(obs.observed_ra, obs.observed_dec, obs.pier_side);
+    let (tel_ra, tel_dec_raw) = encode_pier_side(obs.observed_ra, obs.observed_dec, obs.pier_side)
+        .map_err(io::Error::other)?;
     writeln!(
         w,
         "{} {} {} {} {}",
@@ -121,16 +122,20 @@ fn write_observation_line(w: &mut impl Write, obs: &Observation) -> io::Result<(
 
 /// Inverse of [`crate::observation::decode_pier_side`] for RA, plus the raw
 /// declination magnitude with sign convention the parser expects.
-fn encode_pier_side(observed_ra: Angle, observed_dec: Angle, pier: PierSide) -> (Angle, f64) {
+fn encode_pier_side(
+    observed_ra: Angle,
+    observed_dec: Angle,
+    pier: PierSide,
+) -> AstroResult<(Angle, f64)> {
     let dec_deg = observed_dec.degrees();
     match pier {
         PierSide::West => {
-            let tel_ra = (observed_ra - Angle::from_hours(12.0)).normalized();
+            let tel_ra = (observed_ra - Angle::from_hours(12.0)).normalized()?;
             let sign = if dec_deg >= 0.0 { 1.0 } else { -1.0 };
             let raw_dec = sign * (180.0 - dec_deg.abs());
-            (tel_ra, raw_dec)
+            Ok((tel_ra, raw_dec))
         }
-        PierSide::East | PierSide::Unknown => (observed_ra, dec_deg),
+        PierSide::East | PierSide::Unknown => Ok((observed_ra, dec_deg)),
     }
 }
 
@@ -226,8 +231,8 @@ mod tests {
             observed_ra,
             observed_dec: Angle::from_degrees(obs_dec_deg),
             lst,
-            commanded_ha: (lst - catalog_ra).wrapped(),
-            actual_ha: (lst - observed_ra).wrapped(),
+            commanded_ha: (lst - catalog_ra).wrapped().unwrap(),
+            actual_ha: (lst - observed_ra).wrapped().unwrap(),
             pier_side: pier,
             masked: false,
         }

@@ -65,7 +65,7 @@ mod tests {
     use crate::observation::SiteParams;
     use crate::solver::FitResult;
     use crate::test_support::{obs, FitResultBuilder};
-    use celestial_core::Angle;
+    use celestial_core::angle::Angle;
 
     fn site(lat_deg: f64) -> SiteParams {
         SiteParams {

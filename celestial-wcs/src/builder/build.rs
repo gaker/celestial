@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use celestial_core::Angle;
+use celestial_core::angle::Angle;
 
 use crate::distortion::DistortionModel;
 use crate::error::{WcsError, WcsResult};

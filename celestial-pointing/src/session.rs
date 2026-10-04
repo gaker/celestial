@@ -2,7 +2,7 @@ use crate::error::{Error, Result};
 use crate::model::PointingModel;
 use crate::observation::{IndatFile, IndatOption, MountType, Observation, SiteParams};
 use crate::solver::{self, FitResult};
-use celestial_core::Angle;
+use celestial_core::angle::Angle;
 use celestial_time::JulianDate;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -61,13 +61,13 @@ impl Session {
         self.last_fit = None;
     }
 
-    pub fn prepared_observations(&self) -> Vec<Observation> {
+    pub fn prepared_observations(&self) -> Result<Vec<Observation>> {
         self.prepare_observations()
     }
 
     pub fn fit(&mut self) -> Result<&FitResult> {
         let lat = self.latitude();
-        let prepared = self.prepare_observations();
+        let prepared = self.prepare_observations()?;
         let active: Vec<&Observation> = prepared.iter().filter(|o| !o.masked).collect();
         let fixed = self.model.fixed_flags();
         let parallel = self.model.parallel_flags();
@@ -88,46 +88,49 @@ impl Session {
         Ok(self.last_fit.as_ref().unwrap())
     }
 
-    fn prepare_observations(&self) -> Vec<Observation> {
+    fn prepare_observations(&self) -> Result<Vec<Observation>> {
         let Some(site) = self.site.as_ref() else {
-            return self.observations.clone();
+            return Ok(self.observations.clone());
         };
         let apply_diurnal = !self.options.contains(&IndatOption::NoDA);
         let apply_refraction = site.pressure > 0.0;
         if !apply_diurnal && !apply_refraction {
-            return self.observations.clone();
+            return Ok(self.observations.clone());
         }
         let lat = site.latitude;
         let lon = site.longitude;
         let height_m = site.elevation;
-        let location = match celestial_core::Location::new(lat.radians(), lon.radians(), height_m) {
-            Ok(l) => l,
-            Err(_) => return self.observations.clone(),
-        };
+        let location =
+            match celestial_core::location::Location::new(lat.radians(), lon.radians(), height_m) {
+                Ok(l) => l,
+                Err(_) => return Ok(self.observations.clone()),
+            };
         self.observations
             .iter()
             .map(|obs| {
                 let mut cat_ra = obs.catalog_ra;
                 let mut cat_dec = obs.catalog_dec;
                 if apply_diurnal {
-                    let (ra, dec) =
-                        crate::diurnal::apply_diurnal(cat_ra, cat_dec, obs.lst, lat, lon, height_m);
+                    let (ra, dec) = crate::diurnal::apply_diurnal(
+                        cat_ra, cat_dec, obs.lst, lat, lon, height_m,
+                    )?;
                     cat_ra = ra;
                     cat_dec = dec;
                 }
                 if apply_refraction {
-                    let (ra, dec) =
-                        crate::prepare::apply_refraction(cat_ra, cat_dec, obs.lst, &location, site);
+                    let (ra, dec) = crate::prepare::apply_refraction(
+                        cat_ra, cat_dec, obs.lst, &location, site,
+                    )?;
                     cat_ra = ra;
                     cat_dec = dec;
                 }
-                let commanded_ha = (obs.lst - cat_ra).wrapped();
-                Observation {
+                let commanded_ha = (obs.lst - cat_ra).wrapped()?;
+                Ok(Observation {
                     catalog_ra: cat_ra,
                     catalog_dec: cat_dec,
                     commanded_ha,
                     ..obs.clone()
-                }
+                })
             })
             .collect()
     }
@@ -354,7 +357,7 @@ mod tests {
             .catalog_dec_deg(30.0)
             .observed_dec_deg(30.0)
             .build()];
-        let prepared = s.prepared_observations();
+        let prepared = s.prepared_observations().unwrap();
         assert_eq!(prepared.len(), 1);
         assert_eq!(
             prepared[0].catalog_dec.degrees(),
@@ -375,7 +378,7 @@ mod tests {
             .observed_dec_deg(30.0)
             .build();
         s.observations = vec![original.clone()];
-        let prepared = s.prepared_observations();
+        let prepared = s.prepared_observations().unwrap();
         assert_eq!(prepared.len(), 1);
         assert_eq!(
             prepared[0].catalog_dec.degrees(),
@@ -397,7 +400,7 @@ mod tests {
             .catalog_dec_deg(target_dec)
             .observed_dec_deg(target_dec)
             .build()];
-        let prepared = s.prepared_observations();
+        let prepared = s.prepared_observations().unwrap();
         let diff_arcsec = (prepared[0].catalog_dec.degrees() - target_dec) * 3600.0;
         assert!(
             diff_arcsec.abs() > 0.1,
@@ -416,7 +419,7 @@ mod tests {
             .lst_hours(6.0)
             .catalog_ra_hours(target_ra)
             .build()];
-        let prepared = s.prepared_observations();
+        let prepared = s.prepared_observations().unwrap();
         let diff_seconds = (prepared[0].catalog_ra.hours() - target_ra).abs() * 3600.0;
         assert!(
             diff_seconds < 1.0,
@@ -425,7 +428,9 @@ mod tests {
         );
         // It still ran (commanded_ha was recomputed) — verify by checking
         // commanded_ha matches (lst - cat_ra).wrapped().
-        let expected_ha = (prepared[0].lst - prepared[0].catalog_ra).wrapped();
+        let expected_ha = (prepared[0].lst - prepared[0].catalog_ra)
+            .wrapped()
+            .unwrap();
         assert!((prepared[0].commanded_ha.arcseconds() - expected_ha.arcseconds()).abs() < 1e-6,);
     }
 
@@ -444,7 +449,7 @@ mod tests {
             .observed_dec_deg(45.0)
             .commanded_ha_arcsec(999.0)
             .build()];
-        let prepared = s.prepared_observations();
+        let prepared = s.prepared_observations().unwrap();
         assert!(
             (prepared[0].commanded_ha.arcseconds() - 999.0).abs() > 1.0,
             "commanded_ha should be recomputed, not echoed from input",
@@ -456,7 +461,7 @@ mod tests {
         let mut s = Session::new();
         s.site = Some(site(39.0, 987.0));
         s.observations = (0..5).map(|i| make_obs(0.0, 10.0 * i as f64)).collect();
-        let prepared = s.prepared_observations();
+        let prepared = s.prepared_observations().unwrap();
         assert_eq!(prepared.len(), 5);
         for (i, p) in prepared.iter().enumerate().take(5) {
             assert_eq!(

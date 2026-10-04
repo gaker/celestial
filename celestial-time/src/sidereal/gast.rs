@@ -59,14 +59,17 @@ impl GAST {
         self.0.hour_angle_to_target(target_ra_hours)
     }
 
-    pub fn to_last(&self, location: &celestial_core::Location) -> crate::sidereal::LAST {
+    pub fn to_last(
+        &self,
+        location: &celestial_core::location::Location,
+    ) -> TimeResult<crate::sidereal::LAST> {
         let gast_rad = self.radians();
-        let last_rad = gast_rad + location.longitude;
+        let last_rad = gast_rad + location.longitude();
 
-        let last_normalized = wrap_0_2pi(last_rad);
+        let last_normalized = wrap_0_2pi(last_rad)?;
         let angle = SiderealAngle::from_radians_exact(last_normalized);
 
-        LAST::from_radians(angle.radians(), location)
+        Ok(LAST::from_radians(angle.radians(), location))
     }
 }
 
@@ -88,10 +91,10 @@ fn calculate_gast_iau2006a(ut1: &UT1, tt: &TT) -> TimeResult<f64> {
 
     let gast = era - cio_solution.equation_of_origins;
 
-    Ok(wrap_0_2pi(gast))
+    Ok(wrap_0_2pi(gast)?)
 }
 
-fn calculate_npb_matrix_iau2006a(tt: &TT) -> TimeResult<celestial_core::RotationMatrix3> {
+fn calculate_npb_matrix_iau2006a(tt: &TT) -> TimeResult<celestial_core::matrix::RotationMatrix3> {
     let tt_jd = tt.to_julian_date();
     let t = celestial_core::utils::jd_to_centuries(tt_jd.jd1(), tt_jd.jd2());
 

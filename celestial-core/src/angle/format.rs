@@ -25,7 +25,7 @@
 //! # Formatting Examples
 //!
 //! ```
-//! use celestial_core::Angle;
+//! use celestial_core::angle::Angle;
 //! use celestial_core::angle::{DmsFmt, HmsFmt};
 //!
 //! // Declination of Vega: +38° 47' 01"
@@ -70,7 +70,7 @@
 //! The `Display` trait formats angles as decimal degrees with 6 decimal places:
 //!
 //! ```
-//! use celestial_core::Angle;
+//! use celestial_core::angle::Angle;
 //!
 //! let a = Angle::from_degrees(45.123456789);
 //! assert_eq!(format!("{}", a), "45.123457°");
@@ -98,7 +98,7 @@ use core::fmt;
 /// # Example
 ///
 /// ```
-/// use celestial_core::Angle;
+/// use celestial_core::angle::Angle;
 /// use celestial_core::angle::DmsFmt;
 ///
 /// let dec = Angle::from_degrees(-23.4392);
@@ -136,7 +136,7 @@ pub struct DmsFmt {
 /// # Example
 ///
 /// ```
-/// use celestial_core::Angle;
+/// use celestial_core::angle::Angle;
 /// use celestial_core::angle::HmsFmt;
 ///
 /// let ra = Angle::from_hours(14.5);  // 14h 30m 00s
@@ -263,7 +263,7 @@ pub struct ParsedAngle {
 ///
 /// # Errors
 ///
-/// Returns [`AstroError`](crate::AstroError) if:
+/// Returns [`AstroError`](crate::errors::AstroError) if:
 /// - The string is empty or contains no valid components
 /// - Minutes or seconds are outside [0, 60)
 /// - Fractional hours/degrees are mixed with minutes/seconds (e.g., "12.5h30m")
@@ -282,14 +282,14 @@ pub struct ParsedAngle {
 /// let dec = parse_angle("-08°12'05.9\"").unwrap();
 /// assert!((dec.angle.degrees() - (-8.201639)).abs() < 1e-5);
 /// ```
-pub fn parse_angle(s: &str) -> Result<ParsedAngle, crate::AstroError> {
+pub fn parse_angle(s: &str) -> Result<ParsedAngle, crate::errors::AstroError> {
     parse_hms(s).or_else(|_| parse_dms(s))
 }
 
 /// Parses an HMS (hours-minutes-seconds) string into an angle.
 ///
 /// Accepts formats like: `12h30m15s`, `12ʰ30ᵐ15ˢ`, `12:30:15`, `12h`, `-12h30m15s`
-fn parse_hms(s: &str) -> Result<ParsedAngle, crate::AstroError> {
+fn parse_hms(s: &str) -> Result<ParsedAngle, crate::errors::AstroError> {
     let s = s.trim();
     let sign = if s.starts_with('-') { -1.0 } else { 1.0 };
     let s = s.trim_start_matches(['+', '-']);
@@ -301,7 +301,7 @@ fn parse_hms(s: &str) -> Result<ParsedAngle, crate::AstroError> {
         .collect();
 
     if parts.is_empty() {
-        return Err(crate::AstroError::math_error(
+        return Err(crate::errors::AstroError::math_error(
             "parse_hms",
             crate::errors::MathErrorKind::InvalidInput,
             "Empty string",
@@ -309,7 +309,7 @@ fn parse_hms(s: &str) -> Result<ParsedAngle, crate::AstroError> {
     }
 
     if parts.len() > 3 {
-        return Err(crate::AstroError::math_error(
+        return Err(crate::errors::AstroError::math_error(
             "parse_hms",
             crate::errors::MathErrorKind::InvalidInput,
             "Too many components (max 3: hours, minutes, seconds)",
@@ -317,7 +317,7 @@ fn parse_hms(s: &str) -> Result<ParsedAngle, crate::AstroError> {
     }
 
     let h = parts[0].parse::<f64>().map_err(|_| {
-        crate::AstroError::math_error(
+        crate::errors::AstroError::math_error(
             "parse_hms",
             crate::errors::MathErrorKind::InvalidInput,
             "Invalid hours",
@@ -326,7 +326,7 @@ fn parse_hms(s: &str) -> Result<ParsedAngle, crate::AstroError> {
 
     let m = if parts.len() > 1 {
         parts[1].parse::<f64>().map_err(|_| {
-            crate::AstroError::math_error(
+            crate::errors::AstroError::math_error(
                 "parse_hms",
                 crate::errors::MathErrorKind::InvalidInput,
                 "Invalid minutes",
@@ -338,7 +338,7 @@ fn parse_hms(s: &str) -> Result<ParsedAngle, crate::AstroError> {
 
     let sec = if parts.len() > 2 {
         parts[2].parse::<f64>().map_err(|_| {
-            crate::AstroError::math_error(
+            crate::errors::AstroError::math_error(
                 "parse_hms",
                 crate::errors::MathErrorKind::InvalidInput,
                 "Invalid seconds",
@@ -349,7 +349,7 @@ fn parse_hms(s: &str) -> Result<ParsedAngle, crate::AstroError> {
     };
 
     if parts.len() > 1 && h - libm::trunc(h) != 0.0 {
-        return Err(crate::AstroError::math_error(
+        return Err(crate::errors::AstroError::math_error(
             "parse_hms",
             crate::errors::MathErrorKind::InvalidInput,
             "Cannot mix fractional hours with minutes/seconds",
@@ -357,7 +357,7 @@ fn parse_hms(s: &str) -> Result<ParsedAngle, crate::AstroError> {
     }
 
     if !(0.0..60.0).contains(&m) {
-        return Err(crate::AstroError::math_error(
+        return Err(crate::errors::AstroError::math_error(
             "parse_hms",
             crate::errors::MathErrorKind::InvalidInput,
             "Minutes must be in range [0, 60)",
@@ -365,7 +365,7 @@ fn parse_hms(s: &str) -> Result<ParsedAngle, crate::AstroError> {
     }
 
     if !(0.0..60.0).contains(&sec) {
-        return Err(crate::AstroError::math_error(
+        return Err(crate::errors::AstroError::math_error(
             "parse_hms",
             crate::errors::MathErrorKind::InvalidInput,
             "Seconds must be in range [0, 60)",
@@ -380,7 +380,7 @@ fn parse_hms(s: &str) -> Result<ParsedAngle, crate::AstroError> {
 /// Parses a DMS (degrees-minutes-seconds) string into an angle.
 ///
 /// Accepts formats like: `45°30'15"`, `45d30m15s`, `45:30:15`, `45°`, `-45°30'15"`
-fn parse_dms(s: &str) -> Result<ParsedAngle, crate::AstroError> {
+fn parse_dms(s: &str) -> Result<ParsedAngle, crate::errors::AstroError> {
     let s = s.trim();
     let sign = if s.starts_with('-') { -1.0 } else { 1.0 };
     let s = s.trim_start_matches(['+', '-']);
@@ -392,7 +392,7 @@ fn parse_dms(s: &str) -> Result<ParsedAngle, crate::AstroError> {
         .collect();
 
     if parts.is_empty() {
-        return Err(crate::AstroError::math_error(
+        return Err(crate::errors::AstroError::math_error(
             "parse_dms",
             crate::errors::MathErrorKind::InvalidInput,
             "Empty string",
@@ -400,7 +400,7 @@ fn parse_dms(s: &str) -> Result<ParsedAngle, crate::AstroError> {
     }
 
     if parts.len() > 3 {
-        return Err(crate::AstroError::math_error(
+        return Err(crate::errors::AstroError::math_error(
             "parse_dms",
             crate::errors::MathErrorKind::InvalidInput,
             "Too many components (max 3: degrees, arcminutes, arcseconds)",
@@ -408,7 +408,7 @@ fn parse_dms(s: &str) -> Result<ParsedAngle, crate::AstroError> {
     }
 
     let deg = parts[0].parse::<f64>().map_err(|_| {
-        crate::AstroError::math_error(
+        crate::errors::AstroError::math_error(
             "parse_dms",
             crate::errors::MathErrorKind::InvalidInput,
             "Invalid degrees",
@@ -417,7 +417,7 @@ fn parse_dms(s: &str) -> Result<ParsedAngle, crate::AstroError> {
 
     let min = if parts.len() > 1 {
         parts[1].parse::<f64>().map_err(|_| {
-            crate::AstroError::math_error(
+            crate::errors::AstroError::math_error(
                 "parse_dms",
                 crate::errors::MathErrorKind::InvalidInput,
                 "Invalid arcminutes",
@@ -429,7 +429,7 @@ fn parse_dms(s: &str) -> Result<ParsedAngle, crate::AstroError> {
 
     let sec = if parts.len() > 2 {
         parts[2].parse::<f64>().map_err(|_| {
-            crate::AstroError::math_error(
+            crate::errors::AstroError::math_error(
                 "parse_dms",
                 crate::errors::MathErrorKind::InvalidInput,
                 "Invalid arcseconds",
@@ -440,7 +440,7 @@ fn parse_dms(s: &str) -> Result<ParsedAngle, crate::AstroError> {
     };
 
     if parts.len() > 1 && deg - libm::trunc(deg) != 0.0 {
-        return Err(crate::AstroError::math_error(
+        return Err(crate::errors::AstroError::math_error(
             "parse_dms",
             crate::errors::MathErrorKind::InvalidInput,
             "Cannot mix fractional degrees with arcminutes/arcseconds",
@@ -448,7 +448,7 @@ fn parse_dms(s: &str) -> Result<ParsedAngle, crate::AstroError> {
     }
 
     if !(0.0..60.0).contains(&min) {
-        return Err(crate::AstroError::math_error(
+        return Err(crate::errors::AstroError::math_error(
             "parse_dms",
             crate::errors::MathErrorKind::InvalidInput,
             "Arcminutes must be in range [0, 60)",
@@ -456,7 +456,7 @@ fn parse_dms(s: &str) -> Result<ParsedAngle, crate::AstroError> {
     }
 
     if !(0.0..60.0).contains(&sec) {
-        return Err(crate::AstroError::math_error(
+        return Err(crate::errors::AstroError::math_error(
             "parse_dms",
             crate::errors::MathErrorKind::InvalidInput,
             "Arcseconds must be in range [0, 60)",

@@ -1,5 +1,5 @@
+use celestial_core::angle::Angle;
 use celestial_core::constants::{DEG_TO_RAD, HALF_PI, RAD_TO_DEG};
-use celestial_core::Angle;
 
 use crate::common::native_coord_from_radians;
 use crate::coordinate::{IntermediateCoord, NativeCoord};
@@ -41,7 +41,7 @@ pub(crate) fn deproject_mer(inter: IntermediateCoord) -> WcsResult<NativeCoord> 
     let theta = 2.0 * libm::atan(libm::exp(y)) - HALF_PI;
     Ok(NativeCoord::new(
         Angle::from_degrees(phi),
-        Angle::from_degrees(theta * RAD_TO_DEG),
+        Angle::from_radians(theta),
     ))
 }
 
@@ -67,7 +67,7 @@ pub(crate) fn deproject_cea(inter: IntermediateCoord, lambda: f64) -> WcsResult<
     let theta = libm::asin(sin_theta);
     Ok(NativeCoord::new(
         Angle::from_degrees(phi),
-        Angle::from_degrees(theta * RAD_TO_DEG),
+        Angle::from_radians(theta),
     ))
 }
 
@@ -127,16 +127,17 @@ pub(crate) fn deproject_cyp(
         2.0 * libm::atan(t)
     };
 
-    Ok(native_coord_from_radians(phi, theta))
+    native_coord_from_radians(phi, theta)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::common::phi_on_same_edge;
     use crate::Projection;
-    use celestial_core::assert_ulp_lt;
+    use celestial_core::angle::Angle;
+    use celestial_core::assert_ulp_le;
     use celestial_core::constants::{PI, QUARTER_PI};
-    use celestial_core::Angle;
 
     // Per-projection native_reference checks are covered by
     // spherical::tests::test_all_projections_map_reference_to_origin.
@@ -154,8 +155,8 @@ mod tests {
 
         let native2 = NativeCoord::new(Angle::from_degrees(-120.0), Angle::from_degrees(-60.0));
         let inter2 = proj.project(native2).unwrap();
-        assert_ulp_lt!(inter2.x_deg(), -120.0, 1);
-        assert_ulp_lt!(inter2.y_deg(), -60.0, 1);
+        assert_ulp_le!(inter2.x_deg(), -120.0, 1);
+        assert_ulp_le!(inter2.y_deg(), -60.0, 1);
 
         // CAR is an identity in degrees, so the roundtrip must be byte-exact.
         for phi_deg in [-180.0, -90.0, 0.0, 45.0, 90.0, 135.0, 180.0] {
@@ -179,7 +180,7 @@ mod tests {
         let inter = proj.project(native).unwrap();
         assert_eq!(inter.x_deg(), 0.0);
         let expected_y = libm::log(libm::tan(QUARTER_PI + (PI / 4.0) / 2.0)) * RAD_TO_DEG;
-        assert_ulp_lt!(inter.y_deg(), expected_y, 1);
+        assert_ulp_le!(inter.y_deg(), expected_y, 1);
 
         for phi_deg in [-180.0, -90.0, 0.0, 45.0, 90.0, 135.0, 180.0] {
             for theta_deg in [-80.0, -45.0, 0.0, 45.0, 80.0] {
@@ -187,8 +188,8 @@ mod tests {
                     NativeCoord::new(Angle::from_degrees(phi_deg), Angle::from_degrees(theta_deg));
                 let inter = proj.project(original).unwrap();
                 let recovered = proj.deproject(inter).unwrap();
-                assert_ulp_lt!(original.phi().degrees(), recovered.phi().degrees(), 2);
-                assert_ulp_lt!(original.theta().degrees(), recovered.theta().degrees(), 2);
+                assert_ulp_le!(original.phi().degrees(), recovered.phi().degrees(), 2);
+                assert_ulp_le!(original.theta().degrees(), recovered.theta().degrees(), 2);
             }
         }
     }
@@ -202,7 +203,7 @@ mod tests {
         let inter = proj.project(native).unwrap();
         assert_eq!(inter.x_deg(), 90.0);
         let expected_y = libm::sin(PI / 6.0) * RAD_TO_DEG;
-        assert_ulp_lt!(inter.y_deg(), expected_y, 1);
+        assert_ulp_le!(inter.y_deg(), expected_y, 1);
 
         for phi_deg in [-180.0, -90.0, 0.0, 45.0, 90.0, 135.0, 180.0] {
             for theta_deg in [-85.0, -45.0, 0.0, 45.0, 85.0] {
@@ -210,8 +211,8 @@ mod tests {
                     NativeCoord::new(Angle::from_degrees(phi_deg), Angle::from_degrees(theta_deg));
                 let inter = proj.project(original).unwrap();
                 let recovered = proj.deproject(inter).unwrap();
-                assert_ulp_lt!(original.phi().degrees(), recovered.phi().degrees(), 2);
-                assert_ulp_lt!(original.theta().degrees(), recovered.theta().degrees(), 2);
+                assert_ulp_le!(original.phi().degrees(), recovered.phi().degrees(), 2);
+                assert_ulp_le!(original.theta().degrees(), recovered.theta().degrees(), 2);
             }
         }
 
@@ -220,8 +221,8 @@ mod tests {
         let pt = NativeCoord::new(Angle::from_degrees(60.0), Angle::from_degrees(45.0));
         let inter = proj_half.project(pt).unwrap();
         let recovered = proj_half.deproject(inter).unwrap();
-        assert_ulp_lt!(pt.phi().degrees(), recovered.phi().degrees(), 1);
-        assert_ulp_lt!(pt.theta().degrees(), recovered.theta().degrees(), 2);
+        assert_ulp_le!(pt.phi().degrees(), recovered.phi().degrees(), 1);
+        assert_ulp_le!(pt.theta().degrees(), recovered.theta().degrees(), 2);
     }
 
     #[test]
@@ -236,8 +237,8 @@ mod tests {
                     NativeCoord::new(Angle::from_degrees(60.0), Angle::from_degrees(45.0));
                 let inter = proj.project(original).unwrap();
                 let recovered = proj.deproject(inter).unwrap();
-                assert_ulp_lt!(original.phi().degrees(), recovered.phi().degrees(), 5);
-                assert_ulp_lt!(original.theta().degrees(), recovered.theta().degrees(), 5);
+                assert_ulp_le!(original.phi().degrees(), recovered.phi().degrees(), 5);
+                assert_ulp_le!(original.theta().degrees(), recovered.theta().degrees(), 5);
             }
         }
 
@@ -248,8 +249,9 @@ mod tests {
                     NativeCoord::new(Angle::from_degrees(phi_deg), Angle::from_degrees(theta_deg));
                 let inter = proj.project(original).unwrap();
                 let recovered = proj.deproject(inter).unwrap();
-                assert_ulp_lt!(original.phi().degrees(), recovered.phi().degrees(), 5);
-                assert_ulp_lt!(original.theta().degrees(), recovered.theta().degrees(), 5);
+                let phi_back = phi_on_same_edge(original.phi(), recovered.phi());
+                assert_ulp_le!(original.phi().degrees(), phi_back.degrees(), 5);
+                assert_ulp_le!(original.theta().degrees(), recovered.theta().degrees(), 5);
             }
         }
     }

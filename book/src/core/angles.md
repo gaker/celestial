@@ -10,7 +10,7 @@ All trigonometric methods use `libm` internally for cross-platform deterministic
 Five constructors, one for each unit:
 
 ```rust,ignore
-use celestial_core::Angle;
+use celestial_core::angle::Angle;
 use celestial_core::constants::QUARTER_PI;
 
 let a = Angle::from_degrees(45.0);
@@ -24,7 +24,7 @@ let e = Angle::from_arcminutes(2700.0);   // 60' per degree × 45
 representation and no conversion is needed:
 
 ```rust,ignore
-use celestial_core::Angle;
+use celestial_core::angle::Angle;
 use celestial_core::constants::HALF_PI;
 
 const RIGHT_ANGLE: Angle = Angle::from_radians(HALF_PI);
@@ -40,7 +40,7 @@ std implementation.
 Three constants for common values:
 
 ```rust,ignore
-use celestial_core::Angle;
+use celestial_core::angle::Angle;
 
 Angle::ZERO;    // 0 radians
 Angle::PI;      // π radians (180°)
@@ -49,10 +49,10 @@ Angle::HALF_PI; // π/2 radians (90°)
 
 ### Shorthand Functions
 
-For terser code, free functions are re-exported at the crate root:
+For terser code, the `angle` module has free-function constructors:
 
 ```rust,ignore
-use celestial_core::{deg, rad, hours, arcsec, arcmin};
+use celestial_core::angle::{arcmin, arcsec, deg, hours, rad};
 use celestial_core::constants::QUARTER_PI;
 
 let a = deg(45.0);
@@ -69,7 +69,7 @@ These are identical to calling `Angle::from_degrees`, `Angle::from_radians`, etc
 Every constructor has a corresponding accessor:
 
 ```rust,ignore
-use celestial_core::Angle;
+use celestial_core::angle::Angle;
 
 let angle = Angle::from_degrees(45.0);
 
@@ -90,7 +90,7 @@ Astronomy uses hours for right ascension. The relationship is:
 - 1 second of time = 15 arcseconds
 
 ```rust,ignore
-use celestial_core::Angle;
+use celestial_core::angle::Angle;
 
 // Sirius RA: 6h 45m 8.9s
 let ra = Angle::from_hours(6.0 + 45.0 / 60.0 + 8.9 / 3600.0);
@@ -103,7 +103,7 @@ ra.hours();   // ~6.7525
 Four methods, all using `libm` internally:
 
 ```rust,ignore
-use celestial_core::Angle;
+use celestial_core::angle::Angle;
 
 let angle = Angle::from_degrees(30.0);
 
@@ -123,30 +123,32 @@ often in coordinate transforms where you need both values.
 Two methods for wrapping angles into standard ranges:
 
 ```rust,ignore
-use celestial_core::Angle;
+use celestial_core::angle::Angle;
 
 let angle = Angle::from_degrees(270.0);
 
 // Wraps to [0, 360°) — use for right ascension
-let n = angle.normalized();
+let n = angle.normalized()?;
 n.degrees(); // 270.0 (already in range)
 
 // Wraps to [-180°, +180°) — use for hour angles, longitude differences
-let w = angle.wrapped();
+let w = angle.wrapped()?;
 w.degrees(); // -90.0
 ```
+
+Both return an error if the angle is NaN or infinite.
 
 The difference matters. 270° and -90° are the same direction, but RA is conventionally
 positive (use `normalized`), while hour angles and longitude differences use the
 shortest-arc representation (use `wrapped`).
 
 ```rust,ignore
-use celestial_core::Angle;
+use celestial_core::angle::Angle;
 
 let angle = Angle::from_degrees(-90.0);
 
-angle.normalized().degrees(); // 270.0
-angle.wrapped().degrees();    // -90.0
+angle.normalized()?.degrees(); // 270.0
+angle.wrapped()?.degrees();    // -90.0
 ```
 
 `abs()` returns the absolute value:
@@ -158,17 +160,14 @@ neg.abs().degrees(); // 45.0
 
 ### Free Functions on Raw Radians
 
-If you're working with raw `f64` values in radians, three free functions are available:
+If you're working with raw `f64` values in radians, two free functions are available:
 
 ```rust,ignore
-use celestial_core::angle::{wrap_0_2pi, wrap_pm_pi, clamp_dec};
+use celestial_core::angle::{wrap_0_2pi, wrap_pm_pi};
 
-wrap_0_2pi(-1.0);  // wraps to [0, 2π)
-wrap_pm_pi(5.0);   // wraps to [-π, +π)
-clamp_dec(2.0);    // clamps to [-π/2, +π/2]
+wrap_0_2pi(-1.0)?;  // wraps to [0, 2π); errors on NaN or infinity
+wrap_pm_pi(5.0)?;   // wraps to [-π, +π); errors on NaN or infinity
 ```
-
-`clamp_dec` clamps rather than wraps — values beyond the poles are pinned to ±π/2.
 
 ## Validation
 
@@ -180,7 +179,7 @@ All return `Result<Angle, AstroError>` and reject NaN/Infinity inputs.
 Cyclic — any finite angle is normalized to [0, 360°):
 
 ```rust,ignore
-use celestial_core::Angle;
+use celestial_core::angle::Angle;
 
 let ra = Angle::from_degrees(400.0);
 let valid = ra.validate_right_ascension().unwrap();
@@ -196,7 +195,7 @@ Bounded. Standard range is [-90°, +90°]. The `beyond_pole` flag extends to [-1
 for German equatorial mounts that can track past the pole:
 
 ```rust,ignore
-use celestial_core::Angle;
+use celestial_core::angle::Angle;
 
 let dec = Angle::from_degrees(45.0);
 dec.validate_declination(false).unwrap(); // ok
@@ -211,7 +210,7 @@ bad.validate_declination(true).unwrap();  // ok — within [-180, +180]
 Same as `validate_declination(false)` — range [-90°, +90°]:
 
 ```rust,ignore
-use celestial_core::Angle;
+use celestial_core::angle::Angle;
 
 let lat = Angle::from_degrees(33.0); // San Diego
 lat.validate_latitude().unwrap();
@@ -222,15 +221,14 @@ bad.validate_latitude().is_err(); // true
 
 ### Longitude
 
-With `normalize: true`, wraps to [0, 360°) and always succeeds (for finite inputs).
-With `normalize: false`, requires the angle to be within [-180°, +180°]:
+There is no separate longitude validator. `normalized()` wraps any finite angle to
+[0, 360°) and returns an error for NaN or infinity:
 
 ```rust,ignore
-use celestial_core::Angle;
+use celestial_core::angle::Angle;
 
-let lon = Angle::from_degrees(200.0);
-lon.validate_longitude(true).unwrap();   // ok — wraps
-lon.validate_longitude(false).is_err();  // true — outside [-180, +180]
+let lon = Angle::from_degrees(-90.0);
+lon.normalized().unwrap(); // 270°
 ```
 
 ### Standalone Functions
@@ -238,12 +236,11 @@ lon.validate_longitude(false).is_err();  // true — outside [-180, +180]
 The same validations are available as free functions in `celestial_core::angle`:
 
 ```rust,ignore
-use celestial_core::Angle;
+use celestial_core::angle::Angle;
 use celestial_core::angle::{
     validate_right_ascension,
     validate_declination,
     validate_latitude,
-    validate_longitude,
 };
 
 let angle = Angle::from_degrees(45.0);
@@ -251,7 +248,6 @@ let angle = Angle::from_degrees(45.0);
 validate_right_ascension(angle).unwrap();
 validate_declination(angle, false).unwrap();
 validate_latitude(angle).unwrap();
-validate_longitude(angle, false).unwrap();
 ```
 
 ## Parsing & Formatting
@@ -336,7 +332,7 @@ Two formatters for astronomical notation, plus the default `Display` impl.
 Used for declination, latitude, altitude:
 
 ```rust,ignore
-use celestial_core::Angle;
+use celestial_core::angle::Angle;
 use celestial_core::angle::DmsFmt;
 
 let dec = Angle::from_degrees(-23.4392);
@@ -356,7 +352,7 @@ Sign is always shown (+ or -). Degrees and arcminutes are whole numbers.
 Used for right ascension and hour angles:
 
 ```rust,ignore
-use celestial_core::Angle;
+use celestial_core::angle::Angle;
 use celestial_core::angle::HmsFmt;
 
 let ra = Angle::from_hours(14.5); // 14h 30m 00s
@@ -376,7 +372,7 @@ Uses Unicode superscript markers: ʰ, ᵐ, ˢ.
 The default `Display` formats as decimal degrees with 6 decimal places:
 
 ```rust,ignore
-use celestial_core::Angle;
+use celestial_core::angle::Angle;
 
 let a = Angle::from_degrees(45.123456789);
 format!("{}", a); // "45.123457°"
@@ -388,7 +384,7 @@ Angles support addition, subtraction, scalar multiplication, scalar division,
 and negation:
 
 ```rust,ignore
-use celestial_core::Angle;
+use celestial_core::angle::Angle;
 
 let a = Angle::from_degrees(30.0);
 let b = Angle::from_degrees(15.0);

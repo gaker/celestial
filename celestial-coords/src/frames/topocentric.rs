@@ -1,6 +1,6 @@
 use crate::{CoordResult, Distance};
 use celestial_core::constants::{HALF_PI, TWOPI};
-use celestial_core::{Angle, Location};
+use celestial_core::{angle::Angle, location::Location};
 use celestial_time::TT;
 
 const EARTH_RADIUS_AU: f64 = 4.2635e-5; // 6378.137 km
@@ -35,7 +35,7 @@ impl TopocentricPosition {
         observer: Location,
         epoch: TT,
     ) -> CoordResult<Self> {
-        let azimuth = azimuth.validate_longitude(true)?;
+        let azimuth = azimuth.normalized()?;
         let elevation = elevation.validate_latitude()?;
 
         Ok(Self {
@@ -438,7 +438,7 @@ impl HourAnglePosition {
         observer: Location,
         epoch: TT,
     ) -> CoordResult<Self> {
-        let hour_angle = hour_angle.wrapped(); // [-180°, +180°]
+        let hour_angle = hour_angle.wrapped()?; // [-180°, +180°]
         let declination = declination.validate_declination(true)?; // beyond_pole for GEM pier-flips
 
         Ok(Self {
@@ -542,10 +542,10 @@ impl HourAnglePosition {
 
         let ut1 = self.epoch.to_ut1_with_delta_t(delta_t)?;
         let gast = GAST::from_ut1_and_tt(&ut1, &self.epoch)?;
-        let last = gast.to_last(&self.observer);
+        let last = gast.to_last(&self.observer)?;
 
         let ra_rad = last.radians() - self.hour_angle.radians();
-        let ra = celestial_core::angle::wrap_0_2pi(ra_rad);
+        let ra = celestial_core::angle::wrap_0_2pi(ra_rad)?;
 
         let mut cirs = crate::frames::CIRSPosition::new(
             Angle::from_radians(ra),

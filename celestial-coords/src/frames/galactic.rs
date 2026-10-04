@@ -1,7 +1,7 @@
 use crate::{
     constants::GALACTIC_TO_ICRS, transforms::CoordinateFrame, CoordResult, Distance, ICRSPosition,
 };
-use celestial_core::Angle;
+use celestial_core::angle::Angle;
 use celestial_time::TT;
 
 #[cfg(feature = "serde")]
@@ -17,7 +17,7 @@ pub struct GalacticPosition {
 
 impl GalacticPosition {
     pub fn new(l: Angle, b: Angle) -> CoordResult<Self> {
-        let l = l.validate_longitude(true)?;
+        let l = l.normalized()?;
         let b = b.validate_latitude()?;
 
         Ok(Self {
@@ -103,15 +103,12 @@ impl GalacticPosition {
     }
 
     pub fn angular_separation(&self, other: &Self) -> Angle {
-        let (sin_b1, cos_b1) = self.b.sin_cos();
-        let (sin_b2, cos_b2) = other.b.sin_cos();
-        let delta_l = (self.l - other.l).radians();
-
-        let angle_rad = celestial_core::math::vincenty_angular_separation(
-            sin_b1, cos_b1, sin_b2, cos_b2, delta_l,
-        );
-
-        Angle::from_radians(angle_rad)
+        Angle::from_radians(celestial_core::math::angular_separation(
+            self.l.radians(),
+            self.b.radians(),
+            other.l.radians(),
+            other.b.radians(),
+        ))
     }
 }
 

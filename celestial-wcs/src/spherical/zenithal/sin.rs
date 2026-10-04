@@ -45,15 +45,15 @@ pub(crate) fn deproject_sin(inter: IntermediateCoord, xi: f64, eta: f64) -> WcsR
     let y_adj = y - eta * (1.0 - sin_theta);
     let phi = libm::atan2(x_adj, -y_adj);
 
-    Ok(native_coord_from_radians(phi, theta))
+    native_coord_from_radians(phi, theta)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::Projection;
-    use celestial_core::assert_ulp_lt;
-    use celestial_core::Angle;
+    use celestial_core::angle::Angle;
+    use celestial_core::assert_ulp_le;
     #[test]
     fn test_sin_roundtrip() {
         // Sweeps both standard SIN (xi=eta=0) and slant SIN (NCP-like) configs.
@@ -69,7 +69,7 @@ mod tests {
             let original = NativeCoord::new(Angle::from_degrees(*phi), Angle::from_degrees(*theta));
             let inter = proj.project(original).unwrap();
             let recovered = proj.deproject(inter).unwrap();
-            assert_ulp_lt!(
+            assert_ulp_le!(
                 original.phi().degrees(),
                 recovered.phi().degrees(),
                 *ulp,
@@ -77,7 +77,7 @@ mod tests {
                 xi,
                 eta
             );
-            assert_ulp_lt!(
+            assert_ulp_le!(
                 original.theta().degrees(),
                 recovered.theta().degrees(),
                 *ulp,

@@ -32,15 +32,16 @@ pub(crate) fn deproject_zea(inter: IntermediateCoord) -> WcsResult<NativeCoord> 
 
     let theta = HALF_PI - 2.0 * libm::asin(rho);
 
-    Ok(native_coord_from_radians(phi, theta))
+    native_coord_from_radians(phi, theta)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::common::phi_on_same_edge;
     use crate::Projection;
-    use celestial_core::assert_ulp_lt;
-    use celestial_core::Angle;
+    use celestial_core::angle::Angle;
+    use celestial_core::assert_ulp_le;
     #[test]
     fn test_zea_roundtrip() {
         let proj = Projection::zea();
@@ -55,15 +56,15 @@ mod tests {
                 // Near the antipode (theta -> -90), the asin in deproject
                 // loses precision; allow more ULP slack there.
                 let ulp_bar = if theta_deg <= -85.0 { 64 } else { 8 };
-                assert_ulp_lt!(
+                assert_ulp_le!(
                     original.phi().degrees(),
-                    recovered.phi().degrees(),
+                    phi_on_same_edge(original.phi(), recovered.phi()).degrees(),
                     ulp_bar,
                     "phi (phi={}, theta={})",
                     phi_deg,
                     theta_deg
                 );
-                assert_ulp_lt!(
+                assert_ulp_le!(
                     original.theta().degrees(),
                     recovered.theta().degrees(),
                     ulp_bar,

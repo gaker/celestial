@@ -47,7 +47,7 @@ on those three.
 Convert a catalog position (ICRS) to where it appears in the local sky.
 
 ```rust
-use celestial_core::{Angle, Location};
+use celestial_core::{angle::Angle, location::Location};
 use celestial_time::{tt_from_calendar, TT};
 use celestial_time::scales::conversions::ToUT1WithDeltaT;
 use celestial_time::sidereal::GAST;

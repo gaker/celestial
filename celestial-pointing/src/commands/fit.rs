@@ -103,7 +103,7 @@ fn outlier_candidate_notes(diagnostics: &[solver::ObsDiagnostic], sky_rms: f64) 
 }
 
 fn raw_rms(session: &Session) -> Result<CommandOutput> {
-    let prepared = session.prepared_observations();
+    let prepared = session.prepared_observations()?;
     let active: Vec<&_> = prepared.iter().filter(|o| !o.masked).collect();
     if active.is_empty() {
         return Err(Error::Fit("no observations loaded".into()));

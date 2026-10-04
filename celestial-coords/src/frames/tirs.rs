@@ -1,6 +1,6 @@
 use crate::{frames::ITRSPosition, CoordResult};
 use celestial_core::constants::ARCSEC_TO_RAD;
-use celestial_core::Vector3;
+use celestial_core::matrix::Vector3;
 use celestial_time::{scales::conversions::ToUT1WithDeltaT, transforms::earth_rotation_angle, TT};
 
 #[cfg(feature = "serde")]

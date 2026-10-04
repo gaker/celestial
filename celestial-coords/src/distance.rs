@@ -1,5 +1,5 @@
 use crate::{CoordError, CoordResult};
-use celestial_core::Angle;
+use celestial_core::angle::Angle;
 
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};

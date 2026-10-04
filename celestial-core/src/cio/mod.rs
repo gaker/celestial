@@ -8,35 +8,57 @@
 //!
 //! - [`CipCoordinates`]: X/Y coordinates of the Celestial Intermediate Pole
 //! - [`CioLocator`]: The CIO locator `s`, positioning the origin on the CIP equator
-//! - [`EquationOfOrigins`]: Relates CIO-based and equinox-based right ascension
+//! - [`equation_of_origins`]: Relates CIO-based and equinox-based right ascension
 //! - [`CioSolution`]: Bundles all CIO quantities for a given epoch
 //!
 //! # Usage
 //!
 //! For most use cases, compute a [`CioSolution`] from the NPB (nutation-precession-bias) matrix:
 //!
-//! ```ignore
+//! ```
+//! use celestial_core::cio::{gcrs_to_cirs_matrix, CioSolution};
+//! use celestial_core::constants::J2000_JD;
+//! use celestial_core::nutation::NutationIAU2006A;
+//! use celestial_core::precession::PrecessionIAU2006;
+//! use celestial_core::utils::jd_to_centuries;
+//!
+//! let (jd1, jd2) = (J2000_JD, 9000.0); // TT
+//! let tt_centuries = jd_to_centuries(jd1, jd2);
+//! let nut = NutationIAU2006A::new().compute(jd1, jd2)?;
+//! let npb_matrix =
+//!     PrecessionIAU2006::new().npb_matrix_iau2006a(tt_centuries, nut.delta_psi, nut.delta_eps);
+//!
 //! let solution = CioSolution::calculate(&npb_matrix, tt_centuries)?;
-//! let cirs_matrix = gcrs_to_cirs_matrix(solution.cip.x, solution.cip.y, solution.s);
+//! let cirs_matrix = gcrs_to_cirs_matrix(solution.cip.x, solution.cip.y, solution.s)?;
+//! # Ok::<(), celestial_core::errors::AstroError>(())
 //! ```
 
-pub mod coordinates;
-pub mod locator;
-pub mod origins;
+mod coordinates;
+mod locator;
+mod locator_terms;
+mod origins;
 
 pub use coordinates::CipCoordinates;
 pub use locator::CioLocator;
-pub use origins::EquationOfOrigins;
+pub use origins::equation_of_origins;
 
-use crate::errors::AstroResult;
+use crate::errors::{AstroError, AstroResult, MathErrorKind};
 use crate::matrix::RotationMatrix3;
 
 /// Builds the GCRS-to-CIRS rotation matrix from CIP coordinates and CIO locator.
 ///
 /// This implements the IAU 2006 CIO-based transformation using three rotations:
-/// R₃(E) · R₂(d) · R₃(-(E+s)) where E = atan2(Y, X) and d = atan(sqrt(X²+Y²/(1-X²-Y²))).
-pub fn gcrs_to_cirs_matrix(x: f64, y: f64, s: f64) -> RotationMatrix3 {
+/// R₃(-(E+s)) · R₂(d) · R₃(E) where E = atan2(Y, X) and d = atan(sqrt((X²+Y²)/(1-X²-Y²))).
+pub fn gcrs_to_cirs_matrix(x: f64, y: f64, s: f64) -> AstroResult<RotationMatrix3> {
     let r2 = x * x + y * y;
+    let defined = r2 <= 1.0 && s.is_finite();
+    if !defined {
+        return Err(AstroError::math_error(
+            "gcrs_to_cirs_matrix",
+            MathErrorKind::InvalidInput,
+            "CIP must be finite and within the unit circle, and s finite",
+        ));
+    }
     let e = if r2 > 0.0 { libm::atan2(y, x) } else { 0.0 };
     let d = libm::atan(libm::sqrt(r2 / (1.0 - r2)));
 
@@ -45,7 +67,7 @@ pub fn gcrs_to_cirs_matrix(x: f64, y: f64, s: f64) -> RotationMatrix3 {
     matrix.rotate_y(d);
     matrix.rotate_z(-(e + s));
 
-    matrix
+    Ok(matrix)
 }
 
 /// All CIO-based quantities for a given epoch.
@@ -73,7 +95,7 @@ impl CioSolution {
         let locator = CioLocator::iau2006a(tt_centuries);
         let s = locator.calculate(cip.x, cip.y)?;
 
-        let equation_of_origins = EquationOfOrigins::from_npb_and_locator(npb_matrix, s)?;
+        let equation_of_origins = equation_of_origins(npb_matrix, s)?;
 
         Ok(Self {
             cip,
@@ -87,37 +109,60 @@ impl CioSolution {
 mod tests {
     use super::*;
 
+    // s is ERFA s06 at J2000.0 with X = Y = 0. ERFA eors returns s unchanged for the
+    // identity matrix.
     #[test]
-    fn cio_identity_matrix_returns_zero_components() {
+    fn cio_identity_matrix_gives_zero_cip_and_eo_equal_to_s() {
         let identity = crate::matrix::RotationMatrix3::identity();
         let solution = CioSolution::calculate(&identity, 0.0).unwrap();
-
-        assert!(solution.cip.x.abs() < 1e-15);
-        assert!(solution.cip.y.abs() < 1e-15);
-        assert!(solution.s.abs() < 1e-8);
-        assert!(solution.equation_of_origins.abs() < 1e-8);
+        let s = -9.756652246326891e-9;
+        let expected = CioSolution {
+            cip: CipCoordinates::new(0.0, 0.0),
+            s,
+            equation_of_origins: s,
+        };
+        assert_eq!(solution, expected);
     }
 
     #[test]
     fn gcrs_to_cirs_matrix_with_zero_inputs_returns_identity() {
-        let matrix = gcrs_to_cirs_matrix(0.0, 0.0, 0.0);
-        let identity = RotationMatrix3::identity();
-        assert!(matrix.max_difference(&identity) < 1e-15);
+        let matrix = gcrs_to_cirs_matrix(0.0, 0.0, 0.0).unwrap();
+        assert_eq!(matrix, RotationMatrix3::identity());
     }
 
     #[test]
     fn gcrs_to_cirs_matrix_is_rotation_matrix() {
-        let matrix = gcrs_to_cirs_matrix(1e-6, 2e-6, 5e-9);
+        let matrix = gcrs_to_cirs_matrix(1e-6, 2e-6, 5e-9).unwrap();
         assert!(matrix.is_rotation_matrix(1e-14));
     }
 
+    // Expected values are ERFA c2ixys outputs with Rust libm for atan2/atan/sin/cos.
     #[test]
-    fn gcrs_to_cirs_matrix_small_cip_produces_near_identity() {
-        let x = 1e-6;
-        let y = 1e-6;
-        let s = 1e-9;
-        let matrix = gcrs_to_cirs_matrix(x, y, s);
-        let identity = RotationMatrix3::identity();
-        assert!(matrix.max_difference(&identity) < 1e-5);
+    fn gcrs_to_cirs_matrix_matches_erfa_c2ixys() {
+        let matrix = gcrs_to_cirs_matrix(1e-6, 1e-6, 1e-9).unwrap();
+        let expected = RotationMatrix3::from_array([
+            [0.9999999999995, -1.000500071679511e-9, -9.99999999e-7],
+            [9.995000382900798e-10, 0.9999999999995, -1.000000001e-6],
+            [1.0000000000000002e-6, 1e-6, 0.999999999999],
+        ])
+        .unwrap();
+        assert_eq!(matrix, expected);
+    }
+
+    #[test]
+    fn cio_solution_rejects_non_finite_inputs() {
+        let mut nan = crate::matrix::RotationMatrix3::identity();
+        nan.rotate_y(f64::NAN);
+        assert!(CioSolution::calculate(&nan, 0.0).is_err());
+        let identity = crate::matrix::RotationMatrix3::identity();
+        assert!(CioSolution::calculate(&identity, f64::NAN).is_err());
+    }
+
+    #[test]
+    fn gcrs_to_cirs_matrix_rejects_undefined_cip() {
+        assert!(gcrs_to_cirs_matrix(1.0, 0.5, 0.0).is_err());
+        assert!(gcrs_to_cirs_matrix(f64::NAN, 0.0, 0.0).is_err());
+        assert!(gcrs_to_cirs_matrix(0.0, 0.0, f64::INFINITY).is_err());
+        assert!(gcrs_to_cirs_matrix(1.0, 0.0, 0.0).is_ok());
     }
 }

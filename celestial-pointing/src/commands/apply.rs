@@ -3,7 +3,7 @@ use crate::error::Result;
 use crate::observation::PierSide;
 use crate::parser::parse_coordinates;
 use crate::session::Session;
-use celestial_core::Angle;
+use celestial_core::angle::Angle;
 
 pub struct Apply;
 
@@ -23,11 +23,11 @@ impl Command for Apply {
         let ha = lst - ra;
         let pier = pier_from_ha(ha);
         let (cmd_ra, cmd_dec) = session.model.target_to_command(ra, dec, lst, lat, pier);
-        let delta_ra = (cmd_ra - ra).wrapped();
-        let delta_dec = (cmd_dec - dec).wrapped();
+        let delta_ra = (cmd_ra - ra).wrapped()?;
+        let delta_dec = (cmd_dec - dec).wrapped()?;
         Ok(CommandOutput::Text(format_result(
             ra, dec, cmd_ra, cmd_dec, delta_ra, delta_dec,
-        )))
+        )?))
     }
 }
 
@@ -46,25 +46,25 @@ fn format_result(
     cmd_dec: Angle,
     dra: Angle,
     ddec: Angle,
-) -> String {
-    format!(
+) -> Result<String> {
+    Ok(format!(
         "Target:   {}  {}\nCommand:  {}  {}\n  \u{0394}RA:  {:+.2}s\n  \u{0394}Dec: {:+.1}\"",
-        format_ra(ra),
+        format_ra(ra)?,
         format_dec(dec),
-        format_ra(cmd_ra),
+        format_ra(cmd_ra)?,
         format_dec(cmd_dec),
         dra.arcseconds() / 15.0,
         ddec.arcseconds(),
-    )
+    ))
 }
 
-fn format_ra(a: Angle) -> String {
-    let total_h = a.normalized().hours();
+fn format_ra(a: Angle) -> Result<String> {
+    let total_h = a.normalized()?.hours();
     let h = libm::floor(total_h) as u32;
     let rem = (total_h - h as f64) * 60.0;
     let m = libm::floor(rem) as u32;
     let s = (rem - m as f64) * 60.0;
-    format!("{:02}h {:02}m {:05.2}s", h, m, s)
+    Ok(format!("{:02}h {:02}m {:05.2}s", h, m, s))
 }
 
 fn format_dec(a: Angle) -> String {
@@ -185,13 +185,13 @@ mod tests {
 
     #[test]
     fn format_ra_zero() {
-        let s = format_ra(Angle::from_hours(0.0));
+        let s = format_ra(Angle::from_hours(0.0)).unwrap();
         assert_eq!(s, "00h 00m 00.00s");
     }
 
     #[test]
     fn format_ra_12h() {
-        let s = format_ra(Angle::from_hours(12.5));
+        let s = format_ra(Angle::from_hours(12.5)).unwrap();
         assert_eq!(s, "12h 30m 00.00s");
     }
 

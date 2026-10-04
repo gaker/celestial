@@ -18,7 +18,7 @@ use crate::error::{Error, Result};
 use crate::observation::{
     decode_pier_side, IndatFile, IndatOption, MountType, Observation, PierSide, SiteParams,
 };
-use celestial_core::Angle;
+use celestial_core::angle::Angle;
 use celestial_time::JulianDate;
 
 /// Parses an INDAT file's contents into an [`IndatFile`].
@@ -198,9 +198,9 @@ fn parse_observation_line(line: &str) -> Result<Observation> {
     let lst = parse_lst(&p[12..14])?;
 
     let (observed_dec, pier_side) = decode_pier_side(raw_tel_dec_deg);
-    let observed_ra = compute_observed_ra(tel_ra, &pier_side);
-    let commanded_ha = (lst - catalog_ra).wrapped();
-    let actual_ha = (lst - observed_ra).wrapped();
+    let observed_ra = compute_observed_ra(tel_ra, &pier_side)?;
+    let commanded_ha = (lst - catalog_ra).wrapped()?;
+    let actual_ha = (lst - observed_ra).wrapped()?;
 
     Ok(Observation {
         catalog_ra,
@@ -215,10 +215,10 @@ fn parse_observation_line(line: &str) -> Result<Observation> {
     })
 }
 
-fn compute_observed_ra(tel_ra: Angle, pier_side: &PierSide) -> Angle {
+fn compute_observed_ra(tel_ra: Angle, pier_side: &PierSide) -> Result<Angle> {
     match pier_side {
-        PierSide::West => (tel_ra + Angle::from_hours(12.0)).normalized(),
-        _ => tel_ra,
+        PierSide::West => Ok((tel_ra + Angle::from_hours(12.0)).normalized()?),
+        _ => Ok(tel_ra),
     }
 }
 
@@ -402,7 +402,7 @@ ASCOM Mount
         let indat = parse_indat(SIMPLE_DAT).unwrap();
         let obs = &indat.observations[0];
         let tel_ra = Angle::from_hours(9.0 + 28.0 / 60.0 + 59.9527 / 3600.0);
-        let expected = (tel_ra + Angle::from_hours(12.0)).normalized();
+        let expected = (tel_ra + Angle::from_hours(12.0)).normalized().unwrap();
         assert_eq!(obs.observed_ra, expected);
     }
 

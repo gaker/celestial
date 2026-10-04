@@ -1,7 +1,7 @@
 use super::{Command, CommandOutput};
 use crate::error::{Error, Result};
 use crate::session::Session;
-use celestial_core::Angle;
+use celestial_core::angle::Angle;
 
 pub struct Lst;
 

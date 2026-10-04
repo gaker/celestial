@@ -27,10 +27,10 @@
 //! - Mathews, Herring & Buffett (2002), J. Geophys. Res. 107, B4
 
 use super::fundamental_args::{IERS2010FundamentalArgs, MHB2000FundamentalArgs};
-use super::lunisolar_terms::LUNISOLAR_TERMS;
-use super::planetary_terms::PLANETARY_TERMS;
+use super::lunisolar_terms::LUNISOLAR_TERMS_F64;
+use super::planetary_terms::PLANETARY_TERMS_F64;
 use super::types::NutationResult;
-use crate::constants::{MICROARCSEC_TO_RAD, TWOPI};
+use crate::constants::{TENTH_MICROARCSEC_TO_RAD, TWOPI};
 use crate::errors::AstroResult;
 use crate::math::fmod;
 
@@ -43,7 +43,7 @@ use crate::math::fmod;
 /// # Example
 ///
 /// ```
-/// use celestial_core::nutation::iau2000a::NutationIAU2000A;
+/// use celestial_core::nutation::NutationIAU2000A;
 ///
 /// let nut = NutationIAU2000A::new();
 ///
@@ -55,14 +55,8 @@ use crate::math::fmod;
 /// // result.delta_psi: nutation in longitude (radians)
 /// // result.delta_eps: nutation in obliquity (radians)
 /// ```
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Default)]
 pub struct NutationIAU2000A;
-
-impl Default for NutationIAU2000A {
-    fn default() -> Self {
-        Self::new()
-    }
-}
 
 impl NutationIAU2000A {
     /// Creates a new IAU 2000A nutation calculator.
@@ -90,8 +84,11 @@ impl NutationIAU2000A {
     /// - `delta_psi`: Nutation in longitude (radians)
     /// - `delta_eps`: Nutation in obliquity (radians)
     pub fn compute(&self, jd1: f64, jd2: f64) -> AstroResult<NutationResult> {
-        let t = crate::utils::jd_to_centuries(jd1, jd2);
+        let t = crate::utils::checked_jd_to_centuries(jd1, jd2)?;
+        Ok(self.nutation_at(t))
+    }
 
+    pub(super) fn nutation_at(&self, t: f64) -> NutationResult {
         let lunisolar_args = [
             t.moon_mean_anomaly(),
             t.sun_mean_anomaly_mhb(),
@@ -103,10 +100,10 @@ impl NutationIAU2000A {
 
         let (delta_psi_planetary, delta_eps_planetary) = self.compute_planetary(t);
 
-        Ok(NutationResult {
+        NutationResult {
             delta_psi: delta_psi_planetary + delta_psi_ls,
             delta_eps: delta_eps_planetary + delta_eps_ls,
-        })
+        }
     }
 
     /// Computes the lunisolar nutation contribution.
@@ -138,26 +135,7 @@ impl NutationIAU2000A {
     ///
     /// Tuple of (delta_psi, delta_eps) in radians.
     pub fn compute_lunisolar(&self, args: &[f64; 5], t: f64) -> (f64, f64) {
-        let mut dpsi = 0.0;
-        let mut deps = 0.0;
-
-        for term in LUNISOLAR_TERMS.iter().rev() {
-            let arg = fmod(
-                (term.0 as f64) * args[0]
-                    + (term.1 as f64) * args[1]
-                    + (term.2 as f64) * args[2]
-                    + (term.3 as f64) * args[3]
-                    + (term.4 as f64) * args[4],
-                TWOPI,
-            );
-
-            let (sarg, carg) = libm::sincos(arg);
-
-            dpsi += (term.5 + term.6 * t) * sarg + term.7 * carg;
-            deps += (term.8 + term.9 * t) * carg + term.10 * sarg;
-        }
-
-        (dpsi * MICROARCSEC_TO_RAD, deps * MICROARCSEC_TO_RAD)
+        lunisolar_series(&LUNISOLAR_TERMS_F64, args, t)
     }
 
     /// Computes the planetary nutation contribution.
@@ -178,50 +156,128 @@ impl NutationIAU2000A {
     ///
     /// Tuple of (delta_psi, delta_eps) in radians.
     pub fn compute_planetary(&self, t: f64) -> (f64, f64) {
-        let al = fmod(2.35555598 + 8328.6914269554 * t, TWOPI);
-        let af = fmod(1.627905234 + 8433.466158131 * t, TWOPI);
-        let ad = fmod(5.198466741 + 7771.3771468121 * t, TWOPI);
-        let aom = fmod(2.18243920 - 33.757045 * t, TWOPI);
-        let apa = t.precession();
-
-        let alme = t.mercury_lng();
-        let alve = t.venus_lng();
-        let alea = t.earth_lng();
-        let alma = t.mars_lng();
-        let alju = t.jupiter_lng();
-        let alsa = t.saturn_lng();
-        let alur = t.uranus_lng();
-        let alne = t.neptune_longitude_mhb();
-
+        let args = planetary_args(t);
         let mut dpsi = 0.0;
         let mut deps = 0.0;
-
-        for &(nl, nf, nd, nom, nme, nve, nea, nma, nju, nsa, nur, nne, npa, sp, cp, se, ce) in
-            PLANETARY_TERMS.iter().rev()
-        {
-            let arg = fmod(
-                (nl as f64) * al
-                    + (nf as f64) * af
-                    + (nd as f64) * ad
-                    + (nom as f64) * aom
-                    + (nme as f64) * alme
-                    + (nve as f64) * alve
-                    + (nea as f64) * alea
-                    + (nma as f64) * alma
-                    + (nju as f64) * alju
-                    + (nsa as f64) * alsa
-                    + (nur as f64) * alur
-                    + (nne as f64) * alne
-                    + (npa as f64) * apa,
-                TWOPI,
-            );
-
-            let (sarg, carg) = libm::sincos(arg);
-
-            dpsi += (sp as f64) * sarg + (cp as f64) * carg;
-            deps += (se as f64) * sarg + (ce as f64) * carg;
+        for [multipliers @ .., sp, cp, se, ce] in PLANETARY_TERMS_F64.iter().rev() {
+            let (sarg, carg) = libm::sincos(series_argument(multipliers, &args));
+            dpsi += sp * sarg + cp * carg;
+            deps += se * sarg + ce * carg;
         }
+        (
+            dpsi * TENTH_MICROARCSEC_TO_RAD,
+            deps * TENTH_MICROARCSEC_TO_RAD,
+        )
+    }
+}
 
-        (dpsi * MICROARCSEC_TO_RAD, deps * MICROARCSEC_TO_RAD)
+// Shared with IAU 2000B, which sums only the leading terms of the same table.
+pub(super) fn lunisolar_series(terms: &[[f64; 11]], args: &[f64; 5], t: f64) -> (f64, f64) {
+    let mut dpsi = 0.0;
+    let mut deps = 0.0;
+    for [multipliers @ .., sp, spt, cp, ce, cet, se] in terms.iter().rev() {
+        let (sarg, carg) = libm::sincos(series_argument(multipliers, args));
+        dpsi += (sp + spt * t) * sarg + cp * carg;
+        deps += (ce + cet * t) * carg + se * sarg;
+    }
+    (
+        dpsi * TENTH_MICROARCSEC_TO_RAD,
+        deps * TENTH_MICROARCSEC_TO_RAD,
+    )
+}
+
+// Summed left to right in table order; the ERFA pins depend on that order.
+fn series_argument<const N: usize>(multipliers: &[f64; N], args: &[f64; N]) -> f64 {
+    let sum = multipliers
+        .iter()
+        .zip(args)
+        .map(|(n, a)| n * a)
+        .reduce(|sum, product| sum + product);
+    fmod(sum.unwrap_or(0.0), TWOPI)
+}
+
+// The lunar arguments (l, F, D, Ω) are MHB2000's linear forms, not the IERS polynomials
+// the lunisolar series uses. Order matches the planetary table's multiplier columns.
+fn planetary_args(t: f64) -> [f64; 13] {
+    [
+        fmod(2.35555598 + 8328.6914269554 * t, TWOPI),
+        fmod(1.627905234 + 8433.466158131 * t, TWOPI),
+        fmod(5.198466741 + 7771.3771468121 * t, TWOPI),
+        fmod(2.18243920 - 33.757045 * t, TWOPI),
+        t.mercury_lng(),
+        t.venus_lng(),
+        t.earth_lng(),
+        t.mars_lng(),
+        t.jupiter_lng(),
+        t.saturn_lng(),
+        t.uranus_lng(),
+        t.neptune_longitude_mhb(),
+        t.precession(),
+    ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // (jd1, jd2, dpsi, deps) from ERFA nut00a, run with Rust libm for sin/cos/fmod.
+    const ERFA_NUT00A: [(f64, f64, f64, f64); 6] = [
+        (
+            2400000.5,
+            53736.0,
+            -9.630909107116424e-6,
+            4.0632391740016646e-5,
+        ),
+        (
+            2451545.0,
+            0.0,
+            -6.754422426417298e-5,
+            -2.7970831192374137e-5,
+        ),
+        (
+            2400000.5,
+            60000.0,
+            -4.496338070306366e-5,
+            3.753546622895506e-5,
+        ),
+        (
+            2451545.0,
+            -219150.0,
+            4.389836152812474e-5,
+            -4.124743149757404e-5,
+        ),
+        (
+            2451545.0,
+            219150.0,
+            -5.0887129295862736e-5,
+            3.108429897083574e-5,
+        ),
+        // One of the rare dates where the order of operations in the general
+        // precession argument changes the result.
+        (
+            2451545.0,
+            -630023.9141714298,
+            -5.351671754571772e-6,
+            4.295092325358382e-5,
+        ),
+    ];
+
+    #[test]
+    fn test_matches_erfa_nut00a() {
+        for (jd1, jd2, dpsi, deps) in ERFA_NUT00A {
+            let result = NutationIAU2000A::new().compute(jd1, jd2).unwrap();
+            let got = (result.delta_psi, result.delta_eps);
+            assert_eq!(got, (dpsi, deps), "{jd1} + {jd2}");
+        }
+    }
+
+    #[test]
+    fn test_rejects_epoch_outside_model_range() {
+        let model = NutationIAU2000A::new();
+        assert!(model.compute(f64::NAN, 0.0).is_err());
+        assert!(model.compute(2451545.0, f64::INFINITY).is_err());
+        assert!(model.compute(f64::MAX, f64::MAX).is_err());
+        assert!(model.compute(2451545.0, 1e300).is_err());
+        assert!(model.compute(2451545.0, -730501.0).is_err());
     }
 }

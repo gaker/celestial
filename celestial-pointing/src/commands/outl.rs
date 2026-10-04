@@ -32,7 +32,7 @@ impl Command for Outl {
         let cutoff = threshold * rms;
 
         let lat = session.latitude();
-        let prepared = session.prepared_observations();
+        let prepared = session.prepared_observations()?;
         let mut outliers: Vec<(usize, f64)> = Vec::new();
 
         for (i, obs) in prepared.iter().enumerate() {

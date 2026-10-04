@@ -10,7 +10,7 @@
 
 use crate::observation::SiteParams;
 use celestial_coords::frames::HourAnglePosition;
-use celestial_core::{Angle, Location};
+use celestial_core::{angle::Angle, errors::AstroResult, location::Location};
 use celestial_time::TT;
 
 /// Adds atmospheric refraction to a sky direction.
@@ -33,7 +33,7 @@ pub(crate) fn apply_refraction(
     lst: Angle,
     location: &Location,
     site: &SiteParams,
-) -> (Angle, Angle) {
+) -> AstroResult<(Angle, Angle)> {
     refraction_shift(ra, dec, lst, location, site, true)
 }
 
@@ -44,17 +44,17 @@ fn refraction_shift(
     location: &Location,
     site: &SiteParams,
     apply: bool,
-) -> (Angle, Angle) {
+) -> AstroResult<(Angle, Angle)> {
     if site.pressure <= 0.0 {
-        return (ra, dec);
+        return Ok((ra, dec));
     }
-    let ha = (lst - ra).wrapped();
+    let ha = (lst - ra).wrapped()?;
     let epoch = TT::j2000();
     let Ok(hourangle) = HourAnglePosition::new(ha, dec, *location, epoch) else {
-        return (ra, dec);
+        return Ok((ra, dec));
     };
     let Ok(topo) = hourangle.to_topocentric() else {
-        return (ra, dec);
+        return Ok((ra, dec));
     };
     let shifted = if apply {
         topo.with_refraction(
@@ -72,10 +72,10 @@ fn refraction_shift(
         )
     };
     let Ok(shifted_ha) = shifted.to_hour_angle() else {
-        return (ra, dec);
+        return Ok((ra, dec));
     };
-    let shifted_ra = (lst - shifted_ha.hour_angle()).wrapped();
-    (shifted_ra, shifted_ha.declination())
+    let shifted_ra = (lst - shifted_ha.hour_angle()).wrapped()?;
+    Ok((shifted_ra, shifted_ha.declination()))
 }
 
 #[cfg(test)]
@@ -100,7 +100,7 @@ mod tests {
     }
 
     fn arcsec(a: Angle, b: Angle) -> f64 {
-        (a - b).wrapped().arcseconds().abs()
+        (a - b).wrapped().unwrap().arcseconds().abs()
     }
 
     #[test]
@@ -110,7 +110,7 @@ mod tests {
         let ra = lst;
         let dec = Angle::from_degrees(lat);
         let (ra2, dec2) =
-            refraction_shift(ra, dec, lst, &location_at(lat), &standard_site(), false);
+            refraction_shift(ra, dec, lst, &location_at(lat), &standard_site(), false).unwrap();
         assert!(arcsec(ra, ra2) < 1e-6);
         assert!(arcsec(dec, dec2) < 1e-6);
     }
@@ -122,18 +122,25 @@ mod tests {
         let ra = lst;
         let dec = Angle::from_degrees(lat - 60.0);
         let (ra2, dec2) =
-            refraction_shift(ra, dec, lst, &location_at(lat), &standard_site(), false);
+            refraction_shift(ra, dec, lst, &location_at(lat), &standard_site(), false).unwrap();
 
         let epoch = TT::j2000();
-        let apparent = HourAnglePosition::new((lst - ra).wrapped(), dec, location_at(lat), epoch)
-            .unwrap()
-            .to_topocentric()
-            .unwrap();
-        let true_hap =
-            HourAnglePosition::new((lst - ra2).wrapped(), dec2, location_at(lat), epoch).unwrap();
+        let apparent =
+            HourAnglePosition::new((lst - ra).wrapped().unwrap(), dec, location_at(lat), epoch)
+                .unwrap()
+                .to_topocentric()
+                .unwrap();
+        let true_hap = HourAnglePosition::new(
+            (lst - ra2).wrapped().unwrap(),
+            dec2,
+            location_at(lat),
+            epoch,
+        )
+        .unwrap();
         let true_topo = true_hap.to_topocentric().unwrap();
         let elev_delta = (apparent.elevation() - true_topo.elevation())
             .wrapped()
+            .unwrap()
             .arcseconds();
         assert!(
             (70.0..160.0).contains(&elev_delta),
@@ -151,7 +158,7 @@ mod tests {
         let lst = Angle::from_hours(0.0);
         let ra = lst;
         let dec = Angle::from_degrees(lat - 60.0);
-        let (ra2, dec2) = refraction_shift(ra, dec, lst, &location_at(lat), &site, false);
+        let (ra2, dec2) = refraction_shift(ra, dec, lst, &location_at(lat), &site, false).unwrap();
         assert_eq!(ra, ra2);
         assert_eq!(dec, dec2);
     }
@@ -164,7 +171,7 @@ mod tests {
         let lst = Angle::from_hours(0.0);
         let ra = lst;
         let dec = Angle::from_degrees(lat - 60.0);
-        let (ra2, dec2) = refraction_shift(ra, dec, lst, &location_at(lat), &site, false);
+        let (ra2, dec2) = refraction_shift(ra, dec, lst, &location_at(lat), &site, false).unwrap();
         assert_eq!(ra, ra2);
         assert_eq!(dec, dec2);
     }
@@ -178,11 +185,11 @@ mod tests {
 
         let ra = lst;
         let dec_high = Angle::from_degrees(lat - 10.0);
-        let (_, dec_high_true) = refraction_shift(ra, dec_high, lst, &loc, &site, false);
+        let (_, dec_high_true) = refraction_shift(ra, dec_high, lst, &loc, &site, false).unwrap();
         let shift_high = arcsec(dec_high, dec_high_true);
 
         let dec_low = Angle::from_degrees(lat - 60.0);
-        let (_, dec_low_true) = refraction_shift(ra, dec_low, lst, &loc, &site, false);
+        let (_, dec_low_true) = refraction_shift(ra, dec_low, lst, &loc, &site, false).unwrap();
         let shift_low = arcsec(dec_low, dec_low_true);
 
         assert!(
@@ -206,8 +213,8 @@ mod tests {
         let dec = Angle::from_degrees(lat - 30.0);
         let loc = location_at(lat);
         let site = standard_site();
-        let (ra2, dec2) = apply_refraction(ra, dec, lst, &loc, &site);
-        let (ra3, dec3) = refraction_shift(ra2, dec2, lst, &loc, &site, false);
+        let (ra2, dec2) = apply_refraction(ra, dec, lst, &loc, &site).unwrap();
+        let (ra3, dec3) = refraction_shift(ra2, dec2, lst, &loc, &site, false).unwrap();
         assert!(arcsec(ra, ra3) < 0.5, "ra drift {}", arcsec(ra, ra3));
         assert!(arcsec(dec, dec3) < 0.5, "dec drift {}", arcsec(dec, dec3));
     }

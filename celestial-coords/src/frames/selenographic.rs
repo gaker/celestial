@@ -1,8 +1,8 @@
 use crate::{lunar, transforms::CoordinateFrame, CoordResult, Distance, ICRSPosition};
+use celestial_core::angle::wrap_0_2pi;
+use celestial_core::angle::Angle;
 use celestial_core::constants::HALF_PI;
 use celestial_core::matrix::RotationMatrix3;
-use celestial_core::utils::normalize_angle_to_positive;
-use celestial_core::Angle;
 use celestial_time::TT;
 
 #[cfg(feature = "serde")]
@@ -19,7 +19,7 @@ pub struct SelenographicPosition {
 impl SelenographicPosition {
     pub fn new(latitude: Angle, longitude: Angle) -> CoordResult<Self> {
         let latitude = latitude.validate_latitude()?;
-        let longitude = longitude.validate_longitude(true)?;
+        let longitude = longitude.normalized()?;
 
         Ok(Self {
             latitude,
@@ -55,7 +55,7 @@ impl SelenographicPosition {
     }
 
     pub fn sub_earth_point(epoch: &TT) -> CoordResult<Self> {
-        let (lon, lat) = lunar::compute_sub_earth_point(epoch);
+        let (lon, lat) = lunar::compute_sub_earth_point(epoch)?;
         Self::new(lat, lon)
     }
 
@@ -92,15 +92,12 @@ impl SelenographicPosition {
     }
 
     pub fn angular_separation(&self, other: &Self) -> Angle {
-        let (sin_lat1, cos_lat1) = self.latitude.sin_cos();
-        let (sin_lat2, cos_lat2) = other.latitude.sin_cos();
-        let delta_lon = (self.longitude - other.longitude).radians();
-
-        let angle_rad = celestial_core::math::vincenty_angular_separation(
-            sin_lat1, cos_lat1, sin_lat2, cos_lat2, delta_lon,
-        );
-
-        Angle::from_radians(angle_rad)
+        Angle::from_radians(celestial_core::math::angular_separation(
+            self.longitude.radians(),
+            self.latitude.radians(),
+            other.longitude.radians(),
+            other.latitude.radians(),
+        ))
     }
 
     pub fn is_visible_from_earth(&self, epoch: &TT) -> bool {
@@ -111,7 +108,7 @@ impl SelenographicPosition {
 }
 
 fn selenographic_to_icrs_matrix(epoch: &TT) -> CoordResult<RotationMatrix3> {
-    let orientation = lunar::compute_lunar_orientation(epoch);
+    let orientation = lunar::compute_lunar_orientation(epoch)?;
     let lib_lon = orientation.optical_libration.longitude.radians();
     let lib_lat = orientation.optical_libration.latitude.radians();
     let c = orientation.position_angle.radians();
@@ -137,7 +134,7 @@ impl CoordinateFrame for SelenographicPosition {
             .transform_spherical(self.longitude.radians(), self.latitude.radians());
 
         let mut icrs = ICRSPosition::new(
-            Angle::from_radians(normalize_angle_to_positive(ra)),
+            Angle::from_radians(wrap_0_2pi(ra)?),
             Angle::from_radians(dec),
         )?;
 
@@ -153,7 +150,7 @@ impl CoordinateFrame for SelenographicPosition {
 
         let mut pos = Self::new(
             Angle::from_radians(lat),
-            Angle::from_radians(normalize_angle_to_positive(lon)),
+            Angle::from_radians(wrap_0_2pi(lon)?),
         )?;
 
         if let Some(dist) = icrs.distance() {

@@ -1,6 +1,7 @@
+use celestial_coords::CoordError;
+use celestial_core::angle::wrap_pm_pi;
+use celestial_core::angle::Angle;
 use celestial_core::constants::RAD_TO_DEG;
-use celestial_core::utils::normalize_longitude;
-use celestial_core::Angle;
 
 use crate::coordinate::{IntermediateCoord, NativeCoord};
 use crate::error::{WcsError, WcsResult};
@@ -25,12 +26,32 @@ pub fn radial_to_intermediate(r_theta: f64, phi_rad: f64) -> IntermediateCoord {
 }
 
 #[inline]
-pub fn native_coord_from_radians(phi_rad: f64, theta_rad: f64) -> NativeCoord {
-    let phi_deg = normalize_longitude(phi_rad * RAD_TO_DEG);
-    NativeCoord::new(
-        Angle::from_degrees(phi_deg),
-        Angle::from_degrees(theta_rad * RAD_TO_DEG),
-    )
+pub fn native_coord_from_radians(phi_rad: f64, theta_rad: f64) -> WcsResult<NativeCoord> {
+    Ok(NativeCoord::new(
+        Angle::from_radians(wrap_longitude(phi_rad)?),
+        Angle::from_radians(theta_rad),
+    ))
+}
+
+#[inline]
+pub(crate) fn wrap_longitude(rad: f64) -> WcsResult<f64> {
+    wrap_pm_pi(rad).map_err(|e| CoordError::from(e).into())
+}
+
+// φ = ±π is one meridian. Longitude wrapping sends +π to −π and −π to +π, and a
+// deprojection can land an ulp past either edge, so roundtrip tests move the recovered φ
+// back to the original's edge before comparing.
+#[cfg(test)]
+pub(crate) fn phi_on_same_edge(original: Angle, recovered: Angle) -> Angle {
+    use celestial_core::constants::{PI, TWOPI};
+    let (phi, phi_back) = (original.radians(), recovered.radians());
+    if phi_back - phi > PI {
+        Angle::from_radians(phi_back - TWOPI)
+    } else if phi - phi_back > PI {
+        Angle::from_radians(phi_back + TWOPI)
+    } else {
+        recovered
+    }
 }
 
 #[inline]
@@ -208,7 +229,7 @@ fn solve_2x2(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use celestial_core::constants::{HALF_PI, QUARTER_PI, SQRT2};
+    use celestial_core::constants::{HALF_PI, PI, QUARTER_PI, SQRT2, TWOPI};
 
     #[test]
     fn test_asin_safe_clamps_above_and_below_unit() {
@@ -238,9 +259,25 @@ mod tests {
 
     #[test]
     fn test_native_coord_from_radians() {
-        let native = native_coord_from_radians(QUARTER_PI, QUARTER_PI);
-        assert!((native.phi().degrees() - 45.0).abs() < 1e-10);
-        assert!((native.theta().degrees() - 45.0).abs() < 1e-10);
+        let native = native_coord_from_radians(QUARTER_PI, QUARTER_PI).unwrap();
+        assert_eq!(native.phi().radians(), QUARTER_PI);
+        assert_eq!(native.theta().radians(), QUARTER_PI);
+    }
+
+    // φ = ±π is one meridian. φ wraps the same way as every other longitude in the
+    // workspace (ERFA's anpm convention), which sends +π to −π and −π to +π.
+    #[test]
+    fn test_native_coord_from_radians_wraps_phi_at_the_seam() {
+        let phi_at = |phi: f64| native_coord_from_radians(phi, 0.0).unwrap().phi().radians();
+        assert_eq!(phi_at(PI), -PI);
+        assert_eq!(phi_at(-PI), PI);
+        assert_eq!(phi_at(3.0 * HALF_PI), 3.0 * HALF_PI - TWOPI);
+    }
+
+    #[test]
+    fn test_native_coord_from_radians_rejects_non_finite_phi() {
+        assert!(native_coord_from_radians(f64::NAN, 0.0).is_err());
+        assert!(native_coord_from_radians(f64::INFINITY, 0.0).is_err());
     }
 
     #[test]

@@ -1,3 +1,4 @@
+use crate::error::Result;
 use crate::observation::PierSide;
 use crate::session::Session;
 
@@ -12,15 +13,15 @@ pub struct ObsResidual {
     pub pier_east: bool,
 }
 
-pub fn compute_residuals(session: &Session) -> Vec<ObsResidual> {
+pub fn compute_residuals(session: &Session) -> Result<Vec<ObsResidual>> {
     let lat = session.latitude();
-    session
-        .prepared_observations()
+    Ok(session
+        .prepared_observations()?
         .iter()
         .enumerate()
         .filter(|(_, obs)| !obs.masked)
         .map(|(i, obs)| build_residual(i, obs, &session.model, lat))
-        .collect()
+        .collect())
 }
 
 fn build_residual(
@@ -65,7 +66,7 @@ mod tests {
     use super::*;
     use crate::observation::{Observation, PierSide};
     use crate::test_support::ObsBuilder;
-    use celestial_core::Angle;
+    use celestial_core::angle::Angle;
 
     fn make_obs(
         cmd_ha_arcsec: f64,
@@ -88,7 +89,7 @@ mod tests {
     #[test]
     fn empty_session_returns_empty() {
         let session = Session::new();
-        let residuals = compute_residuals(&session);
+        let residuals = compute_residuals(&session).unwrap();
         assert!(residuals.is_empty());
     }
 
@@ -101,7 +102,7 @@ mod tests {
         session
             .observations
             .push(make_obs(0.0, 200.0, 30.0, 30.0, PierSide::East, true));
-        let residuals = compute_residuals(&session);
+        let residuals = compute_residuals(&session).unwrap();
         assert_eq!(residuals.len(), 1);
         assert_eq!(residuals[0].index, 0);
     }
@@ -112,7 +113,7 @@ mod tests {
         session
             .observations
             .push(make_obs(0.0, 3600.0, 0.0, 2.0, PierSide::East, false));
-        let residuals = compute_residuals(&session);
+        let residuals = compute_residuals(&session).unwrap();
         assert_eq!(residuals.len(), 1);
         let r = &residuals[0];
         assert_eq!(r.dh, 3600.0);
@@ -129,7 +130,7 @@ mod tests {
             .push(make_obs(0.0, 100.0, 45.0, 45.0, PierSide::East, false));
         session.model.add_term("IH").unwrap();
         session.model.set_coefficients(&[-100.0]).unwrap();
-        let residuals = compute_residuals(&session);
+        let residuals = compute_residuals(&session).unwrap();
         let r = &residuals[0];
         let dec_rad = 45.0_f64.to_radians();
         let model_dh = 100.0;
@@ -147,7 +148,7 @@ mod tests {
         session
             .observations
             .push(make_obs(0.0, 0.0, 0.0, 0.0, PierSide::West, false));
-        let residuals = compute_residuals(&session);
+        let residuals = compute_residuals(&session).unwrap();
         assert!(residuals[0].pier_east);
         assert!(!residuals[1].pier_east);
     }
@@ -164,7 +165,7 @@ mod tests {
         session
             .observations
             .push(make_obs(0.0, 0.0, 0.0, 0.0, PierSide::East, false));
-        let residuals = compute_residuals(&session);
+        let residuals = compute_residuals(&session).unwrap();
         assert_eq!(residuals.len(), 2);
         assert_eq!(residuals[0].index, 1);
         assert_eq!(residuals[1].index, 2);
@@ -202,7 +203,7 @@ mod tests {
             PierSide::East,
             false,
         ));
-        let residuals = compute_residuals(&session);
+        let residuals = compute_residuals(&session).unwrap();
         let r = &residuals[0];
         assert_eq!(r.ha_deg, Angle::from_arcseconds(cmd_ha_arcsec).degrees());
         assert_eq!(r.dec_deg, 45.0);
@@ -214,7 +215,7 @@ mod tests {
         session
             .observations
             .push(make_obs(0.0, 3.0, 0.0, 4.0 / 3600.0, PierSide::East, false));
-        let residuals = compute_residuals(&session);
+        let residuals = compute_residuals(&session).unwrap();
         let r = &residuals[0];
         let expected_dr = libm::sqrt(r.dx * r.dx + r.dd * r.dd);
         assert_eq!(r.dr, expected_dr);

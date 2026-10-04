@@ -1,7 +1,7 @@
 # Vectors & Rotation Matrices
 
 Two types handle 3D geometry: `Vector3` for positions and directions, `RotationMatrix3`
-for frame transformations. Both are re-exported at the crate root.
+for frame transformations. Both live in `celestial_core::matrix`.
 
 ## Vector3
 
@@ -10,7 +10,7 @@ A 3D Cartesian vector with public `x`, `y`, `z` fields.
 ### Construction
 
 ```rust,ignore
-use celestial_core::Vector3;
+use celestial_core::matrix::Vector3;
 
 // From components
 let v = Vector3::new(1.0, 2.0, 3.0);
@@ -34,7 +34,7 @@ Convert between Cartesian and spherical (RA/Dec-style) representations.
 `from_spherical` always produces a unit vector. Both angles are in radians.
 
 ```rust,ignore
-use celestial_core::Vector3;
+use celestial_core::matrix::Vector3;
 use celestial_core::constants::HALF_PI;
 
 // RA=0, Dec=0 → points along +X
@@ -55,7 +55,7 @@ let v = Vector3::from_spherical(0.0, HALF_PI);
 The vector does not need to be normalized:
 
 ```rust,ignore
-use celestial_core::Vector3;
+use celestial_core::matrix::Vector3;
 
 let v = Vector3::new(0.0, 0.0, 1.0); // north pole
 let (theta, phi) = v.to_spherical();
@@ -69,17 +69,19 @@ physics convention where the names are swapped.
 ### Magnitude and Normalization
 
 ```rust,ignore
-use celestial_core::Vector3;
+use celestial_core::matrix::Vector3;
 
 let v = Vector3::new(3.0, 4.0, 0.0);
 
 v.magnitude();         // 5.0
 v.magnitude_squared(); // 25.0 (cheaper, good for comparisons)
 
-let unit = v.normalize(); // [0.6, 0.8, 0.0], magnitude = 1.0
+let unit = v.normalize()?; // [0.6000000000000001, 0.8, 0.0], magnitude = 1.0
 ```
 
-`normalize` returns the zero vector unchanged (avoids NaN).
+`normalize` returns an error for a zero-length or non-finite vector. Like ERFA's
+`pn`, it multiplies by `1/|v|` rather than dividing, which is why x lands one bit
+above 0.6.
 
 ### Dot and Cross Products
 
@@ -87,7 +89,7 @@ For unit vectors, the dot product is the cosine of the angle between them.
 The cross product gives the perpendicular axis (right-hand rule):
 
 ```rust,ignore
-use celestial_core::Vector3;
+use celestial_core::matrix::Vector3;
 
 let a = Vector3::x_axis();
 let b = Vector3::y_axis();
@@ -102,23 +104,16 @@ c.dot(&d); // 32.0 (1*4 + 2*5 + 3*6)
 
 ### Element Access
 
-Fields are public, but index-based access is also available:
+Fields are public. `get` and `set` take an index and return an error outside 0-2:
 
 ```rust,ignore
-use celestial_core::Vector3;
+use celestial_core::matrix::Vector3;
 
 let mut v = Vector3::new(1.0, 2.0, 3.0);
 
 // Direct field access
 v.x; // 1.0
-
-// Index access (panics if index > 2)
-v[0]; // 1.0 (x)
-v[1]; // 2.0 (y)
-v[2]; // 3.0 (z)
-
-// Mutable indexing
-v[0] = 10.0;
+v.x = 10.0;
 
 // Checked access (returns Result)
 v.get(0).unwrap();      // 10.0
@@ -129,7 +124,7 @@ v.get(3); // Err — index out of bounds
 ### Arithmetic
 
 ```rust,ignore
-use celestial_core::Vector3;
+use celestial_core::matrix::Vector3;
 
 let a = Vector3::new(1.0, 2.0, 3.0);
 let b = Vector3::new(4.0, 5.0, 6.0);
@@ -160,15 +155,15 @@ println!("{}", v);
 
 ## RotationMatrix3
 
-A 3x3 rotation matrix stored row-major. Elements are private; access via methods
-or indexing.
+A 3x3 rotation matrix stored row-major. Elements are private; read them with
+`elements()`.
 
 ### Construction
 
 Start from identity and build up rotations, or provide elements directly:
 
 ```rust,ignore
-use celestial_core::RotationMatrix3;
+use celestial_core::matrix::RotationMatrix3;
 
 // Identity matrix (no rotation)
 let m = RotationMatrix3::identity();
@@ -178,8 +173,12 @@ let m = RotationMatrix3::from_array([
     [1.0, 0.0, 0.0],
     [0.0, 1.0, 0.0],
     [0.0, 0.0, 1.0],
-]);
+])?;
 ```
+
+`from_array` returns an error unless every element is finite and the matrix is a
+proper rotation: `M * M^T` within 1e-12 of identity and determinant within 1e-12
+of +1. Deserializing with serde runs the same check.
 
 ### Building Rotations
 
@@ -187,7 +186,7 @@ Three in-place methods apply rotations about the principal axes. Each modifies
 the matrix to become `R_axis(angle) * self`. Angles are in radians:
 
 ```rust,ignore
-use celestial_core::RotationMatrix3;
+use celestial_core::matrix::RotationMatrix3;
 
 let mut m = RotationMatrix3::identity();
 m.rotate_z(0.1);   // Apply Rz(0.1 rad)
@@ -202,7 +201,7 @@ convention where we rotate the coordinate frame, not the vector.
 What this means concretely:
 
 ```rust,ignore
-use celestial_core::RotationMatrix3;
+use celestial_core::matrix::RotationMatrix3;
 use celestial_core::constants::HALF_PI;
 
 let mut m = RotationMatrix3::identity();
@@ -218,7 +217,7 @@ let v = m.apply_to_vector([1.0, 0.0, 0.0]);
 Two ways to transform a vector:
 
 ```rust,ignore
-use celestial_core::{RotationMatrix3, Vector3};
+use celestial_core::matrix::{RotationMatrix3, Vector3};
 
 let mut m = RotationMatrix3::identity();
 m.rotate_z(0.5);
@@ -237,7 +236,7 @@ let result = &m * v; // also works with references
 Matrix multiplication composes rotations. The rightmost matrix acts first:
 
 ```rust,ignore
-use celestial_core::RotationMatrix3;
+use celestial_core::matrix::RotationMatrix3;
 
 let mut rx = RotationMatrix3::identity();
 rx.rotate_x(0.1);
@@ -260,7 +259,7 @@ The common case — transform RA/Dec (or lon/lat) through a rotation without
 manually converting to/from Cartesian:
 
 ```rust,ignore
-use celestial_core::RotationMatrix3;
+use celestial_core::matrix::RotationMatrix3;
 use celestial_core::constants::QUARTER_PI;
 
 let mut m = RotationMatrix3::identity();
@@ -280,7 +279,7 @@ For a proper rotation matrix, the transpose equals the inverse. This is exact
 and numerically stable:
 
 ```rust,ignore
-use celestial_core::RotationMatrix3;
+use celestial_core::matrix::RotationMatrix3;
 
 let mut m = RotationMatrix3::identity();
 m.rotate_z(0.5);
@@ -298,7 +297,7 @@ let restored = m_inv.apply_to_vector(rotated);
 ### Validation and Comparison
 
 ```rust,ignore
-use celestial_core::RotationMatrix3;
+use celestial_core::matrix::RotationMatrix3;
 
 let mut m = RotationMatrix3::identity();
 m.rotate_z(0.5);
@@ -316,21 +315,16 @@ a.max_difference(&b); // 0.0
 
 ### Element Access
 
+There is no per-element setter. Build matrices with `identity`, the `rotate_*`
+methods, multiplication or `from_array`, and read them through `elements()`:
+
 ```rust,ignore
-use celestial_core::RotationMatrix3;
+use celestial_core::matrix::RotationMatrix3;
 
-let mut m = RotationMatrix3::identity();
+let m = RotationMatrix3::identity();
 
-// Method access
-m.get(0, 0); // 1.0
-m.set(0, 1, 0.5);
-
-// Tuple indexing
-m[(0, 0)]; // 1.0
-m[(0, 1)] = 0.5;
-
-// Direct array reference
 let elems: &[[f64; 3]; 3] = m.elements();
+elems[0][0]; // 1.0
 ```
 
 ### Display
@@ -338,7 +332,7 @@ let elems: &[[f64; 3]; 3] = m.elements();
 Formats as a labeled multi-line matrix with 9 decimal places:
 
 ```rust,ignore
-use celestial_core::RotationMatrix3;
+use celestial_core::matrix::RotationMatrix3;
 
 let m = RotationMatrix3::identity();
 println!("{}", m);

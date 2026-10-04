@@ -1,7 +1,7 @@
 use super::{GAST, GMST, LAST, LMST};
 use crate::scales::{TT, UT1};
 use crate::TimeResult;
-use celestial_core::Location;
+use celestial_core::location::Location;
 
 #[derive(Debug, Clone, Copy)]
 pub struct ObservatoryContext<'a> {
@@ -74,7 +74,7 @@ impl<'a> ObservatoryContext<'a> {
     /// ```
     /// use celestial_time::{UT1, TT};
     /// use celestial_time::sidereal::ObservatoryContext;
-    /// use celestial_core::Location;
+    /// use celestial_core::location::Location;
     ///
     /// let ut1 = UT1::j2000();
     /// let tt = TT::j2000();
@@ -92,7 +92,7 @@ impl<'a> ObservatoryContext<'a> {
     /// ```
     /// use celestial_time::{UT1, TT};
     /// use celestial_time::sidereal::ObservatoryContext;
-    /// use celestial_core::Location;
+    /// use celestial_core::location::Location;
     ///
     /// let ut1 = UT1::j2000();
     /// let tt = TT::j2000();
@@ -110,7 +110,7 @@ impl<'a> ObservatoryContext<'a> {
     /// ```
     /// use celestial_time::{UT1, TT};
     /// use celestial_time::sidereal::ObservatoryContext;
-    /// use celestial_core::Location;
+    /// use celestial_core::location::Location;
     ///
     /// let ut1 = UT1::j2000();
     /// let tt = TT::j2000();
@@ -128,7 +128,7 @@ impl<'a> ObservatoryContext<'a> {
     /// ```
     /// use celestial_time::{UT1, TT};
     /// use celestial_time::sidereal::ObservatoryContext;
-    /// use celestial_core::Location;
+    /// use celestial_core::location::Location;
     ///
     /// let ut1 = UT1::j2000();
     /// let tt = TT::j2000();
@@ -148,7 +148,7 @@ impl<'a> ObservatoryContext<'a> {
     /// ```
     /// use celestial_time::{UT1, TT};
     /// use celestial_time::sidereal::ObservatoryContext;
-    /// use celestial_core::Location;
+    /// use celestial_core::location::Location;
     ///
     /// let ut1 = UT1::j2000();
     /// let tt = TT::j2000();
@@ -178,7 +178,7 @@ impl<'a> ObservatoryContext<'a> {
     /// ```
     /// use celestial_time::{UT1, TT};
     /// use celestial_time::sidereal::ObservatoryContext;
-    /// use celestial_core::Location;
+    /// use celestial_core::location::Location;
     ///
     /// let ut1 = UT1::j2000();
     /// let tt = TT::j2000();
@@ -199,7 +199,7 @@ impl<'a> ObservatoryContext<'a> {
     /// ```
     /// use celestial_time::{UT1, TT};
     /// use celestial_time::sidereal::ObservatoryContext;
-    /// use celestial_core::Location;
+    /// use celestial_core::location::Location;
     ///
     /// let ut1 = UT1::j2000();
     /// let tt = TT::j2000();
@@ -208,9 +208,9 @@ impl<'a> ObservatoryContext<'a> {
     /// println!("{}", observatory.info());
     /// ```
     pub fn info(&self) -> String {
-        let lat_deg = self.location.latitude * celestial_core::constants::RAD_TO_DEG;
-        let lon_deg = self.location.longitude * celestial_core::constants::RAD_TO_DEG;
-        let height_m = self.location.height;
+        let lat_deg = self.location.latitude() * celestial_core::constants::RAD_TO_DEG;
+        let lon_deg = self.location.longitude() * celestial_core::constants::RAD_TO_DEG;
+        let height_m = self.location.height();
 
         format!(
             "Observatory at ({:.4}°, {:.4}°, {:.0}m) - UT1: {}, TT: {}",
@@ -257,9 +257,9 @@ mod tests {
             ut1_jd.jd1() + ut1_jd.jd2()
         );
         assert_eq!(obs_tt_jd.jd1() + obs_tt_jd.jd2(), tt_jd.jd1() + tt_jd.jd2());
-        assert_eq!(observatory.location().latitude, location.latitude);
-        assert_eq!(observatory.location().longitude, location.longitude);
-        assert_eq!(observatory.location().height, location.height);
+        assert_eq!(observatory.location().latitude(), location.latitude());
+        assert_eq!(observatory.location().longitude(), location.longitude());
+        assert_eq!(observatory.location().height(), location.height());
     }
 
     #[test]

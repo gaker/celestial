@@ -1,4 +1,4 @@
-use celestial_core::Angle;
+use celestial_core::angle::Angle;
 
 use crate::coordinate::{CelestialCoord, IntermediateCoord, PixelCoord};
 use crate::distortion::DistortionModel;
@@ -376,7 +376,7 @@ mod tests {
     #[test]
     fn test_wcs_simple_tan_pipeline() {
         use crate::PixelCoord;
-        use celestial_core::assert_ulp_lt;
+        use celestial_core::assert_ulp_le;
 
         let wcs = create_simple_tan_wcs().unwrap();
 
@@ -384,8 +384,8 @@ mod tests {
         let celestial = wcs
             .pixel_to_celestial(PixelCoord::new(512.0, 512.0))
             .unwrap();
-        assert_ulp_lt!(celestial.alpha().degrees(), 180.0, 10);
-        assert_ulp_lt!(celestial.delta().degrees(), 45.0, 10);
+        assert_ulp_le!(celestial.alpha().degrees(), 180.0, 10);
+        assert_ulp_le!(celestial.delta().degrees(), 45.0, 10);
 
         // Round trip via the typed API (PixelCoord <-> CelestialCoord), with a
         // tight ULP bound at CRPIX and an absolute floor off-centre.
@@ -393,8 +393,8 @@ mod tests {
         let recovered = wcs
             .celestial_to_pixel(wcs.pixel_to_celestial(at_crpix).unwrap())
             .unwrap();
-        assert_ulp_lt!(at_crpix.x(), recovered.x(), 10);
-        assert_ulp_lt!(at_crpix.y(), recovered.y(), 10);
+        assert_ulp_le!(at_crpix.x(), recovered.x(), 10);
+        assert_ulp_le!(at_crpix.y(), recovered.y(), 10);
 
         let off_center = PixelCoord::new(256.0, 768.0);
         let recovered = wcs

@@ -151,7 +151,7 @@ pub(crate) fn deproject_tsc(inter: IntermediateCoord) -> WcsResult<NativeCoord> 
     let theta = libm::asin(n);
     let phi = libm::atan2(m, l);
 
-    Ok(native_coord_from_radians(phi, theta))
+    native_coord_from_radians(phi, theta)
 }
 
 pub(crate) fn project_csc(native: NativeCoord) -> WcsResult<IntermediateCoord> {
@@ -232,7 +232,7 @@ pub(crate) fn deproject_csc(inter: IntermediateCoord) -> WcsResult<NativeCoord> 
     let theta = libm::asin(n);
     let phi = libm::atan2(m, l);
 
-    Ok(native_coord_from_radians(phi, theta))
+    native_coord_from_radians(phi, theta)
 }
 
 fn csc_inverse_poly(x: f64, y: f64) -> f64 {
@@ -426,7 +426,7 @@ pub(crate) fn deproject_qsc(inter: IntermediateCoord) -> WcsResult<NativeCoord> 
     let theta = libm::asin(n);
     let phi = libm::atan2(m, l);
 
-    Ok(native_coord_from_radians(phi, theta))
+    native_coord_from_radians(phi, theta)
 }
 
 fn qsc_inverse_omega(u: f64, v: f64) -> f64 {
@@ -452,8 +452,8 @@ fn qsc_inverse_omega(u: f64, v: f64) -> f64 {
 mod tests {
     use super::*;
     use crate::Projection;
-    use celestial_core::assert_ulp_lt;
-    use celestial_core::Angle;
+    use celestial_core::angle::Angle;
+    use celestial_core::assert_ulp_le;
 
     // Per-projection native_reference and reference-maps-to-origin checks are
     // covered by spherical::tests::test_all_projections_map_reference_to_origin.
@@ -572,7 +572,7 @@ mod tests {
                     sign,
                     inter.x_deg(),
                 );
-                assert_ulp_lt!(
+                assert_ulp_le!(
                     inter.y_deg(),
                     90.0 * sign,
                     2,

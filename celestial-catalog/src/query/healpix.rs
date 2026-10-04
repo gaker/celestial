@@ -4,7 +4,7 @@
 //! as well as disc/cone query support for efficient spatial searches.
 
 use celestial_core::constants::{PI, RAD_TO_DEG, TWOPI};
-use celestial_core::{math::vincenty_angular_separation, Angle};
+use celestial_core::{angle::Angle, math::angular_separation};
 use std::collections::HashSet;
 
 /// Convert (RA, Dec) in degrees to HEALPix nested pixel index.
@@ -106,14 +106,12 @@ pub(crate) fn angular_separation_deg(
     ra2_deg: f64,
     dec2_deg: f64,
 ) -> f64 {
-    let dec1 = Angle::from_degrees(dec1_deg);
-    let dec2 = Angle::from_degrees(dec2_deg);
-    let delta_lon = Angle::from_degrees(ra2_deg - ra1_deg).radians();
-
-    let (d1_sin, d1_cos) = dec1.sin_cos();
-    let (d2_sin, d2_cos) = dec2.sin_cos();
-
-    let sep_rad = vincenty_angular_separation(d1_sin, d1_cos, d2_sin, d2_cos, delta_lon);
+    let sep_rad = angular_separation(
+        Angle::from_degrees(ra1_deg).radians(),
+        Angle::from_degrees(dec1_deg).radians(),
+        Angle::from_degrees(ra2_deg).radians(),
+        Angle::from_degrees(dec2_deg).radians(),
+    );
     sep_rad * RAD_TO_DEG
 }
 

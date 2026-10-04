@@ -52,7 +52,7 @@ pub(crate) fn deproject_zpn(inter: IntermediateCoord, coeffs: &[f64]) -> WcsResu
 
     let theta = solve_zpn_inverse(r, coeffs)?;
 
-    Ok(native_coord_from_radians(phi, theta))
+    native_coord_from_radians(phi, theta)
 }
 
 fn evaluate_polynomial(theta: f64, coeffs: &[f64]) -> f64 {
@@ -86,10 +86,11 @@ fn solve_zpn_inverse(r: f64, coeffs: &[f64]) -> WcsResult<f64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::common::phi_on_same_edge;
     use crate::Projection;
-    use celestial_core::assert_ulp_lt;
+    use celestial_core::angle::Angle;
+    use celestial_core::assert_ulp_le;
     use celestial_core::constants::RAD_TO_DEG;
-    use celestial_core::Angle;
     #[test]
     fn test_zpn_arc_equivalent() {
         let zpn = Projection::zpn(vec![0.0, 1.0]);
@@ -108,8 +109,8 @@ mod tests {
             let zpn_inter = zpn.project(native).unwrap();
             let arc_inter = arc.project(native).unwrap();
 
-            assert_ulp_lt!(zpn_inter.x_deg(), arc_inter.x_deg(), 2);
-            assert_ulp_lt!(zpn_inter.y_deg(), arc_inter.y_deg(), 2);
+            assert_ulp_le!(zpn_inter.x_deg(), arc_inter.x_deg(), 2);
+            assert_ulp_le!(zpn_inter.y_deg(), arc_inter.y_deg(), 2);
         }
     }
 
@@ -133,16 +134,16 @@ mod tests {
                     );
                     let inter = proj.project(original).unwrap();
                     let recovered = proj.deproject(inter).unwrap();
-                    assert_ulp_lt!(
+                    assert_ulp_le!(
                         original.phi().degrees(),
-                        recovered.phi().degrees(),
+                        phi_on_same_edge(original.phi(), recovered.phi()).degrees(),
                         *ulp,
                         "phi (coeffs={:?}, phi={}, theta={})",
                         coeffs,
                         phi_deg,
                         theta_deg
                     );
-                    assert_ulp_lt!(
+                    assert_ulp_le!(
                         original.theta().degrees(),
                         recovered.theta().degrees(),
                         *ulp,

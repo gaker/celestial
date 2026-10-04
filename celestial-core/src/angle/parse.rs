@@ -49,7 +49,7 @@
 //! For Right Ascension, always use `.hms()`. For Declination, always use `.dms()`.
 
 use super::Angle;
-use crate::AstroError;
+use crate::errors::AstroError;
 use once_cell::sync::Lazy;
 use regex::Regex;
 
@@ -104,12 +104,12 @@ impl AngleUnits for str {
 
     #[inline]
     fn arcmin(&self) -> Result<Angle, AstroError> {
-        parse_decimal(self).map(|v| Angle::from_degrees(v / 60.0))
+        parse_decimal(self).map(Angle::from_arcminutes)
     }
 
     #[inline]
     fn arcsec(&self) -> Result<Angle, AstroError> {
-        parse_decimal(self).map(|v| Angle::from_degrees(v / 3600.0))
+        parse_decimal(self).map(Angle::from_arcseconds)
     }
 
     #[inline]
@@ -258,9 +258,9 @@ fn parse_hms_captures(caps: regex::Captures, _original: &str) -> Result<Angle, A
     let sign = caps
         .get(1)
         .map_or(1.0, |m| if m.as_str() == "-" { -1.0 } else { 1.0 });
-    let hours: f64 = caps[2].parse().unwrap();
-    let minutes: f64 = caps[3].parse().unwrap();
-    let seconds: f64 = caps[4].parse().unwrap();
+    let hours = capture_number(&caps, 2)?;
+    let minutes = capture_number(&caps, 3)?;
+    let seconds = capture_number(&caps, 4)?;
 
     let total_hours = sign * (hours + minutes / 60.0 + seconds / 3600.0);
     Ok(Angle::from_hours(total_hours))
@@ -270,12 +270,19 @@ fn parse_dms_captures(caps: regex::Captures, _original: &str) -> Result<Angle, A
     let sign = caps
         .get(1)
         .map_or(1.0, |m| if m.as_str() == "-" { -1.0 } else { 1.0 });
-    let degrees: f64 = caps[2].parse().unwrap();
-    let minutes: f64 = caps[3].parse().unwrap();
-    let seconds: f64 = caps[4].parse().unwrap();
+    let degrees = capture_number(&caps, 2)?;
+    let minutes = capture_number(&caps, 3)?;
+    let seconds = capture_number(&caps, 4)?;
 
     let total_degrees = sign * (degrees + minutes / 60.0 + seconds / 3600.0);
     Ok(Angle::from_degrees(total_degrees))
+}
+
+// Regex `\d` matches any Unicode digit, but f64 parsing accepts only ASCII.
+fn capture_number(caps: &regex::Captures, index: usize) -> Result<f64, AstroError> {
+    caps[index].parse().map_err(|_| {
+        AstroError::calculation_error("parse_sexagesimal", "Field contains a non-ASCII digit")
+    })
 }
 
 fn normalize_input(s: &str) -> String {
@@ -455,6 +462,22 @@ mod tests {
     }
 
     #[test]
+    fn test_non_ascii_digits_are_rejected() {
+        let inputs = [
+            "１２:３４:５６",
+            "12:34:56.７",
+            "١٢:٣٤:٥٦",
+            "１２h３４m５６s",
+            "４５d３０m１５s",
+        ];
+        for s in inputs {
+            assert!(parse_hms(s).is_err(), "{s}");
+            assert!(parse_dms(s).is_err(), "{s}");
+            assert!(s.to_angle().is_err(), "{s}");
+        }
+    }
+
+    #[test]
     fn test_sign_handling() {
         assert!("+45:30:15".dms().unwrap().degrees() > 0.0);
         assert!("+12:34:56".hms().unwrap().hours() > 0.0);
@@ -485,5 +508,11 @@ mod tests {
         let back_to_hms = angle.hours();
         let expected = 12.0 + 34.0 / 60.0 + 56.123456 / 3600.0;
         assert!((back_to_hms - expected).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_unit_suffix_parsing_matches_constructors() {
+        assert_eq!("0.371".arcsec().unwrap(), Angle::from_arcseconds(0.371));
+        assert_eq!("0.371".arcmin().unwrap(), Angle::from_arcminutes(0.371));
     }
 }

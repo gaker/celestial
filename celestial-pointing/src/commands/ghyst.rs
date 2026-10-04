@@ -19,7 +19,7 @@ impl Command for Ghyst {
 
     fn execute(&self, session: &mut Session, args: &[&str]) -> Result<CommandOutput> {
         require_fit(session)?;
-        let residuals = compute_residuals(session);
+        let residuals = compute_residuals(session)?;
         if residuals.is_empty() {
             return Ok(CommandOutput::Text("No active observations".to_string()));
         }
@@ -171,7 +171,7 @@ mod tests {
         session
             .observations
             .push(make_obs(0.0, 200.0, 60.0, 60.02, PierSide::East));
-        let residuals = compute_residuals(&session);
+        let residuals = compute_residuals(&session).unwrap();
         let (east, west) = split_by_pier(&residuals);
         assert_eq!(east.len(), 2);
         assert_eq!(west.len(), 1);

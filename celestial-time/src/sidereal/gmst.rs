@@ -58,17 +58,20 @@ impl GMST {
         self.0.hour_angle_to_target(target_ra_hours)
     }
 
-    pub fn to_lmst(&self, location: &celestial_core::Location) -> crate::sidereal::LMST {
+    pub fn to_lmst(
+        &self,
+        location: &celestial_core::location::Location,
+    ) -> TimeResult<crate::sidereal::LMST> {
         use super::angle::SiderealAngle;
         use crate::sidereal::LMST;
 
         let gmst_rad = self.radians();
-        let lmst_rad = gmst_rad + location.longitude;
+        let lmst_rad = gmst_rad + location.longitude();
 
-        let lmst_normalized = wrap_0_2pi(lmst_rad);
+        let lmst_normalized = wrap_0_2pi(lmst_rad)?;
         let angle = SiderealAngle::from_radians_exact(lmst_normalized);
 
-        LMST::from_radians(angle.radians(), location)
+        Ok(LMST::from_radians(angle.radians(), location))
     }
 }
 
@@ -102,7 +105,7 @@ fn calculate_gmst_iau2006(ut1: &UT1, tt: &TT) -> TimeResult<f64> {
 
     let gmst = era + polynomial_arcsec * celestial_core::constants::ARCSEC_TO_RAD;
 
-    Ok(wrap_0_2pi(gmst))
+    Ok(wrap_0_2pi(gmst)?)
 }
 
 fn calculate_era00(ut1_jd1: f64, ut1_jd2: f64) -> TimeResult<f64> {
@@ -133,7 +136,7 @@ fn calculate_era00(ut1_jd1: f64, ut1_jd2: f64) -> TimeResult<f64> {
 
     let theta = TWOPI * (f + 0.7790572732640 + rotation_term);
 
-    Ok(wrap_0_2pi(theta))
+    Ok(wrap_0_2pi(theta)?)
 }
 
 #[cfg(test)]

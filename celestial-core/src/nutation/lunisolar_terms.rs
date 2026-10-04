@@ -718,3 +718,21 @@ pub const LUNISOLAR_TERMS: &[LuniSolarTerm] = &[
     (2, -1, 2, 4, 2, -3.0, 0.0, 0.0, 1.0, 0.0, 0.0),
     (2, 0, 2, 4, 1, -3.0, 0.0, 0.0, 2.0, 0.0, 0.0),
 ];
+
+// i32 to f64 is exact, so converting once at compile time hands the series the same
+// operands that casting every term on every call did.
+pub(crate) static LUNISOLAR_TERMS_F64: [[f64; 11]; LUNISOLAR_TERMS.len()] = lunisolar_terms_f64();
+
+const fn lunisolar_terms_f64() -> [[f64; 11]; LUNISOLAR_TERMS.len()] {
+    let mut table = [[0.0; 11]; LUNISOLAR_TERMS.len()];
+    let mut i = 0;
+    while i < table.len() {
+        let t = LUNISOLAR_TERMS[i];
+        table[i] = [
+            t.0 as f64, t.1 as f64, t.2 as f64, t.3 as f64, t.4 as f64, t.5, t.6, t.7, t.8, t.9,
+            t.10,
+        ];
+        i += 1;
+    }
+    table
+}

@@ -108,7 +108,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  Near ecliptic? {}", ecl.is_near_ecliptic_plane());
     println!(
         "  Mean obliquity = {:.6}°\n",
-        ecl.mean_obliquity().degrees()
+        ecl.mean_obliquity()?.degrees()
     );
 
     // Aldebaran — near the ecliptic (zodiac star)

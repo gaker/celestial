@@ -3,7 +3,7 @@ mod tests;
 
 use celestial_coords::{CartesianFrame, EclipticCartesian, Vector3};
 use celestial_core::constants::{DAYS_PER_JULIAN_MILLENNIUM, J2000_JD, TWOPI};
-use celestial_core::AstroResult;
+use celestial_core::errors::AstroResult;
 
 use crate::earth::Vsop2013Earth;
 use crate::planetary_coefficients::*;
@@ -249,7 +249,7 @@ mod test {
             p: 0.1398654514,
         };
 
-        let pos_ecl = elements_to_cartesian(&el).unwrap();
+        let pos_ecl = elements_to_cartesian(&el).unwrap().to_array();
         let expected = [-9.8753625435, -27.9588613710, 5.8504463318];
 
         for i in 0..3 {

@@ -2,15 +2,14 @@
 //!
 //! This module provides a unified error type [`AstroError`] that covers the failure
 //! modes encountered in astronomical computations: invalid dates, numerical issues,
-//! external library failures, data access problems, and calculation failures.
+//! data access problems, and calculation failures.
 //!
 //! # Error Categories
 //!
 //! | Variant | Use Case | Recoverable? |
 //! |---------|----------|--------------|
 //! | [`InvalidDate`](AstroError::InvalidDate) | Calendar validation failures | No |
-//! | [`MathError`](AstroError::MathError) | Overflow, precision loss, division by zero | No |
-//! | [`ExternalLibraryError`](AstroError::ExternalLibraryError) | FFI or driver failures | No |
+//! | [`MathError`](AstroError::MathError) | Non-finite, out-of-range or invalid input, division by zero | No |
 //! | [`DataError`](AstroError::DataError) | File I/O, network, parsing | Yes |
 //! | [`CalculationError`](AstroError::CalculationError) | Algorithm failures | No |
 //!
@@ -20,7 +19,7 @@
 //! Use the constructor methods for consistent error creation:
 //!
 //! ```
-//! use celestial_core::{AstroError, MathErrorKind};
+//! use celestial_core::errors::{AstroError, MathErrorKind};
 //!
 //! fn safe_divide(a: f64, b: f64) -> Result<f64, AstroError> {
 //!     if b == 0.0 {
@@ -32,6 +31,10 @@
 //!     }
 //!     Ok(a / b)
 //! }
+//!
+//! assert_eq!(safe_divide(6.0, 3.0)?, 2.0);
+//! assert!(safe_divide(1.0, 0.0).is_err());
+//! # Ok::<(), AstroError>(())
 //! ```
 
 use thiserror::Error;
@@ -40,14 +43,9 @@ use thiserror::Error;
 ///
 /// Used with [`AstroError::MathError`] to distinguish between different
 /// numerical failure modes.
-#[derive(Debug, Clone, Eq, PartialEq)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+#[non_exhaustive]
 pub enum MathErrorKind {
-    /// Result exceeds representable range (too large).
-    Overflow,
-    /// Result below representable range (too small/negative).
-    Underflow,
-    /// Accumulated floating-point error exceeds acceptable threshold.
-    PrecisionLoss,
     /// Attempted division by zero or near-zero value.
     DivisionByZero,
     /// Input value is invalid for the operation.
@@ -60,11 +58,12 @@ pub enum MathErrorKind {
 
 /// Unified error type for astronomical calculations.
 ///
-/// Covers calendar validation, numerical issues, external dependencies,
-/// data access, and algorithmic failures. Use the constructor methods
+/// Covers calendar validation, numerical issues, data access, and algorithmic
+/// failures. Use the constructor methods
 /// ([`invalid_date`](Self::invalid_date), [`math_error`](Self::math_error), etc.)
 /// for consistent error creation.
 #[derive(Error, Debug)]
+#[non_exhaustive]
 pub enum AstroError {
     /// Invalid calendar date (e.g., February 30, month 13).
     #[error("Invalid date {year}-{month:02}-{day:02}: {message}")]
@@ -76,18 +75,10 @@ pub enum AstroError {
     },
 
     /// Numerical computation failure.
-    #[error("Math error in {operation} ({kind:?}): {message}")]
+    #[error("Math error in {operation} ({kind}): {message}")]
     MathError {
         operation: String,
         kind: MathErrorKind,
-        message: String,
-    },
-
-    /// Failure in external library or hardware driver.
-    #[error("External library error in {function}: status {status_code} - {message}")]
-    ExternalLibraryError {
-        function: String,
-        status_code: i32,
         message: String,
     },
 
@@ -104,6 +95,17 @@ pub enum AstroError {
     /// Algorithm or calculation failure.
     #[error("Calculation error in {context}: {message}")]
     CalculationError { context: String, message: String },
+}
+
+impl core::fmt::Display for MathErrorKind {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str(match self {
+            Self::DivisionByZero => "division by zero",
+            Self::InvalidInput => "invalid input",
+            Self::NotFinite => "not finite",
+            Self::OutOfRange => "out of range",
+        })
+    }
 }
 
 /// Convenience alias for `Result<T, AstroError>`.
@@ -129,15 +131,6 @@ impl AstroError {
         }
     }
 
-    /// Creates an [`ExternalLibraryError`](Self::ExternalLibraryError).
-    pub fn external_library_error(function: &str, status_code: i32, message: &str) -> Self {
-        Self::ExternalLibraryError {
-            function: function.to_string(),
-            status_code,
-            message: message.to_string(),
-        }
-    }
-
     /// Creates a [`DataError`](Self::DataError) (the only recoverable variant).
     pub fn data_error(file_type: &str, operation: &str, reason: &str) -> Self {
         Self::DataError {
@@ -159,11 +152,7 @@ impl AstroError {
     ///
     /// Only [`DataError`](Self::DataError) is recoverable (network retry, alternate source).
     pub fn is_recoverable(&self) -> bool {
-        match self {
-            Self::DataError { .. } => true,
-            Self::InvalidDate { .. } => false,
-            _ => false,
-        }
+        matches!(self, Self::DataError { .. })
     }
 }
 
@@ -183,20 +172,14 @@ mod tests {
     #[test]
     fn test_math_error_with_kind() {
         let err = AstroError::math_error(
-            "nanosecond addition",
-            MathErrorKind::Overflow,
-            "value too large",
+            "vector normalization",
+            MathErrorKind::DivisionByZero,
+            "zero-length vector",
         );
-        assert!(err.to_string().contains("Math error"));
-        assert!(err.to_string().contains("Overflow"));
-    }
-
-    #[test]
-    fn test_external_library_error() {
-        let err = AstroError::external_library_error("telescope_driver", -2, "mount error");
-        assert!(err.to_string().contains("mount error"));
-        assert!(err.to_string().contains("telescope_driver"));
-        assert!(err.to_string().contains("status -2"));
+        assert_eq!(
+            err.to_string(),
+            "Math error in vector normalization (division by zero): zero-length vector"
+        );
     }
 
     #[test]
@@ -232,11 +215,8 @@ mod tests {
     #[test]
     fn test_non_recoverable_errors() {
         let math_err =
-            AstroError::math_error("calculation", MathErrorKind::Overflow, "value too large");
+            AstroError::math_error("calculation", MathErrorKind::OutOfRange, "value too large");
         assert!(!math_err.is_recoverable());
-
-        let lib_err = AstroError::external_library_error("telescope_driver", -1, "mount error");
-        assert!(!lib_err.is_recoverable());
 
         let calc_err = AstroError::calculation_error("orbit_propagation", "insufficient data");
         assert!(!calc_err.is_recoverable());

@@ -1,6 +1,6 @@
 use crate::transforms::CartesianFrame;
-use celestial_core::constants::{FRAME_BIAS_PHI_RAD, J2000_OBLIQUITY_RAD};
-use celestial_core::Vector3;
+use celestial_core::constants::{VSOP2013_OBLIQUITY_RAD, VSOP2013_PHI_RAD};
+use celestial_core::matrix::Vector3;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct EclipticCartesian {
@@ -25,8 +25,8 @@ impl EclipticCartesian {
 
 impl CartesianFrame for EclipticCartesian {
     fn to_icrs(&self) -> Vector3 {
-        let eps = J2000_OBLIQUITY_RAD;
-        let phi = FRAME_BIAS_PHI_RAD;
+        let eps = VSOP2013_OBLIQUITY_RAD;
+        let phi = VSOP2013_PHI_RAD;
         let (sin_eps, cos_eps) = libm::sincos(eps);
         let (sin_phi, cos_phi) = libm::sincos(phi);
 
@@ -41,8 +41,8 @@ impl CartesianFrame for EclipticCartesian {
     }
 
     fn from_icrs(icrs: &Vector3) -> Self {
-        let eps = J2000_OBLIQUITY_RAD;
-        let phi = FRAME_BIAS_PHI_RAD;
+        let eps = VSOP2013_OBLIQUITY_RAD;
+        let phi = VSOP2013_PHI_RAD;
         let (sin_eps, cos_eps) = libm::sincos(eps);
         let (sin_phi, cos_phi) = libm::sincos(phi);
 

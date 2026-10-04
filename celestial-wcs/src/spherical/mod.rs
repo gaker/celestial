@@ -1,8 +1,7 @@
+use celestial_core::angle::Angle;
 use celestial_core::constants::{HALF_PI, PI, RAD_TO_DEG};
-use celestial_core::utils::normalize_longitude;
-use celestial_core::Angle;
 
-use crate::common::{asin_safe, native_coord_from_radians};
+use crate::common::{asin_safe, native_coord_from_radians, wrap_longitude};
 use crate::coordinate::{CelestialCoord, IntermediateCoord, NativeCoord};
 use crate::error::{WcsError, WcsResult};
 
@@ -98,12 +97,9 @@ impl SphericalRotation {
             alpha_0.radians() + libm::atan2(x, y)
         };
 
-        let alpha_p_deg = normalize_longitude(alpha_p * RAD_TO_DEG);
-        let delta_p_deg = delta_p * RAD_TO_DEG;
-
         Ok(Self::new(
-            Angle::from_degrees(alpha_p_deg),
-            Angle::from_degrees(delta_p_deg),
+            Angle::from_radians(wrap_longitude(alpha_p)?),
+            Angle::from_radians(delta_p),
             phi_p,
         ))
     }
@@ -184,12 +180,9 @@ impl SphericalRotation {
         let y = sin_theta * self.cos_delta_p - cos_theta * self.sin_delta_p * cos_d_phi;
         let alpha = self.alpha_p + libm::atan2(x, y);
 
-        let alpha_deg = normalize_longitude(alpha * RAD_TO_DEG);
-        let delta_deg = delta * RAD_TO_DEG;
-
         Ok(CelestialCoord::new(
-            Angle::from_degrees(alpha_deg),
-            Angle::from_degrees(delta_deg),
+            Angle::from_radians(wrap_longitude(alpha)?),
+            Angle::from_radians(delta),
         ))
     }
 
@@ -208,7 +201,7 @@ impl SphericalRotation {
         let y = sin_delta * self.cos_delta_p - cos_delta * self.sin_delta_p * cos_d_alpha;
         let phi = self.phi_p + libm::atan2(x, y);
 
-        Ok(native_coord_from_radians(phi, theta))
+        native_coord_from_radians(phi, theta)
     }
 
     #[inline]
@@ -454,7 +447,7 @@ impl Projection {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use celestial_core::assert_ulp_lt;
+    use celestial_core::assert_ulp_le;
 
     #[test]
     fn test_all_projections_map_reference_to_origin() {
@@ -518,7 +511,7 @@ mod tests {
         );
         let native_pole = NativeCoord::new(Angle::from_degrees(0.0), Angle::from_degrees(90.0));
         let cel = rot_north.native_to_celestial(native_pole).unwrap();
-        assert_ulp_lt!(cel.delta().degrees(), 90.0, 1);
+        assert_ulp_le!(cel.delta().degrees(), 90.0, 1);
 
         // (90, 0) -> celestial (90, 0) for that same rotation.
         let cel_eq = rot_north
@@ -528,18 +521,19 @@ mod tests {
             ))
             .unwrap();
         assert!(cel_eq.delta().degrees().abs() < 1e-10);
-        assert_ulp_lt!(cel_eq.alpha().degrees(), 90.0, 1);
+        assert_ulp_le!(cel_eq.alpha().degrees(), 90.0, 1);
 
         // (alpha_p, delta_p, phi_p) = (180, 45, 180): native pole maps to
-        // celestial (180, 45), and the inverse takes us back.
+        // celestial (180, 45), and the inverse takes us back. α = 180° is the ±180°
+        // seam, and longitude wrapping sends +180° to −180°.
         let rot_oblique = SphericalRotation::new(
             Angle::from_degrees(180.0),
             Angle::from_degrees(45.0),
             Angle::from_degrees(180.0),
         );
         let cel_ref = rot_oblique.native_to_celestial(native_pole).unwrap();
-        assert_ulp_lt!(cel_ref.alpha().degrees(), 180.0, 1);
-        assert_ulp_lt!(cel_ref.delta().degrees(), 45.0, 1);
+        assert_ulp_le!(cel_ref.alpha().degrees(), -180.0, 1);
+        assert_ulp_le!(cel_ref.delta().degrees(), 45.0, 1);
 
         let nat_back = rot_oblique
             .celestial_to_native(CelestialCoord::new(
@@ -547,7 +541,7 @@ mod tests {
                 Angle::from_degrees(45.0),
             ))
             .unwrap();
-        assert_ulp_lt!(nat_back.theta().degrees(), 90.0, 1);
+        assert_ulp_le!(nat_back.theta().degrees(), 90.0, 1);
     }
 
     #[test]
@@ -562,12 +556,12 @@ mod tests {
         let cel = rot_fwd.native_to_celestial(original_nat).unwrap();
         let recovered_nat = rot_fwd.celestial_to_native(cel).unwrap();
         // ULP tolerance accounts for ARM vs x86 FPU differences in trig functions.
-        assert_ulp_lt!(
+        assert_ulp_le!(
             original_nat.phi().degrees(),
             recovered_nat.phi().degrees(),
             8
         );
-        assert_ulp_lt!(
+        assert_ulp_le!(
             original_nat.theta().degrees(),
             recovered_nat.theta().degrees(),
             8
@@ -583,12 +577,12 @@ mod tests {
             CelestialCoord::new(Angle::from_degrees(110.0), Angle::from_degrees(-30.0));
         let nat = rot_rev.celestial_to_native(original_cel).unwrap();
         let recovered_cel = rot_rev.native_to_celestial(nat).unwrap();
-        assert_ulp_lt!(
+        assert_ulp_le!(
             original_cel.alpha().degrees(),
             recovered_cel.alpha().degrees(),
             2
         );
-        assert_ulp_lt!(
+        assert_ulp_le!(
             original_cel.delta().degrees(),
             recovered_cel.delta().degrees(),
             3
@@ -609,8 +603,8 @@ mod tests {
         .unwrap();
         let native_ref = NativeCoord::new(Angle::from_degrees(0.0), Angle::from_degrees(90.0));
         let cel = rot_oblique.native_to_celestial(native_ref).unwrap();
-        assert_ulp_lt!(cel.alpha().degrees(), 180.0, 2);
-        assert_ulp_lt!(cel.delta().degrees(), 45.0, 2);
+        assert_ulp_le!(cel.alpha().degrees(), 180.0, 2);
+        assert_ulp_le!(cel.delta().degrees(), 45.0, 2);
 
         // crval at the pole - the alpha is degenerate, but delta must be 90.
         let rot_north = SphericalRotation::from_crval(
@@ -622,7 +616,7 @@ mod tests {
         )
         .unwrap();
         let cel_north = rot_north.native_to_celestial(native_ref).unwrap();
-        assert_ulp_lt!(cel_north.delta().degrees(), 90.0, 2);
+        assert_ulp_le!(cel_north.delta().degrees(), 90.0, 2);
     }
 
     #[test]
@@ -640,8 +634,8 @@ mod tests {
         let celestial = rot.native_to_celestial(original).unwrap();
         let recovered = rot.celestial_to_native(celestial).unwrap();
 
-        assert_ulp_lt!(original.phi().degrees(), recovered.phi().degrees(), 2);
-        assert_ulp_lt!(original.theta().degrees(), recovered.theta().degrees(), 2);
+        assert_ulp_le!(original.phi().radians(), recovered.phi().radians(), 2);
+        assert_ulp_le!(original.theta().radians(), recovered.theta().radians(), 2);
     }
 
     #[test]
@@ -668,12 +662,12 @@ mod tests {
         let celestial_default = rot_default.native_to_celestial(native).unwrap();
         let celestial_explicit = rot_explicit.native_to_celestial(native).unwrap();
 
-        assert_ulp_lt!(
+        assert_ulp_le!(
             celestial_default.alpha().degrees(),
             celestial_explicit.alpha().degrees(),
             10
         );
-        assert_ulp_lt!(
+        assert_ulp_le!(
             celestial_default.delta().degrees(),
             celestial_explicit.delta().degrees(),
             10
@@ -704,12 +698,12 @@ mod tests {
         let celestial_default = rot_default.native_to_celestial(native).unwrap();
         let celestial_explicit = rot_explicit.native_to_celestial(native).unwrap();
 
-        assert_ulp_lt!(
+        assert_ulp_le!(
             celestial_default.alpha().degrees(),
             celestial_explicit.alpha().degrees(),
             10
         );
-        assert_ulp_lt!(
+        assert_ulp_le!(
             celestial_default.delta().degrees(),
             celestial_explicit.delta().degrees(),
             10
@@ -766,8 +760,8 @@ mod tests {
         let celestial = rot.native_to_celestial(native_ref).unwrap();
 
         let recovered = rot.celestial_to_native(celestial).unwrap();
-        assert_ulp_lt!(native_ref.phi().degrees(), recovered.phi().degrees(), 5);
-        assert_ulp_lt!(native_ref.theta().degrees(), recovered.theta().degrees(), 5);
+        assert_ulp_le!(native_ref.phi().degrees(), recovered.phi().degrees(), 5);
+        assert_ulp_le!(native_ref.theta().degrees(), recovered.theta().degrees(), 5);
     }
 
     #[test]
@@ -794,8 +788,8 @@ mod tests {
 
         let celestial_north = rot_north.native_to_celestial(native).unwrap();
         let recovered_north = rot_north.celestial_to_native(celestial_north).unwrap();
-        assert_ulp_lt!(native.phi().degrees(), recovered_north.phi().degrees(), 5);
-        assert_ulp_lt!(
+        assert_ulp_le!(native.phi().degrees(), recovered_north.phi().degrees(), 5);
+        assert_ulp_le!(
             native.theta().degrees(),
             recovered_north.theta().degrees(),
             5
@@ -803,8 +797,8 @@ mod tests {
 
         let celestial_south = rot_south.native_to_celestial(native).unwrap();
         let recovered_south = rot_south.celestial_to_native(celestial_south).unwrap();
-        assert_ulp_lt!(native.phi().degrees(), recovered_south.phi().degrees(), 5);
-        assert_ulp_lt!(
+        assert_ulp_le!(native.phi().degrees(), recovered_south.phi().degrees(), 5);
+        assert_ulp_le!(
             native.theta().degrees(),
             recovered_south.theta().degrees(),
             5
@@ -826,8 +820,8 @@ mod tests {
         let celestial = rot_with_latpole.native_to_celestial(native).unwrap();
         let recovered = rot_with_latpole.celestial_to_native(celestial).unwrap();
 
-        assert_ulp_lt!(native.phi().degrees(), recovered.phi().degrees(), 5);
-        assert_ulp_lt!(native.theta().degrees(), recovered.theta().degrees(), 5);
+        assert_ulp_le!(native.phi().radians(), recovered.phi().radians(), 5);
+        assert_ulp_le!(native.theta().radians(), recovered.theta().radians(), 5);
     }
 
     #[test]

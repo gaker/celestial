@@ -1,4 +1,4 @@
-use celestial_core::Angle;
+use celestial_core::angle::Angle;
 use celestial_time::TT;
 
 const MAS_PER_DEGREE: f64 = 3_600_000.0;

@@ -1,4 +1,4 @@
-use celestial_core::Angle;
+use celestial_core::angle::Angle;
 use celestial_time::JulianDate;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

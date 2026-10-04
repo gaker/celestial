@@ -1,5 +1,5 @@
+use celestial_core::angle::Angle;
 use celestial_core::constants::{DEG_TO_RAD, HALF_PI};
-use celestial_core::Angle;
 
 use crate::common::{
     check_nonzero_param, deproject_conic_polar, native_coord_from_radians, project_conic_xy,
@@ -86,7 +86,7 @@ pub(crate) fn deproject_cop(
 
     let theta = theta_a + libm::atan(cot_theta_a - r_signed / cos_eta);
 
-    Ok(native_coord_from_radians(phi, theta))
+    native_coord_from_radians(phi, theta)
 }
 
 pub(crate) fn project_coe(
@@ -163,7 +163,7 @@ pub(crate) fn deproject_coe(
     }
     let theta = libm::asin(sin_theta.clamp(-1.0, 1.0));
 
-    Ok(native_coord_from_radians(phi, theta))
+    native_coord_from_radians(phi, theta)
 }
 
 pub(crate) fn project_cod(
@@ -212,7 +212,7 @@ pub(crate) fn deproject_cod(
 
     let theta = theta_a + y0 - r_signed;
 
-    Ok(native_coord_from_radians(phi, theta))
+    native_coord_from_radians(phi, theta)
 }
 
 pub(crate) fn project_coo(
@@ -276,7 +276,7 @@ pub(crate) fn deproject_coo(
     let tan_half_xi = (r_signed / psi).powf(1.0 / c);
     let theta = HALF_PI - 2.0 * libm::atan(tan_half_xi);
 
-    Ok(native_coord_from_radians(phi, theta))
+    native_coord_from_radians(phi, theta)
 }
 
 fn coo_c_psi(theta_a: f64, eta: f64) -> WcsResult<(f64, f64)> {
@@ -316,8 +316,8 @@ fn coo_c_psi(theta_a: f64, eta: f64) -> WcsResult<(f64, f64)> {
 mod tests {
     use super::*;
     use crate::Projection;
-    use celestial_core::assert_ulp_lt;
-    use celestial_core::Angle;
+    use celestial_core::angle::Angle;
+    use celestial_core::assert_ulp_le;
 
     fn assert_reaches_origin(proj: &Projection, theta_a: f64) {
         let native = NativeCoord::new(Angle::from_degrees(0.0), Angle::from_degrees(theta_a));
@@ -331,7 +331,7 @@ mod tests {
             NativeCoord::new(Angle::from_degrees(phi_deg), Angle::from_degrees(theta_deg));
         let inter = proj.project(original).unwrap();
         let recovered = proj.deproject(inter).unwrap();
-        assert_ulp_lt!(
+        assert_ulp_le!(
             original.phi().degrees(),
             recovered.phi().degrees(),
             ulp,
@@ -339,7 +339,7 @@ mod tests {
             phi_deg,
             theta_deg
         );
-        assert_ulp_lt!(
+        assert_ulp_le!(
             original.theta().degrees(),
             recovered.theta().degrees(),
             ulp,

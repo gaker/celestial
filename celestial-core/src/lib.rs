@@ -16,32 +16,48 @@
 //! | [`obliquity`] | Mean obliquity of the ecliptic (IAU 1980, 2006) |
 //! | [`location`] | Observer geodetic coordinates, geocentric conversion |
 //! | [`constants`] | Astronomical constants (J2000, WGS84, unit conversions) |
-//! | [`errors`] | [`AstroError`] and [`AstroResult`] |
+//! | [`errors`] | [`AstroError`](errors::AstroError) and [`AstroResult`](errors::AstroResult) |
 //!
 //! # Coordinate Transformation Pipeline
 //!
 //! GCRS → CIRS transformation (CIO-based):
 //!
-//! ```ignore
+//! ```
+//! use celestial_core::constants::J2000_JD;
+//! use celestial_core::nutation::NutationIAU2006A;
+//! use celestial_core::precession::PrecessionIAU2006;
+//! use celestial_core::utils::jd_to_centuries;
+//! use celestial_core::cio::{gcrs_to_cirs_matrix, CioSolution};
+//!
+//! // TT as a two-part Julian Date
+//! let (jd1, jd2) = (J2000_JD, 9000.0);
+//! let tt_centuries = jd_to_centuries(jd1, jd2);
+//!
 //! // 1. Compute precession-nutation-bias matrix
-//! let fw = FukushimaWilliamsAngles::iau2006a(tt_centuries);
 //! let nutation = NutationIAU2006A::new().compute(jd1, jd2)?;
-//! let npb = fw.build_npb_matrix(nutation.delta_psi, nutation.delta_eps);
+//! let npb = PrecessionIAU2006::new().npb_matrix_iau2006a(
+//!     tt_centuries,
+//!     nutation.delta_psi,
+//!     nutation.delta_eps,
+//! );
 //!
 //! // 2. Extract CIO quantities
 //! let cio = CioSolution::calculate(&npb, tt_centuries)?;
 //!
 //! // 3. Build GCRS→CIRS matrix
-//! let matrix = gcrs_to_cirs_matrix(cio.cip.x, cio.cip.y, cio.s);
+//! let matrix = gcrs_to_cirs_matrix(cio.cip.x, cio.cip.y, cio.s)?;
+//! # Ok::<(), celestial_core::errors::AstroError>(())
 //! ```
 //!
-//! # Re-exports
+//! # Import paths
 //!
-//! Common types are re-exported at the crate root for convenience:
+//! Items are imported from their module; the crate root re-exports nothing.
 //!
 //! ```
-//! use celestial_core::{Angle, Vector3, RotationMatrix3, Location};
-//! use celestial_core::{AstroError, AstroResult, MathErrorKind};
+//! use celestial_core::angle::Angle;
+//! use celestial_core::errors::{AstroError, AstroResult, MathErrorKind};
+//! use celestial_core::location::Location;
+//! use celestial_core::matrix::{RotationMatrix3, Vector3};
 //! ```
 //!
 //! # Design Notes
@@ -49,7 +65,7 @@
 //! - **Two-part Julian Dates**: Functions accepting `(jd1, jd2)` preserve precision by
 //!   splitting the date. Typically `jd1 = 2451545.0` (J2000.0) and `jd2` is days from epoch.
 //!
-//! - **Radians internally**: All angular computations use radians. The [`Angle`] type
+//! - **Radians internally**: All angular computations use radians. The [`Angle`](angle::Angle) type
 //!   provides conversion methods for degrees/HMS/DMS display.
 //!
 //! - **No implicit state**: Models like [`NutationIAU2006A`](nutation::NutationIAU2006A)
@@ -67,10 +83,5 @@ pub mod obliquity;
 pub mod precession;
 pub mod utils;
 
-pub use angle::Angle;
-pub use cio::{gcrs_to_cirs_matrix, CioLocator, CioSolution, CipCoordinates, EquationOfOrigins};
-pub use errors::{AstroError, AstroResult, MathErrorKind};
-pub use location::Location;
-pub use matrix::{RotationMatrix3, Vector3};
-
+#[cfg(any(test, feature = "test-support"))]
 pub mod test_helpers;

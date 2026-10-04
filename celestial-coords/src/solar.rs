@@ -1,7 +1,7 @@
 use crate::{CoordResult, ICRSPosition};
-use celestial_core::constants::{ARCSEC_TO_RAD, DEG_TO_RAD, J2000_JD, TWOPI};
-use celestial_core::utils::{normalize_angle_rad, normalize_angle_to_positive};
-use celestial_core::Angle;
+use celestial_core::angle::Angle;
+use celestial_core::angle::{wrap_0_2pi, wrap_pm_pi};
+use celestial_core::constants::{ARCSEC_TO_RAD, DEG_TO_RAD, J2000_JD};
 use celestial_time::TT;
 
 const SOLAR_EQUATOR_INCLINATION_DEG: f64 = 7.25;
@@ -18,31 +18,31 @@ pub struct SolarOrientation {
     pub p: Angle,
 }
 
-pub fn compute_solar_orientation(epoch: &TT) -> SolarOrientation {
+pub fn compute_solar_orientation(epoch: &TT) -> CoordResult<SolarOrientation> {
     let jd = epoch.to_julian_date();
     let d = (jd.jd1() - J2000_JD) + jd.jd2();
     let t = d / celestial_core::constants::DAYS_PER_JULIAN_CENTURY;
 
-    let (sun_lon, sun_lat, obliquity) = solar_ecliptic_coords(t);
-    let (b0, l0, p) = heliographic_coords(t, sun_lon, sun_lat, obliquity);
+    let (sun_lon, sun_lat, obliquity) = solar_ecliptic_coords(t)?;
+    let (b0, l0, p) = heliographic_coords(t, sun_lon, sun_lat, obliquity)?;
 
-    SolarOrientation {
+    Ok(SolarOrientation {
         b0: Angle::from_radians(b0),
         l0: Angle::from_radians(l0),
         p: Angle::from_radians(p),
-    }
+    })
 }
 
-pub fn compute_b0(epoch: &TT) -> Angle {
-    compute_solar_orientation(epoch).b0
+pub fn compute_b0(epoch: &TT) -> CoordResult<Angle> {
+    Ok(compute_solar_orientation(epoch)?.b0)
 }
 
-pub fn compute_l0(epoch: &TT) -> Angle {
-    compute_solar_orientation(epoch).l0
+pub fn compute_l0(epoch: &TT) -> CoordResult<Angle> {
+    Ok(compute_solar_orientation(epoch)?.l0)
 }
 
-pub fn compute_p(epoch: &TT) -> Angle {
-    compute_solar_orientation(epoch).p
+pub fn compute_p(epoch: &TT) -> CoordResult<Angle> {
+    Ok(compute_solar_orientation(epoch)?.p)
 }
 
 pub fn carrington_rotation_number(epoch: &TT) -> u32 {
@@ -69,7 +69,12 @@ pub fn sun_earth_distance(epoch: &TT) -> f64 {
     a * (1.0 - e * e) / (1.0 + e * libm::cos(true_anomaly))
 }
 
-fn heliographic_coords(t: f64, sun_lon: f64, _sun_lat: f64, obliquity: f64) -> (f64, f64, f64) {
+fn heliographic_coords(
+    t: f64,
+    sun_lon: f64,
+    _sun_lat: f64,
+    obliquity: f64,
+) -> CoordResult<(f64, f64, f64)> {
     let i = SOLAR_EQUATOR_INCLINATION_RAD;
     let k = (SOLAR_ASCENDING_NODE_J2000_DEG + 1.3958333 * t) * DEG_TO_RAD;
 
@@ -85,16 +90,16 @@ fn heliographic_coords(t: f64, sun_lon: f64, _sun_lat: f64, obliquity: f64) -> (
     let jd_days =
         t * celestial_core::constants::DAYS_PER_JULIAN_CENTURY + J2000_JD - CARRINGTON_EPOCH_JD;
     let l0_raw = 360.0 / CARRINGTON_SYNODIC_PERIOD * jd_days;
-    let l0 = normalize_angle_to_positive((l0_raw * DEG_TO_RAD - eta) % TWOPI);
+    let l0 = wrap_0_2pi(l0_raw * DEG_TO_RAD - eta)?;
 
     let rho = libm::atan(cos_theta * sin_i / cos_obl);
     let sigma = libm::atan(sin_theta * cos_i);
-    let p = normalize_angle_rad(rho + sigma);
+    let p = wrap_pm_pi(rho + sigma)?;
 
-    (b0, l0, p)
+    Ok((b0, l0, p))
 }
 
-fn solar_ecliptic_coords(t: f64) -> (f64, f64, f64) {
+fn solar_ecliptic_coords(t: f64) -> CoordResult<(f64, f64, f64)> {
     let l0 = 280.46646 + 36000.76983 * t + 0.0003032 * t * t;
     let m = 357.52911 + 35999.05029 * t - 0.0001537 * t * t;
     let m_rad = m * DEG_TO_RAD;
@@ -111,11 +116,7 @@ fn solar_ecliptic_coords(t: f64) -> (f64, f64, f64) {
 
     let obliquity = mean_obliquity(t);
 
-    (
-        normalize_angle_to_positive(apparent_lon * DEG_TO_RAD),
-        0.0,
-        obliquity,
-    )
+    Ok((wrap_0_2pi(apparent_lon * DEG_TO_RAD)?, 0.0, obliquity))
 }
 
 fn mean_obliquity(t: f64) -> f64 {
@@ -151,7 +152,7 @@ pub(crate) fn get_sun_icrs(epoch: &TT) -> CoordResult<ICRSPosition> {
     let dec = libm::asin(sin_lambda * sin_eps);
 
     ICRSPosition::new(
-        Angle::from_radians(normalize_angle_to_positive(ra)),
+        Angle::from_radians(wrap_0_2pi(ra)?),
         Angle::from_radians(dec),
     )
 }
@@ -171,7 +172,7 @@ mod tests {
         ];
 
         for epoch in &epochs {
-            let b0 = compute_b0(epoch);
+            let b0 = compute_b0(epoch).unwrap();
             assert!(
                 b0.degrees().abs() <= 7.3,
                 "B0 = {} degrees exceeds expected range ±7.25°",
@@ -183,7 +184,7 @@ mod tests {
     #[test]
     fn test_l0_range() {
         let epoch = TT::j2000();
-        let l0 = compute_l0(&epoch);
+        let l0 = compute_l0(&epoch).unwrap();
         assert!(
             l0.degrees() >= 0.0 && l0.degrees() < 360.0,
             "L0 = {} degrees outside [0, 360) range",
@@ -201,7 +202,7 @@ mod tests {
         ];
 
         for epoch in &epochs {
-            let p = compute_p(epoch);
+            let p = compute_p(epoch).unwrap();
             assert!(
                 p.degrees().abs() <= 45.0,
                 "P = {} degrees exceeds expected range ±45°",
@@ -213,11 +214,11 @@ mod tests {
     #[test]
     fn test_carrington_rotation_period() {
         let epoch1 = TT::j2000();
-        let l0_1 = compute_l0(&epoch1);
+        let l0_1 = compute_l0(&epoch1).unwrap();
 
         let epoch2 =
             TT::from_julian_date(JulianDate::new(J2000_JD + CARRINGTON_SYNODIC_PERIOD, 0.0));
-        let l0_2 = compute_l0(&epoch2);
+        let l0_2 = compute_l0(&epoch2).unwrap();
 
         let diff = (l0_2.degrees() - l0_1.degrees()).abs();
         assert!(
@@ -230,7 +231,7 @@ mod tests {
     #[test]
     fn test_solar_orientation_combined() {
         let epoch = TT::j2000();
-        let orientation = compute_solar_orientation(&epoch);
+        let orientation = compute_solar_orientation(&epoch).unwrap();
 
         assert!(
             orientation.b0.degrees().abs() <= 7.3,

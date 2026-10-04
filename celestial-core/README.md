@@ -31,18 +31,24 @@ celestial-core = "0.1"
 ## Example
 
 ```rust
-use celestial_core::nutation::NutationIAU2006A;
 use celestial_core::constants::J2000_JD;
+use celestial_core::nutation::NutationIAU2006A;
+use celestial_core::{angle::Angle, errors::AstroError};
 
-// Compute nutation at J2000.0
-let nutation = NutationIAU2006A::new().compute(J2000_JD, 0.0).unwrap();
-println!("Δψ = {:.6}″", nutation.delta_psi * 206264.806); // radians to arcsec
-println!("Δε = {:.6}″", nutation.delta_eps * 206264.806);
+fn main() -> Result<(), AstroError> {
+    // Nutation at J2000.0 TT
+    let nutation = NutationIAU2006A::new().compute(J2000_JD, 0.0)?;
+    let dpsi = Angle::from_radians(nutation.delta_psi).arcseconds();
+    let deps = Angle::from_radians(nutation.delta_eps).arcseconds();
+    println!("Δψ = {dpsi:.6}″, Δε = {deps:.6}″");
+    Ok(())
+}
 ```
 
 ## Features
 
-- **`serde`** — Enables serialization for `Angle` and other types
+- **`serde`** — `Serialize`/`Deserialize` for `Angle`, `Location`, `Vector3` and `RotationMatrix3`. `Location` and `RotationMatrix3` are validated on deserialize, as they are by their constructors.
+- **`test-support`** — Exposes test helpers and nutation internals to the workspace's own test suites. Not a stable API.
 
 ## Design Notes
 

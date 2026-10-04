@@ -3,7 +3,7 @@ use crate::error::Result;
 use crate::observation::PierSide;
 use crate::parser::parse_coordinates;
 use crate::session::Session;
-use celestial_core::Angle;
+use celestial_core::angle::Angle;
 
 pub struct Predict;
 
@@ -87,34 +87,32 @@ fn append_breakdown(lines: &mut Vec<String>, breakdown: &[(String, f64, f64)]) -
 }
 
 fn format_ra(angle: Angle) -> String {
-    let h = angle.hours().abs();
-    let hh = libm::floor(h) as u32;
-    let remainder = (h - hh as f64) * 60.0;
-    let mm = libm::floor(remainder) as u32;
-    let ss = (remainder - mm as f64) * 60.0;
+    let (hh, mm, ss) = split_sexagesimal(angle.hours().abs(), 100);
     format!("{:02}h {:02}m {:05.2}s", hh, mm, ss)
 }
 
 fn format_dec(angle: Angle) -> String {
     let deg = angle.degrees();
     let sign = if deg < 0.0 { "-" } else { "+" };
-    let total = deg.abs();
-    let dd = libm::floor(total) as u32;
-    let remainder = (total - dd as f64) * 60.0;
-    let mm = libm::floor(remainder) as u32;
-    let ss = (remainder - mm as f64) * 60.0;
+    let (dd, mm, ss) = split_sexagesimal(deg.abs(), 10);
     format!("{}{:02}\u{00b0} {:02}' {:04.1}\"", sign, dd, mm, ss)
 }
 
 fn format_ha(angle: Angle) -> String {
     let h = angle.hours();
     let sign = if h < 0.0 { "-" } else { "+" };
-    let total = h.abs();
-    let hh = libm::floor(total) as u32;
-    let remainder = (total - hh as f64) * 60.0;
-    let mm = libm::floor(remainder) as u32;
-    let ss = (remainder - mm as f64) * 60.0;
+    let (hh, mm, ss) = split_sexagesimal(h.abs(), 100);
     format!("{}{:02}h {:02}m {:05.2}s", sign, hh, mm, ss)
+}
+
+// Rounds to the displayed precision before splitting, so a value a hair below a field
+// boundary carries into the next field instead of printing a seconds field of 60.
+fn split_sexagesimal(value: f64, steps_per_second: u64) -> (u64, u64, f64) {
+    let per_minute = 60 * steps_per_second;
+    let per_unit = 60 * per_minute;
+    let steps = libm::round(value * per_unit as f64) as u64;
+    let seconds = (steps % per_minute) as f64 / steps_per_second as f64;
+    (steps / per_unit, steps / per_minute % 60, seconds)
 }
 
 #[cfg(test)]
@@ -257,5 +255,23 @@ mod tests {
     fn format_ha_negative() {
         let ha = Angle::from_hours(-3.0);
         assert_eq!(format_ha(ha), "-03h 00m 00.00s");
+    }
+
+    #[test]
+    fn format_ra_carries_rounded_seconds_into_hours() {
+        let ra = Angle::from_hours(12.0 - 0.001 / 3600.0);
+        assert_eq!(format_ra(ra), "12h 00m 00.00s");
+    }
+
+    #[test]
+    fn format_ha_carries_rounded_seconds_into_hours() {
+        let ha = Angle::from_hours(-(2.0 - 0.001 / 3600.0));
+        assert_eq!(format_ha(ha), "-02h 00m 00.00s");
+    }
+
+    #[test]
+    fn format_dec_carries_rounded_seconds_into_degrees() {
+        let dec = Angle::from_degrees(45.0 - 0.01 / 3600.0);
+        assert_eq!(format_dec(dec), "+45\u{00b0} 00' 00.0\"");
     }
 }

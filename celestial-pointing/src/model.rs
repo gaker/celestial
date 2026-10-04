@@ -1,7 +1,7 @@
 use crate::error::{Error, Result};
 use crate::observation::PierSide;
 use crate::terms::{create_term, Term};
-use celestial_core::Angle;
+use celestial_core::angle::Angle;
 
 #[derive(Default)]
 pub struct PointingModel {

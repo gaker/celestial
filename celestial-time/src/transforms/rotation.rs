@@ -17,7 +17,7 @@ pub fn earth_rotation_angle(ut1_jd: &JulianDate) -> TimeResult<f64> {
 
     let f = fmod(d1, 1.0) + fmod(d2, 1.0);
 
-    let theta = wrap_0_2pi(TWOPI * (f + 0.7790572732640 + 0.00273781191135448 * t));
+    let theta = wrap_0_2pi(TWOPI * (f + 0.7790572732640 + 0.00273781191135448 * t))?;
 
     Ok(theta)
 }

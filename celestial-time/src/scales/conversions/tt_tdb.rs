@@ -32,7 +32,7 @@
 //! use celestial_time::scales::{TT, TDB};
 //! use celestial_time::scales::conversions::{ToTDB, ToTTFromTDB};
 //! use celestial_time::JulianDate;
-//! use celestial_core::Location;
+//! use celestial_core::location::Location;
 //!
 //! // TT → TDB: requires observer location
 //! let tt = TT::from_julian_date(JulianDate::new(2451545.0, 0.5));
@@ -70,8 +70,8 @@ use crate::{TimeError, TimeResult};
 use celestial_core::constants::{
     DAYS_PER_JULIAN_MILLENNIUM, DEG_TO_RAD, J2000_JD, SECONDS_PER_DAY_F64, TWOPI,
 };
+use celestial_core::location::Location;
 use celestial_core::math::fmod;
-use celestial_core::Location;
 
 /// Returns the Royal Observatory Greenwich location.
 ///
@@ -102,13 +102,13 @@ pub fn compute_tdb_tt_offset(
     ut1_fraction: f64,
     location: &Location,
 ) -> TimeResult<f64> {
-    let (u, v) = location.to_geocentric_km()?;
+    let (u, v) = location.to_geocentric_km();
 
     let dtr = calculate_tdb_tt_difference(
         date_jd.jd1(),
         date_jd.jd2(),
         ut1_fraction,
-        location.longitude,
+        location.longitude(),
         u,
         v,
     );

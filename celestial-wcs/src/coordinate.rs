@@ -1,5 +1,5 @@
+use celestial_core::angle::Angle;
 use celestial_core::constants::DEG_TO_RAD;
-use celestial_core::Angle;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PixelCoord {

@@ -1,6 +1,6 @@
 use celestial_coords::Vector3;
-use celestial_core::constants::{AU_KM, MOON_EARTH_MASS_RATIO};
-use celestial_core::AstroResult;
+use celestial_core::constants::{AU_KM, MOON_EMB_MASS_RATIO};
+use celestial_core::errors::AstroResult;
 use celestial_time::julian::JulianDate;
 use celestial_time::TDB;
 
@@ -38,9 +38,9 @@ impl Vsop2013Earth {
         ];
 
         Ok(Vector3::new(
-            emb_pos.x - moon_geo_au[0] * MOON_EARTH_MASS_RATIO,
-            emb_pos.y - moon_geo_au[1] * MOON_EARTH_MASS_RATIO,
-            emb_pos.z - moon_geo_au[2] * MOON_EARTH_MASS_RATIO,
+            emb_pos.x - moon_geo_au[0] * MOON_EMB_MASS_RATIO,
+            emb_pos.y - moon_geo_au[1] * MOON_EMB_MASS_RATIO,
+            emb_pos.z - moon_geo_au[2] * MOON_EMB_MASS_RATIO,
         ))
     }
 

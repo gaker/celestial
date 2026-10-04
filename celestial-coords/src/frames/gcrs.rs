@@ -4,7 +4,10 @@ use crate::{
     transforms::CoordinateFrame,
     CoordError, CoordResult, Distance,
 };
-use celestial_core::{matrix::RotationMatrix3, Angle, Vector3};
+use celestial_core::{
+    angle::Angle,
+    matrix::{RotationMatrix3, Vector3},
+};
 use celestial_time::{transforms::NutationCalculator, TT};
 
 #[cfg(feature = "serde")]
@@ -152,19 +155,21 @@ impl GCRSPosition {
             nutation.nutation_obliquity(),
         );
 
-        let cio_solution = celestial_core::CioSolution::calculate(&npb_matrix, t).map_err(|e| {
-            CoordError::CoreError {
-                message: format!("CIO calculation failed: {}", e),
-            }
-        })?;
+        let cio_solution =
+            celestial_core::cio::CioSolution::calculate(&npb_matrix, t).map_err(|e| {
+                CoordError::CoreError {
+                    message: format!("CIO calculation failed: {}", e),
+                }
+            })?;
 
-        let c2i_matrix = celestial_core::gcrs_to_cirs_matrix(
+        celestial_core::cio::gcrs_to_cirs_matrix(
             cio_solution.cip.x,
             cio_solution.cip.y,
             cio_solution.s,
-        );
-
-        Ok(c2i_matrix)
+        )
+        .map_err(|e| CoordError::CoreError {
+            message: format!("GCRS-to-CIRS matrix failed: {}", e),
+        })
     }
 }
 
@@ -175,7 +180,7 @@ impl CoordinateFrame for GCRSPosition {
         let earth_state = compute_earth_state(&self.epoch)?;
         let sun_earth_dist = earth_state.heliocentric_position.magnitude();
         let icrs_vec =
-            remove_aberration(gcrs_vec, earth_state.barycentric_velocity, sun_earth_dist);
+            remove_aberration(gcrs_vec, earth_state.barycentric_velocity, sun_earth_dist)?;
 
         let mut icrs = ICRSPosition::from_unit_vector(icrs_vec)?;
 
@@ -321,13 +326,14 @@ mod tests {
         let cirs = original.to_cirs().unwrap();
         let recovered = GCRSPosition::from_cirs(&cirs).unwrap();
 
-        // GCRS→CIRS→GCRS is just matrix multiplication (transpose is exact inverse)
-        // This should be very precise - use angular separation for robustness
+        // GCRS→CIRS→GCRS is just matrix multiplication (transpose is exact inverse).
+        // acos of the dot product can't resolve angles below ~1.5e-8 rad (one ulp under 1.0),
+        // so the separation uses the atan2 form, which stays accurate down to ulp level.
         let sep_arcsec = {
             let orig_vec = original.unit_vector();
             let rec_vec = recovered.unit_vector();
-            let dot = orig_vec.x * rec_vec.x + orig_vec.y * rec_vec.y + orig_vec.z * rec_vec.z;
-            dot.clamp(-1.0, 1.0).acos() * 206264.806247
+            let sin_sep = orig_vec.cross(&rec_vec).magnitude();
+            Angle::from_radians(libm::atan2(sin_sep, orig_vec.dot(&rec_vec))).arcseconds()
         };
         assert!(
             sep_arcsec < 1e-10,

@@ -188,7 +188,7 @@ mod utils {
         let jd = tt.to_julian_date();
         let centuries = celestial_core::utils::jd_to_centuries(jd.jd1(), jd.jd2());
 
-        if centuries.abs() > 20.0 {
+        if centuries.abs() > celestial_core::constants::MAX_CENTURIES_FROM_J2000 {
             return Err(TimeError::InvalidEpoch(format!(
                 "Epoch too far from J2000.0 for nutation model: {:.1} centuries",
                 centuries

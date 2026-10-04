@@ -28,7 +28,7 @@ pub(crate) fn deproject_sfl(inter: IntermediateCoord) -> WcsResult<NativeCoord> 
 
     let phi = x / cos_theta;
 
-    Ok(native_coord_from_radians(phi, theta))
+    native_coord_from_radians(phi, theta)
 }
 
 pub(crate) fn project_par(native: NativeCoord) -> WcsResult<IntermediateCoord> {
@@ -64,7 +64,7 @@ pub(crate) fn deproject_par(inter: IntermediateCoord) -> WcsResult<NativeCoord> 
 
     let phi = x * DEG_TO_RAD / scale;
 
-    Ok(native_coord_from_radians(phi, theta))
+    native_coord_from_radians(phi, theta)
 }
 
 pub(crate) fn project_mol(native: NativeCoord) -> WcsResult<IntermediateCoord> {
@@ -125,7 +125,7 @@ pub(crate) fn deproject_mol(inter: IntermediateCoord) -> WcsResult<NativeCoord> 
     let sqrt_8_over_pi = libm::sqrt(8.0_f64) / PI;
     let phi = x * DEG_TO_RAD / (sqrt_8_over_pi * cos_gamma);
 
-    Ok(native_coord_from_radians(phi, theta))
+    native_coord_from_radians(phi, theta)
 }
 
 pub(crate) fn project_ait(native: NativeCoord) -> WcsResult<IntermediateCoord> {
@@ -170,15 +170,16 @@ pub(crate) fn deproject_ait(inter: IntermediateCoord) -> WcsResult<NativeCoord> 
 
     let phi = 2.0 * libm::atan2(x * z / 2.0, 2.0 * z * z - 1.0);
 
-    Ok(native_coord_from_radians(phi, theta))
+    native_coord_from_radians(phi, theta)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::common::phi_on_same_edge;
     use crate::Projection;
-    use celestial_core::assert_ulp_lt;
-    use celestial_core::Angle;
+    use celestial_core::angle::Angle;
+    use celestial_core::assert_ulp_le;
 
     // Per-projection native_reference checks are covered by
     // spherical::tests::test_all_projections_map_reference_to_origin.
@@ -199,8 +200,9 @@ mod tests {
                     NativeCoord::new(Angle::from_degrees(phi_deg), Angle::from_degrees(theta_deg));
                 let inter = proj.project(original).unwrap();
                 let recovered = proj.deproject(inter).unwrap();
-                assert_ulp_lt!(original.phi().degrees(), recovered.phi().degrees(), 5);
-                assert_ulp_lt!(original.theta().degrees(), recovered.theta().degrees(), 5);
+                let phi_back = phi_on_same_edge(original.phi(), recovered.phi());
+                assert_ulp_le!(original.phi().radians(), phi_back.radians(), 5);
+                assert_ulp_le!(original.theta().degrees(), recovered.theta().degrees(), 5);
             }
         }
     }
@@ -214,8 +216,9 @@ mod tests {
                     NativeCoord::new(Angle::from_degrees(phi_deg), Angle::from_degrees(theta_deg));
                 let inter = proj.project(original).unwrap();
                 let recovered = proj.deproject(inter).unwrap();
-                assert_ulp_lt!(original.phi().degrees(), recovered.phi().degrees(), 5);
-                assert_ulp_lt!(original.theta().degrees(), recovered.theta().degrees(), 5);
+                let phi_back = phi_on_same_edge(original.phi(), recovered.phi());
+                assert_ulp_le!(original.phi().degrees(), phi_back.degrees(), 5);
+                assert_ulp_le!(original.theta().degrees(), recovered.theta().degrees(), 5);
             }
         }
     }
@@ -250,8 +253,9 @@ mod tests {
                     NativeCoord::new(Angle::from_degrees(phi_deg), Angle::from_degrees(theta_deg));
                 let inter = proj.project(original).unwrap();
                 let recovered = proj.deproject(inter).unwrap();
-                assert_ulp_lt!(original.phi().degrees(), recovered.phi().degrees(), 15);
-                assert_ulp_lt!(original.theta().degrees(), recovered.theta().degrees(), 15);
+                let phi_back = phi_on_same_edge(original.phi(), recovered.phi());
+                assert_ulp_le!(original.phi().radians(), phi_back.radians(), 15);
+                assert_ulp_le!(original.theta().degrees(), recovered.theta().degrees(), 15);
             }
         }
     }
@@ -273,8 +277,8 @@ mod tests {
                     NativeCoord::new(Angle::from_degrees(phi_deg), Angle::from_degrees(theta_deg));
                 let inter = proj.project(original).unwrap();
                 let recovered = proj.deproject(inter).unwrap();
-                assert_ulp_lt!(original.phi().degrees(), recovered.phi().degrees(), 15);
-                assert_ulp_lt!(original.theta().degrees(), recovered.theta().degrees(), 15);
+                assert_ulp_le!(original.phi().degrees(), recovered.phi().degrees(), 15);
+                assert_ulp_le!(original.theta().degrees(), recovered.theta().degrees(), 15);
             }
         }
     }

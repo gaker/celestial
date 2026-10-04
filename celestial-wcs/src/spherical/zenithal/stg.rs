@@ -34,15 +34,16 @@ pub(crate) fn deproject_stg(inter: IntermediateCoord) -> WcsResult<NativeCoord> 
 
     let theta = HALF_PI - 2.0 * libm::atan(r_theta / 2.0);
 
-    Ok(native_coord_from_radians(phi, theta))
+    native_coord_from_radians(phi, theta)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::common::phi_on_same_edge;
     use crate::Projection;
-    use celestial_core::assert_ulp_lt;
-    use celestial_core::Angle;
+    use celestial_core::angle::Angle;
+    use celestial_core::assert_ulp_le;
     #[test]
     fn test_stg_roundtrip() {
         let proj = Projection::stg();
@@ -53,15 +54,15 @@ mod tests {
                 let inter = proj.project(original).unwrap();
                 let recovered = proj.deproject(inter).unwrap();
 
-                assert_ulp_lt!(
+                assert_ulp_le!(
                     original.phi().degrees(),
-                    recovered.phi().degrees(),
+                    phi_on_same_edge(original.phi(), recovered.phi()).degrees(),
                     4,
                     "phi (phi={}, theta={})",
                     phi_deg,
                     theta_deg
                 );
-                assert_ulp_lt!(
+                assert_ulp_le!(
                     original.theta().degrees(),
                     recovered.theta().degrees(),
                     4,

@@ -6,7 +6,9 @@
 //! fitter is expected to apply the correction itself.
 
 use celestial_coords::aberration::{apply_aberration, remove_aberration};
-use celestial_core::{Angle, Location, Vector3};
+use celestial_core::{angle::Angle, location::Location, matrix::Vector3};
+
+use crate::error::Result;
 
 const EARTH_ROTATION_RATE_RAD_SEC: f64 = 7.292_115_0e-5;
 const SECONDS_PER_DAY: f64 = 86_400.0;
@@ -28,7 +30,7 @@ pub(crate) fn apply_diurnal(
     latitude: Angle,
     longitude: Angle,
     height_m: f64,
-) -> (Angle, Angle) {
+) -> Result<(Angle, Angle)> {
     apply_or_remove(cat_ra, cat_dec, lst, latitude, longitude, height_m, true)
 }
 
@@ -40,24 +42,21 @@ fn apply_or_remove(
     longitude: Angle,
     height_m: f64,
     apply: bool,
-) -> (Angle, Angle) {
+) -> Result<(Angle, Angle)> {
     let loc = match Location::new(latitude.radians(), longitude.radians(), height_m) {
         Ok(l) => l,
-        Err(_) => return (ra, dec),
+        Err(_) => return Ok((ra, dec)),
     };
-    let (u_km, _v_km) = match loc.to_geocentric_km() {
-        Ok(uv) => uv,
-        Err(_) => return (ra, dec),
-    };
+    let (u_km, _v_km) = loc.to_geocentric_km();
 
     let velocity = diurnal_velocity_au_day(u_km, lst);
     let direction = spherical_to_cartesian(ra, dec);
     let corrected = if apply {
         apply_aberration(direction, velocity, 1.0)
     } else {
-        remove_aberration(direction, velocity, 1.0)
+        remove_aberration(direction, velocity, 1.0)?
     };
-    cartesian_to_spherical(corrected)
+    Ok(cartesian_to_spherical(corrected))
 }
 
 fn diurnal_velocity_au_day(u_km: f64, lst: Angle) -> Vector3 {
@@ -89,7 +88,7 @@ mod tests {
     use super::*;
 
     fn arcsec(a: Angle, b: Angle) -> f64 {
-        (a - b).wrapped().arcseconds().abs()
+        (a - b).wrapped().unwrap().arcseconds().abs()
     }
 
     #[test]
@@ -98,7 +97,8 @@ mod tests {
         let dec = Angle::from_degrees(89.999);
         let lst = Angle::from_hours(12.0);
         let lat = Angle::from_degrees(90.0 - 1e-6);
-        let (ra2, dec2) = apply_or_remove(ra, dec, lst, lat, Angle::from_radians(0.0), 0.0, false);
+        let (ra2, dec2) =
+            apply_or_remove(ra, dec, lst, lat, Angle::from_radians(0.0), 0.0, false).unwrap();
         assert!(arcsec(ra, ra2) < 1e-3);
         assert!(arcsec(dec, dec2) < 1e-3);
     }
@@ -120,7 +120,8 @@ mod tests {
             Angle::from_radians(0.0),
             0.0,
             false,
-        );
+        )
+        .unwrap();
         let shift = arcsec(tel_ra, ra2);
         assert!(
             shift > 0.25 && shift < 0.40,
@@ -143,7 +144,8 @@ mod tests {
             Angle::from_radians(0.0),
             0.0,
             false,
-        );
+        )
+        .unwrap();
         let (ra_mid, _) = apply_or_remove(
             tel_ra,
             tel_dec,
@@ -152,7 +154,8 @@ mod tests {
             Angle::from_radians(0.0),
             0.0,
             false,
-        );
+        )
+        .unwrap();
         assert!(arcsec(tel_ra, ra_eq) > arcsec(tel_ra, ra_mid));
     }
 
@@ -163,8 +166,8 @@ mod tests {
         let ra = Angle::from_hours(7.5);
         let dec = Angle::from_degrees(30.0);
         let lon = Angle::from_radians(0.0);
-        let (ra2, dec2) = apply_diurnal(ra, dec, lst, lat, lon, 0.0);
-        let (ra3, dec3) = apply_or_remove(ra2, dec2, lst, lat, lon, 0.0, false);
+        let (ra2, dec2) = apply_diurnal(ra, dec, lst, lat, lon, 0.0).unwrap();
+        let (ra3, dec3) = apply_or_remove(ra2, dec2, lst, lat, lon, 0.0, false).unwrap();
         assert!(arcsec(ra, ra3) < 1e-3);
         assert!(arcsec(dec, dec3) < 1e-3);
     }
@@ -187,8 +190,9 @@ mod tests {
             Angle::from_radians(0.0),
             0.0,
             false,
-        );
-        let delta_rad = (ra2 - tel_ra).wrapped().radians();
+        )
+        .unwrap();
+        let delta_rad = (ra2 - tel_ra).wrapped().unwrap().radians();
         assert!(
             delta_rad < 0.0,
             "expected westward (negative) shift, got {}",

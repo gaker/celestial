@@ -1,5 +1,5 @@
 use crate::{transforms::CoordinateFrame, CoordResult, Distance, ICRSPosition};
-use celestial_core::{matrix::RotationMatrix3, Angle};
+use celestial_core::{angle::Angle, matrix::RotationMatrix3};
 use celestial_time::{transforms::PrecessionCalculator, TT};
 
 #[cfg(feature = "serde")]
@@ -16,7 +16,7 @@ pub struct EclipticPosition {
 
 impl EclipticPosition {
     pub fn new(lambda: Angle, beta: Angle, epoch: TT) -> CoordResult<Self> {
-        let lambda = lambda.validate_longitude(true)?;
+        let lambda = lambda.normalized()?;
         let beta = beta.validate_latitude()?;
 
         Ok(Self {
@@ -66,12 +66,10 @@ impl EclipticPosition {
         self.distance = Some(distance);
     }
 
-    pub fn mean_obliquity(&self) -> Angle {
+    pub fn mean_obliquity(&self) -> CoordResult<Angle> {
         let jd = self.epoch.to_julian_date();
-        Angle::from_radians(celestial_core::obliquity::iau_2006_mean_obliquity(
-            jd.jd1(),
-            jd.jd2(),
-        ))
+        let obliquity = celestial_core::obliquity::iau_2006_mean_obliquity(jd.jd1(), jd.jd2())?;
+        Ok(Angle::from_radians(obliquity))
     }
 
     pub fn true_obliquity(&self) -> CoordResult<Angle> {
@@ -84,10 +82,7 @@ impl EclipticPosition {
                     message: format!("Nutation calculation failed: {}", e),
                 })?;
 
-        let jd = self.epoch.to_julian_date();
-        let mean_obliquity = celestial_core::obliquity::iau_2006_mean_obliquity(jd.jd1(), jd.jd2());
-
-        let true_obliquity = mean_obliquity + nutation.nutation_obliquity();
+        let true_obliquity = self.mean_obliquity()?.radians() + nutation.nutation_obliquity();
 
         Ok(Angle::from_radians(true_obliquity))
     }
@@ -168,19 +163,12 @@ impl EclipticPosition {
     }
 
     pub fn angular_separation(&self, other: &Self) -> Angle {
-        let (sin_b1, cos_b1) = self.beta.sin_cos();
-        let (sin_b2, cos_b2) = other.beta.sin_cos();
-        let delta_lambda = (self.lambda - other.lambda).radians();
-
-        let angle_rad = celestial_core::math::vincenty_angular_separation(
-            sin_b1,
-            cos_b1,
-            sin_b2,
-            cos_b2,
-            delta_lambda,
-        );
-
-        Angle::from_radians(angle_rad)
+        Angle::from_radians(celestial_core::math::angular_separation(
+            self.lambda.radians(),
+            self.beta.radians(),
+            other.lambda.radians(),
+            other.beta.radians(),
+        ))
     }
 }
 
@@ -189,7 +177,7 @@ fn ecm06_matrix(epoch: &TT) -> CoordResult<RotationMatrix3> {
     let bias_precession_matrix = precession.bias_precession_matrix;
 
     let jd = epoch.to_julian_date();
-    let mean_obliquity = celestial_core::obliquity::iau_2006_mean_obliquity(jd.jd1(), jd.jd2());
+    let mean_obliquity = celestial_core::obliquity::iau_2006_mean_obliquity(jd.jd1(), jd.jd2())?;
 
     let mut ecliptic_rotation = RotationMatrix3::identity();
     ecliptic_rotation.rotate_x(mean_obliquity);
@@ -329,7 +317,7 @@ mod tests {
         fn test_obliquity_at_j2000() {
             let epoch = TT::j2000();
             let pos = EclipticPosition::from_degrees(0.0, 0.0, epoch).unwrap();
-            let mean_obliquity = pos.mean_obliquity();
+            let mean_obliquity = pos.mean_obliquity().unwrap();
             assert_eq!(mean_obliquity.radians(), 4.09092600600582889658e-01);
         }
 
@@ -469,7 +457,7 @@ mod tests {
         let epoch = TT::j2000();
         let pos = EclipticPosition::from_degrees(0.0, 0.0, epoch).unwrap();
 
-        let mean_obliquity = pos.mean_obliquity();
+        let mean_obliquity = pos.mean_obliquity().unwrap();
         let true_obliquity = pos.true_obliquity().unwrap();
 
         // IAU 2006 mean obliquity at J2000.0: 84381.406 arcseconds
@@ -656,17 +644,11 @@ mod tests {
         let epoch = TT::j2000();
 
         let wrapped_lambda = EclipticPosition::from_degrees(370.0, 0.0, epoch).unwrap();
-        let expected_wrapped = Angle::from_degrees(370.0)
-            .validate_longitude(true)
-            .unwrap()
-            .degrees();
+        let expected_wrapped = Angle::from_degrees(370.0).normalized().unwrap().degrees();
         assert_eq!(wrapped_lambda.lambda().degrees(), expected_wrapped);
 
         let negative_lambda = EclipticPosition::from_degrees(-90.0, 0.0, epoch).unwrap();
-        let expected_negative = Angle::from_degrees(-90.0)
-            .validate_longitude(true)
-            .unwrap()
-            .degrees();
+        let expected_negative = Angle::from_degrees(-90.0).normalized().unwrap().degrees();
         assert_eq!(negative_lambda.lambda().degrees(), expected_negative);
 
         assert!(EclipticPosition::from_degrees(0.0, 95.0, epoch).is_err());

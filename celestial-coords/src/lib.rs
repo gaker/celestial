@@ -10,7 +10,7 @@ pub mod proper_motion;
 pub mod solar;
 pub mod transforms;
 
-pub use celestial_core::Angle;
+pub use celestial_core::angle::Angle;
 pub use distance::Distance;
 pub use eop::{EopParameters, EopProvider, EopRecord};
 pub use errors::{CoordError, CoordResult};
@@ -24,5 +24,5 @@ pub use frames::{
 
 pub use transforms::{CartesianFrame, CoordinateFrame};
 
-pub use celestial_core::{Location, Vector3};
+pub use celestial_core::{location::Location, matrix::Vector3};
 pub use celestial_time::{TimeError, TimeResult, TAI, TT, UT1, UTC};

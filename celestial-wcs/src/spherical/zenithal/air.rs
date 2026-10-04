@@ -69,7 +69,7 @@ pub(crate) fn deproject_air(inter: IntermediateCoord, theta_b: f64) -> WcsResult
 
     let theta = solve_air_inverse(r, theta_b)?;
 
-    Ok(native_coord_from_radians(phi, theta))
+    native_coord_from_radians(phi, theta)
 }
 
 fn solve_air_inverse(r: f64, theta_b: f64) -> WcsResult<f64> {
@@ -144,9 +144,10 @@ fn compute_air_dr_dtheta(theta: f64, theta_b: f64) -> WcsResult<f64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::common::phi_on_same_edge;
     use crate::Projection;
-    use celestial_core::assert_ulp_lt;
-    use celestial_core::Angle;
+    use celestial_core::angle::Angle;
+    use celestial_core::assert_ulp_le;
     #[test]
     fn test_air_roundtrip() {
         for theta_b in [30.0, 45.0, 60.0, 75.0, 90.0] {
@@ -161,16 +162,16 @@ mod tests {
                     let recovered = proj.deproject(inter).unwrap();
 
                     let ulp_bar = if theta_deg >= 85.0 { 64 } else { 20 };
-                    assert_ulp_lt!(
+                    assert_ulp_le!(
                         original.phi().degrees(),
-                        recovered.phi().degrees(),
+                        phi_on_same_edge(original.phi(), recovered.phi()).degrees(),
                         ulp_bar,
                         "phi (theta_b={}, phi={}, theta={})",
                         theta_b,
                         phi_deg,
                         theta_deg
                     );
-                    assert_ulp_lt!(
+                    assert_ulp_le!(
                         original.theta().degrees(),
                         recovered.theta().degrees(),
                         ulp_bar,

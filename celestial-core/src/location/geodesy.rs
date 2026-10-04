@@ -36,10 +36,7 @@
 //! These are cylindrical coordinates centered on Earth's center of mass.
 //! To get Cartesian XYZ, you'd combine with longitude: `x = u*cos(lon)`, `y = u*sin(lon)`, `z = v`.
 
-use crate::constants::{
-    WGS84_ECCENTRICITY_SQUARED, WGS84_SEMI_MAJOR_AXIS, WGS84_SEMI_MAJOR_AXIS_KM,
-};
-use crate::errors::{AstroError, AstroResult, MathErrorKind};
+use crate::constants::{WGS84_FLATTENING, WGS84_SEMI_MAJOR_AXIS};
 
 use super::Location;
 
@@ -48,6 +45,7 @@ impl Location {
     ///
     /// Uses the WGS84 ellipsoid to compute the observer's position relative to
     /// Earth's center of mass. The result accounts for Earth's equatorial bulge.
+    /// This is [`to_geocentric_meters`](Self::to_geocentric_meters) divided by 1000.
     ///
     /// # Returns
     ///
@@ -58,52 +56,24 @@ impl Location {
     /// # Example
     ///
     /// ```
-    /// use celestial_core::Location;
+    /// use celestial_core::location::Location;
     ///
     /// let obs = Location::from_degrees(45.0, 0.0, 0.0)?;
-    /// let (u, v) = obs.to_geocentric_km()?;
+    /// let (u, v) = obs.to_geocentric_km();
     ///
     /// // At 45 degrees, u and v are similar but u > v due to Earth's shape
     /// assert!(u > 4500.0 && u < 4600.0);
     /// assert!(v > 4400.0 && v < 4500.0);
-    /// # Ok::<(), celestial_core::AstroError>(())
+    /// # Ok::<(), celestial_core::errors::AstroError>(())
     /// ```
-    ///
-    /// # Errors
-    ///
-    /// Returns an error for degenerate latitude values that would cause division by zero.
-    /// In practice, this is unlikely with validated `Location` values.
-    pub fn to_geocentric_km(&self) -> AstroResult<(f64, f64)> {
-        let lat = self.latitude;
-        let height_km = self.height / 1000.0;
-
-        let (sin_lat, cos_lat) = libm::sincos(lat);
-
-        let denominator = 1.0 - WGS84_ECCENTRICITY_SQUARED * sin_lat * sin_lat;
-        if denominator <= f64::EPSILON {
-            return Err(AstroError::math_error(
-                "geocentric_conversion",
-                MathErrorKind::DivisionByZero,
-                "Latitude too close to critical value causing division by zero",
-            ));
-        }
-
-        let n = WGS84_SEMI_MAJOR_AXIS_KM / libm::sqrt(denominator);
-
-        let u = (n + height_km) * cos_lat;
-
-        let v = (n * (1.0 - WGS84_ECCENTRICITY_SQUARED) + height_km) * sin_lat;
-
-        Ok((u, v))
+    pub fn to_geocentric_km(&self) -> (f64, f64) {
+        let (u, v) = self.to_geocentric_meters();
+        (u / 1000.0, v / 1000.0)
     }
 
     /// Converts geodetic coordinates to geocentric cylindrical coordinates in meters.
     ///
-    /// Same algorithm as [`to_geocentric_km`](Self::to_geocentric_km) but returns
-    /// results in meters for applications requiring higher precision or SI units.
-    ///
-    /// This method uses a slightly different formulation internally (computing the
-    /// flattening ratio explicitly) but produces equivalent results to the km version.
+    /// Matches ERFA `gd2gce` on the WGS84 ellipsoid bit for bit.
     ///
     /// # Returns
     ///
@@ -114,57 +84,48 @@ impl Location {
     /// # Example
     ///
     /// ```
-    /// use celestial_core::Location;
+    /// use celestial_core::location::Location;
     ///
     /// // Equator at sea level
     /// let equator = Location::from_degrees(0.0, 0.0, 0.0)?;
-    /// let (u, v) = equator.to_geocentric_meters()?;
+    /// let (u, v) = equator.to_geocentric_meters();
     ///
     /// // At equator: u equals semi-major axis, v is zero
-    /// assert!((u - 6_378_137.0).abs() < 1.0);
-    /// assert!(v.abs() < 1e-9);
-    /// # Ok::<(), celestial_core::AstroError>(())
+    /// assert_eq!(u, 6_378_137.0);
+    /// assert_eq!(v, 0.0);
+    /// # Ok::<(), celestial_core::errors::AstroError>(())
     /// ```
-    pub fn to_geocentric_meters(&self) -> AstroResult<(f64, f64)> {
-        let height_m = self.height;
+    pub fn to_geocentric_meters(&self) -> (f64, f64) {
+        let height_m = self.height();
 
-        let (phi_sin, phi_cos) = libm::sincos(self.latitude);
+        let (phi_sin, phi_cos) = libm::sincos(self.latitude());
 
-        let wgs_flattened = 1.0 / 298.257223563;
-        let axis_ratio = 1.0 - wgs_flattened;
+        let axis_ratio = 1.0 - WGS84_FLATTENING;
         let axis_ratio_sq = axis_ratio * axis_ratio;
 
         let norm_sq = phi_cos * phi_cos + axis_ratio_sq * phi_sin * phi_sin;
-        if norm_sq <= f64::EPSILON {
-            return Err(AstroError::math_error(
-                "geocentric_conversion",
-                MathErrorKind::DivisionByZero,
-                "Latitude too close to critical value causing division by zero",
-            ));
-        }
-
         let prime_vertical_radius = WGS84_SEMI_MAJOR_AXIS / libm::sqrt(norm_sq);
         let as_val = axis_ratio_sq * prime_vertical_radius;
 
         let equatorial_radius = (prime_vertical_radius + height_m) * phi_cos;
         let z_coordinate = (as_val + height_m) * phi_sin;
 
-        Ok((equatorial_radius, z_coordinate))
+        (equatorial_radius, z_coordinate)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::constants::{HALF_PI, WGS84_SEMI_MAJOR_AXIS_KM};
 
     #[test]
     fn test_geocentric_at_equator() {
         let loc = Location::from_degrees(0.0, 0.0, 0.0).unwrap();
-        let (u, v) = loc.to_geocentric_km().unwrap();
+        let (u, v) = loc.to_geocentric_km();
 
         assert_eq!(
-            u,
-            crate::constants::WGS84_SEMI_MAJOR_AXIS_KM,
+            u, WGS84_SEMI_MAJOR_AXIS_KM,
             "u = {} km, expected ~6378.137 km",
             u
         );
@@ -174,70 +135,74 @@ mod tests {
     #[test]
     fn test_geocentric_at_north_pole() {
         let loc = Location::from_degrees(90.0, 0.0, 0.0).unwrap();
-        let (u, v) = loc.to_geocentric_km().unwrap();
+        let (u, v) = loc.to_geocentric_km();
 
-        assert!(u.abs() < 1e-10, "u = {} km, expected very close to 0 km", u);
-        let expected_polar_radius =
-            crate::constants::WGS84_SEMI_MAJOR_AXIS_KM * (1.0 - 1.0 / 298.257223563);
-        assert_eq!(
-            v, expected_polar_radius,
-            "v = {} km, expected ~{} km",
-            v, expected_polar_radius
-        );
+        // f64 π/2 sits just below the true value, so its cosine and u are tiny but not zero.
+        // Both are the ERFA gd2gce pole values below, divided by 1000.
+        assert_eq!(u, 3.9186209248144715e-13);
+        assert_eq!(v, 6356.752314245179);
     }
 
-    #[test]
-    fn test_geocentric_km_rejects_degenerate_latitude() {
-        use crate::constants::{HALF_PI, PI};
-        let critical_lat = HALF_PI - 1e-10;
-        let critical_lat_deg = critical_lat * 180.0 / PI;
+    // (latitude, u, v) from ERFA gd2gce on WGS84 at zero longitude and height, run with
+    // Rust libm for sin/cos.
+    const ERFA_GD2GCE: [(f64, f64, f64); 3] = [
+        (HALF_PI, 3.9186209248144716e-10, 6356752.314245179),
+        (-HALF_PI, 3.9186209248144716e-10, -6356752.314245179),
+        (0.7, 4885058.998983235, 4087083.5464733117),
+    ];
 
-        let mut test_lat = critical_lat_deg;
-        while test_lat < 90.0 {
-            let loc = Location::from_degrees(test_lat, 0.0, 0.0).unwrap();
-            if loc.to_geocentric_km().is_err() {
-                return;
-            }
-            test_lat += 1e-12;
+    #[test]
+    fn test_geocentric_meters_matches_erfa_gd2gce() {
+        for (latitude, u, v) in ERFA_GD2GCE {
+            let loc = Location::new(latitude, 0.0, 0.0).unwrap();
+            assert_eq!(loc.to_geocentric_meters(), (u, v), "{latitude}");
         }
     }
 
-    #[test]
-    fn test_geocentric_meters_rejects_degenerate_latitude() {
-        use crate::constants::{HALF_PI, PI};
-        let critical_lat = HALF_PI - 1e-10;
-        let critical_lat_deg = critical_lat * 180.0 / PI;
+    // (latitude, height m, u km, v km): ERFA gd2gce on WGS84 at zero longitude, run with
+    // Rust libm for sin/cos, divided by 1000.
+    const ERFA_GD2GCE_KM: [(f64, f64, f64, f64); 2] = [
+        (
+            -0.007087162286871784,
+            4407.929206062694,
+            6382.385711322742,
+            -44.93115779447372,
+        ),
+        (
+            -0.9192720194817078,
+            1622.7674418241413,
+            3876.8926040765296,
+            -5049.676267536883,
+        ),
+    ];
 
-        let mut test_lat = critical_lat_deg;
-        while test_lat < 90.0 {
-            let loc = Location::from_degrees(test_lat, 0.0, 0.0).unwrap();
-            if loc.to_geocentric_meters().is_err() {
-                return;
-            }
-            test_lat += 1e-12;
+    #[test]
+    fn test_geocentric_km_matches_erfa_gd2gce() {
+        for (latitude, height, u, v) in ERFA_GD2GCE_KM {
+            let loc = Location::new(latitude, 0.0, height).unwrap();
+            assert_eq!(loc.to_geocentric_km(), (u, v), "{latitude}");
         }
     }
 
     #[test]
     fn test_geocentric_meters_handles_equator() {
         let loc = Location::from_degrees(0.0, 0.0, 0.0).unwrap();
-        let (u, v) = loc.to_geocentric_meters().unwrap();
-        crate::test_helpers::assert_float_eq(u, WGS84_SEMI_MAJOR_AXIS, 1);
-        crate::test_helpers::assert_float_eq(v, 0.0, 1);
+        let (u, v) = loc.to_geocentric_meters();
+        assert_eq!(u, WGS84_SEMI_MAJOR_AXIS);
+        assert_eq!(v, 0.0);
     }
 
     #[test]
     fn test_geocentric_meters_handles_north_pole() {
         let loc = Location::from_degrees(90.0, 0.0, 0.0).unwrap();
-        let (u, v) = loc.to_geocentric_meters().unwrap();
-        assert!(u.abs() < 1e-9);
-        crate::test_helpers::assert_ulp_le(v, 6356752.314245179, 1, "v at pole");
+        let (_, u, v) = ERFA_GD2GCE[0];
+        assert_eq!(loc.to_geocentric_meters(), (u, v));
     }
 
     #[test]
     fn test_geocentric_at_45_degrees() {
         let loc = Location::from_degrees(45.0, 0.0, 0.0).unwrap();
-        let (u, v) = loc.to_geocentric_km().unwrap();
+        let (u, v) = loc.to_geocentric_km();
 
         assert!(u > 4000.0 && u < 5000.0, "u = {} km, expected ~4500 km", u);
         assert!(v > 4000.0 && v < 5000.0, "v = {} km, expected ~4500 km", v);
@@ -249,7 +214,7 @@ mod tests {
             v
         );
         assert!(
-            (u - v).abs() < 100.0,
+            libm::fabs(u - v) < 100.0,
             "At 45°, u and v should be similar: u={}, v={}",
             u,
             v
@@ -258,26 +223,17 @@ mod tests {
 
     #[test]
     fn test_geocentric_with_height() {
-        let loc_sea_level = Location::from_degrees(0.0, 0.0, 0.0).unwrap();
         let loc_elevated = Location::from_degrees(0.0, 0.0, 1000.0).unwrap();
-
-        let (u1, v1) = loc_sea_level.to_geocentric_km().unwrap();
-        let (u2, v2) = loc_elevated.to_geocentric_km().unwrap();
-
-        assert!(
-            (u2 - u1 - 1.0).abs() < 0.001,
-            "1km elevation should increase u by ~1km"
-        );
-        assert!(
-            (v2 - v1).abs() < 0.001,
-            "At equator, elevation shouldn't affect v much"
+        assert_eq!(
+            loc_elevated.to_geocentric_km(),
+            (WGS84_SEMI_MAJOR_AXIS_KM + 1.0, 0.0)
         );
     }
 
     #[test]
     fn test_negative_latitude() {
         let loc = Location::from_degrees(-45.0, 0.0, 0.0).unwrap();
-        let (u, v) = loc.to_geocentric_km().unwrap();
+        let (u, v) = loc.to_geocentric_km();
 
         assert!(u > 0.0, "u should be positive: {}", u);
         assert!(
@@ -285,17 +241,5 @@ mod tests {
             "v should be negative in southern hemisphere: {}",
             v
         );
-    }
-
-    #[test]
-    fn test_geocentric_division_by_zero() {
-        let north_pole = Location {
-            latitude: crate::constants::HALF_PI,
-            longitude: 0.0,
-            height: 0.0,
-        };
-
-        let result = north_pole.to_geocentric_km();
-        assert!(result.is_ok());
     }
 }

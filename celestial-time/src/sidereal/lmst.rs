@@ -2,7 +2,7 @@ use super::angle::SiderealAngle;
 use super::gmst::GMST;
 use crate::scales::{TT, UT1};
 use crate::TimeResult;
-use celestial_core::Location;
+use celestial_core::location::Location;
 
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
@@ -18,10 +18,10 @@ impl LMST {
     pub fn from_ut1_tt_and_location(ut1: &UT1, tt: &TT, location: &Location) -> TimeResult<Self> {
         let gmst = GMST::from_ut1_and_tt(ut1, tt)?;
 
-        let lmst_rad = gmst.radians() + location.longitude;
+        let lmst_rad = gmst.radians() + location.longitude();
 
         use celestial_core::angle::wrap_0_2pi;
-        let lmst_normalized = wrap_0_2pi(lmst_rad);
+        let lmst_normalized = wrap_0_2pi(lmst_rad)?;
 
         let angle = SiderealAngle::from_radians_exact(lmst_normalized);
 
@@ -83,7 +83,7 @@ impl LMST {
     }
 
     pub fn to_gmst(&self) -> GMST {
-        let longitude_hours = self.location.longitude * 12.0 / celestial_core::constants::PI;
+        let longitude_hours = self.location.longitude() * 12.0 / celestial_core::constants::PI;
 
         let gmst_hours = self.hours() - longitude_hours;
 
@@ -93,8 +93,8 @@ impl LMST {
 
 impl std::fmt::Display for LMST {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let lat_deg = self.location.latitude * celestial_core::constants::RAD_TO_DEG;
-        let lon_deg = self.location.longitude * celestial_core::constants::RAD_TO_DEG;
+        let lat_deg = self.location.latitude() * celestial_core::constants::RAD_TO_DEG;
+        let lon_deg = self.location.longitude() * celestial_core::constants::RAD_TO_DEG;
         write!(
             f,
             "LMST {} at ({:.4}°, {:.4}°)",
@@ -216,7 +216,7 @@ mod tests {
         let original_gmst = GMST::from_hours(15.5);
 
         // Convert GMST -> LMST -> GMST
-        let longitude_hours = location.longitude * 12.0 / celestial_core::constants::PI;
+        let longitude_hours = location.longitude() * 12.0 / celestial_core::constants::PI;
         let lmst_hours = original_gmst.hours() + longitude_hours;
         let lmst = LMST::from_hours(lmst_hours, &location);
         let recovered_gmst = lmst.to_gmst();
@@ -269,9 +269,9 @@ mod tests {
 
         // Location is always available and cannot be None/invalid
         let stored_location = lmst.location();
-        assert_eq!(stored_location.latitude, location.latitude);
-        assert_eq!(stored_location.longitude, location.longitude);
-        assert_eq!(stored_location.height, location.height);
+        assert_eq!(stored_location.latitude(), location.latitude());
+        assert_eq!(stored_location.longitude(), location.longitude());
+        assert_eq!(stored_location.height(), location.height());
     }
 
     #[test]
@@ -332,9 +332,9 @@ mod tests {
 
         // Test location() accessor
         let stored_location = lmst_deg.location();
-        assert_eq!(stored_location.latitude, location.latitude);
-        assert_eq!(stored_location.longitude, location.longitude);
-        assert_eq!(stored_location.height, location.height);
+        assert_eq!(stored_location.latitude(), location.latitude());
+        assert_eq!(stored_location.longitude(), location.longitude());
+        assert_eq!(stored_location.height(), location.height());
 
         // Test degrees() method
         let degrees = lmst_deg.degrees();

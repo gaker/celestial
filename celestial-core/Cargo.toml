@@ -19,9 +19,26 @@ thiserror.workspace = true
 [features]
 default = []
 serde = ["dep:serde"]
-# Internal feature for testing against ERFA reference implementation
-erfa-tests = []
+# Exposes test_helpers and nutation internals to sibling crates' tests and erfa-sys
+test-support = []
 
 [dev-dependencies]
+criterion.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+
+[[bench]]
+name = "nutation"
+harness = false
+
+[[bench]]
+name = "precession"
+harness = false
+
+[[bench]]
+name = "cio"
+harness = false
+
+[[bench]]
+name = "matrix"
+harness = false

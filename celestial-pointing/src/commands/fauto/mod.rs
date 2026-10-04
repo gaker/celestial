@@ -33,7 +33,7 @@ impl Command for Fauto {
             o.masked = false;
         }
         let active: Vec<String> = seed_terms_from_session(session);
-        let prepared = session.prepared_observations();
+        let prepared = session.prepared_observations()?;
         if prepared.len() < active.len() {
             return Err(Error::Fit("insufficient observations for FAUTO".into()));
         }

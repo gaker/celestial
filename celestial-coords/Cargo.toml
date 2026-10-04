@@ -23,6 +23,7 @@ default = []
 serde = ["dep:serde", "dep:serde_json", "celestial-core/serde", "celestial-time/serde"]
 
 [dev-dependencies]
+celestial-core = { workspace = true, features = ["test-support"] }
 criterion.workspace = true
 reqwest.workspace = true
 serde_json.workspace = true

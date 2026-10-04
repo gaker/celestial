@@ -721,3 +721,36 @@ pub const PLANETARY_TERMS: &[PlanetaryTerm] = &[
     (1, 2, 0, 2, 0, 1, -1, 0, 0, 0, 0, 0, 0, 3, 0, 0, -1),
     (0, 2, 2, 2, 0, 0, 2, 0, -2, 0, 0, 0, 0, 3, 0, 0, -1),
 ];
+
+// i32 to f64 is exact, so converting once at compile time hands the series the same
+// operands that casting every term on every call did.
+pub(crate) static PLANETARY_TERMS_F64: [[f64; 17]; PLANETARY_TERMS.len()] = planetary_terms_f64();
+
+const fn planetary_terms_f64() -> [[f64; 17]; PLANETARY_TERMS.len()] {
+    let mut table = [[0.0; 17]; PLANETARY_TERMS.len()];
+    let mut i = 0;
+    while i < table.len() {
+        let t = PLANETARY_TERMS[i];
+        table[i] = [
+            t.0 as f64,
+            t.1 as f64,
+            t.2 as f64,
+            t.3 as f64,
+            t.4 as f64,
+            t.5 as f64,
+            t.6 as f64,
+            t.7 as f64,
+            t.8 as f64,
+            t.9 as f64,
+            t.10 as f64,
+            t.11 as f64,
+            t.12 as f64,
+            t.13 as f64,
+            t.14 as f64,
+            t.15 as f64,
+            t.16 as f64,
+        ];
+        i += 1;
+    }
+    table
+}

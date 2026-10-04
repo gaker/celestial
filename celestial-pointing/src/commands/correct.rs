@@ -3,7 +3,7 @@ use crate::error::Result;
 use crate::observation::PierSide;
 use crate::parser::parse_coordinates;
 use crate::session::Session;
-use celestial_core::Angle;
+use celestial_core::angle::Angle;
 
 pub struct Correct;
 
@@ -25,11 +25,11 @@ impl Command for Correct {
         let (true_ra, true_dec) = session
             .model
             .command_to_target(enc_ra, enc_dec, lst, lat, pier);
-        let delta_ra = (true_ra - enc_ra).wrapped();
-        let delta_dec = (true_dec - enc_dec).wrapped();
+        let delta_ra = (true_ra - enc_ra).wrapped()?;
+        let delta_dec = (true_dec - enc_dec).wrapped()?;
         Ok(CommandOutput::Text(format_result(
             enc_ra, enc_dec, true_ra, true_dec, delta_ra, delta_dec,
-        )))
+        )?))
     }
 }
 
@@ -48,25 +48,25 @@ fn format_result(
     true_dec: Angle,
     dra: Angle,
     ddec: Angle,
-) -> String {
-    format!(
+) -> Result<String> {
+    Ok(format!(
         "Encoder:  {}  {}\nActual:   {}  {}\n  \u{0394}RA:  {:+.2}s\n  \u{0394}Dec: {:+.1}\"",
-        format_ra(enc_ra),
+        format_ra(enc_ra)?,
         format_dec(enc_dec),
-        format_ra(true_ra),
+        format_ra(true_ra)?,
         format_dec(true_dec),
         dra.arcseconds() / 15.0,
         ddec.arcseconds(),
-    )
+    ))
 }
 
-fn format_ra(a: Angle) -> String {
-    let total_h = a.normalized().hours();
+fn format_ra(a: Angle) -> Result<String> {
+    let total_h = a.normalized()?.hours();
     let h = libm::floor(total_h) as u32;
     let rem = (total_h - h as f64) * 60.0;
     let m = libm::floor(rem) as u32;
     let s = (rem - m as f64) * 60.0;
-    format!("{:02}h {:02}m {:05.2}s", h, m, s)
+    Ok(format!("{:02}h {:02}m {:05.2}s", h, m, s))
 }
 
 fn format_dec(a: Angle) -> String {

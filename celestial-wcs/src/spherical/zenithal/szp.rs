@@ -113,15 +113,15 @@ pub(crate) fn deproject_szp(
     let arg_y = -(y_big - y_prime * one_minus_sin_theta);
     let phi = libm::atan2(arg_x, arg_y);
 
-    Ok(native_coord_from_radians(phi, theta))
+    native_coord_from_radians(phi, theta)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::Projection;
-    use celestial_core::assert_ulp_lt;
-    use celestial_core::Angle;
+    use celestial_core::angle::Angle;
+    use celestial_core::assert_ulp_le;
     #[test]
     fn test_szp_roundtrip() {
         // (mu, phi_c, theta_c, phi, theta, ulp)
@@ -142,7 +142,7 @@ mod tests {
             let original = NativeCoord::new(Angle::from_degrees(*phi), Angle::from_degrees(*theta));
             let inter = proj.project(original).unwrap();
             let recovered = proj.deproject(inter).unwrap();
-            assert_ulp_lt!(
+            assert_ulp_le!(
                 original.phi().degrees(),
                 recovered.phi().degrees(),
                 *ulp,
@@ -151,7 +151,7 @@ mod tests {
                 phi_c,
                 theta_c
             );
-            assert_ulp_lt!(
+            assert_ulp_le!(
                 original.theta().degrees(),
                 recovered.theta().degrees(),
                 *ulp,

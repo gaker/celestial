@@ -8,7 +8,7 @@
 
 use celestial_core::{
     constants::{ARCSEC_TO_RAD, DEG_TO_RAD, J2000_JD, PI},
-    AstroResult,
+    errors::AstroResult,
 };
 use celestial_time::TDB;
 

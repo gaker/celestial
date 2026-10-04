@@ -3,8 +3,8 @@ use crate::error::Result;
 use crate::model::PointingModel;
 use crate::observation::{Observation, PierSide};
 use crate::session::Session;
+use celestial_core::angle::Angle;
 use celestial_core::constants::{DEG_TO_RAD, RAD_TO_DEG};
-use celestial_core::Angle;
 
 pub struct Slist;
 
@@ -18,7 +18,7 @@ impl Command for Slist {
 
     fn execute(&self, session: &mut Session, _args: &[&str]) -> Result<CommandOutput> {
         let lat = session.latitude();
-        let prepared = session.prepared_observations();
+        let prepared = session.prepared_observations()?;
         let header = format!(
             "{:>5} {:>15} {:>15} {:>7} {:>7} {:>8} {:>8} {:>8} {:>8} {:>8}",
             "", "*HA", "*Dec", "*Az", "*ZD", "dX", "dD", "dS", "dZ", "dR"

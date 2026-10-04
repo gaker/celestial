@@ -25,12 +25,13 @@
 //!
 //! The IAU 2006 precession model ([`PrecessionIAU2006`]) uses the Fukushima-Williams
 //! four-angle formulation (gamma_bar, phi_bar, psi_bar, epsilon_A). This parameterization
-//! provides improved numerical stability and separates the frame bias from the
-//! precession proper.
+//! provides improved numerical stability and includes the frame bias directly in
+//! the angles.
 //!
 //! The Fukushima-Williams angles represent:
-//! - **gamma_bar**: Frame bias in right ascension
-//! - **phi_bar**: Obliquity of the ecliptic at J2000.0
+//! - **gamma_bar**: GCRS right ascension of the intersection of the ecliptic of date
+//!   with the GCRS equator
+//! - **phi_bar**: Obliquity of the ecliptic of date on the GCRS equator
 //! - **psi_bar**: Precession in longitude
 //! - **epsilon_A**: Mean obliquity of date
 //!
@@ -55,30 +56,13 @@
 //! IAU 2000 takes time as Julian centuries of TT (Terrestrial Time) since J2000.0.
 //! IAU 2006 takes a two-part Julian Date in TT for improved numerical precision.
 
-pub mod iau2000;
-pub mod iau2006;
-pub mod types;
+mod iau2000;
+mod iau2006;
+mod types;
+
+#[cfg(test)]
+mod tests;
 
 pub use iau2000::PrecessionIAU2000;
 pub use iau2006::PrecessionIAU2006;
-pub use types::{BiasMatrix, PrecessionMatrix, PrecessionResult};
-
-/// Trait for types that can compute precession matrices.
-///
-/// Implementors provide access to both IAU 2000 and IAU 2006 precession models,
-/// allowing consistent precession calculations across different time representations.
-pub trait PrecessionCalculator {
-    /// Computes precession using the IAU 2000 model.
-    ///
-    /// # Arguments
-    ///
-    /// * `tt_centuries` - Julian centuries of TT since J2000.0
-    fn precession_iau2000(&self, tt_centuries: f64) -> crate::AstroResult<PrecessionResult>;
-
-    /// Computes precession using the IAU 2006 model.
-    ///
-    /// # Arguments
-    ///
-    /// * `tt_centuries` - Julian centuries of TT since J2000.0
-    fn precession_iau2006(&self, tt_centuries: f64) -> crate::AstroResult<PrecessionResult>;
-}
+pub use types::{FukushimaWilliamsAngles, PrecessionResult};

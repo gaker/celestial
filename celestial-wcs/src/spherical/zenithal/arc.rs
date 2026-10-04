@@ -25,15 +25,37 @@ pub(crate) fn deproject_arc(inter: IntermediateCoord) -> WcsResult<NativeCoord> 
 
     let theta = HALF_PI - r_theta;
 
-    Ok(native_coord_from_radians(phi, theta))
+    native_coord_from_radians(phi, theta)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::common::phi_on_same_edge;
     use crate::Projection;
-    use celestial_core::assert_ulp_lt;
-    use celestial_core::Angle;
+    use celestial_core::angle::Angle;
+    use celestial_core::assert_ulp_le;
+
+    // ARC computes θ = π/2 − r, so θ carries an absolute error of a few ulps of π/2 (2^-52),
+    // which a ULP compare against exactly 0 can't express.
+    fn assert_theta_recovered(original: Angle, recovered: Angle, context: &str) {
+        if original.radians() == 0.0 {
+            let error = recovered.radians().abs();
+            assert!(
+                error <= 8.0 * f64::EPSILON,
+                "theta {context}: {error:e} rad from 0"
+            );
+        } else {
+            assert_ulp_le!(
+                original.degrees(),
+                recovered.degrees(),
+                8,
+                "theta {}",
+                context
+            );
+        }
+    }
+
     #[test]
     fn test_arc_roundtrip() {
         let proj = Projection::arc();
@@ -41,25 +63,13 @@ mod tests {
             for theta_deg in [-60.0, 0.0, 30.0, 45.0, 75.0, 89.0] {
                 let original =
                     NativeCoord::new(Angle::from_degrees(phi_deg), Angle::from_degrees(theta_deg));
-                let inter = proj.project(original).unwrap();
-                let recovered = proj.deproject(inter).unwrap();
+                let recovered = proj.deproject(proj.project(original).unwrap()).unwrap();
+                let context = format!("(phi={}, theta={})", phi_deg, theta_deg);
 
-                assert_ulp_lt!(
-                    original.phi().degrees(),
-                    recovered.phi().degrees(),
-                    8,
-                    "phi (phi={}, theta={})",
-                    phi_deg,
-                    theta_deg
-                );
-                assert_ulp_lt!(
-                    original.theta().degrees(),
-                    recovered.theta().degrees(),
-                    8,
-                    "theta (phi={}, theta={})",
-                    phi_deg,
-                    theta_deg
-                );
+                let phi_back = phi_on_same_edge(original.phi(), recovered.phi());
+                let (phi, phi_back) = (original.phi().degrees(), phi_back.degrees());
+                assert_ulp_le!(phi, phi_back, 8, "phi {}", context);
+                assert_theta_recovered(original.theta(), recovered.theta(), &context);
             }
         }
     }

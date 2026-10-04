@@ -1,5 +1,5 @@
+use celestial_core::angle::Angle;
 use celestial_core::constants::{DEG_TO_RAD, HALF_PI, RAD_TO_DEG};
-use celestial_core::Angle;
 
 use crate::common::{check_nonzero_param, native_coord_from_radians};
 use crate::coordinate::{IntermediateCoord, NativeCoord};
@@ -51,7 +51,7 @@ pub(crate) fn deproject_bon(inter: IntermediateCoord, theta_1_deg: f64) -> WcsRe
     }
     let phi = a * r / cos_theta;
 
-    Ok(native_coord_from_radians(phi, theta))
+    native_coord_from_radians(phi, theta)
 }
 
 pub(crate) fn project_pco(native: NativeCoord) -> WcsResult<IntermediateCoord> {
@@ -87,13 +87,13 @@ pub(crate) fn deproject_pco(inter: IntermediateCoord) -> WcsResult<NativeCoord> 
     }
 
     if y.abs() < 1e-10 {
-        return Ok(native_coord_from_radians(x, 0.0));
+        return native_coord_from_radians(x, 0.0);
     }
 
     let theta = solve_pco_inverse(x, y)?;
 
     if theta.abs() < 1e-10 {
-        return Ok(native_coord_from_radians(x, 0.0));
+        return native_coord_from_radians(x, 0.0);
     }
 
     let sin_theta = libm::sin(theta);
@@ -107,7 +107,7 @@ pub(crate) fn deproject_pco(inter: IntermediateCoord) -> WcsResult<NativeCoord> 
     let e = libm::asin(sin_e);
     let phi = e / sin_theta;
 
-    Ok(native_coord_from_radians(phi, theta))
+    native_coord_from_radians(phi, theta)
 }
 
 fn solve_pco_inverse(x: f64, y: f64) -> WcsResult<f64> {
@@ -171,8 +171,8 @@ fn solve_pco_inverse(x: f64, y: f64) -> WcsResult<f64> {
 mod tests {
     use super::*;
     use crate::Projection;
-    use celestial_core::assert_ulp_lt;
-    use celestial_core::Angle;
+    use celestial_core::angle::Angle;
+    use celestial_core::assert_ulp_le;
 
     // Per-projection native_reference checks are covered by
     // spherical::tests::test_all_projections_map_reference_to_origin.
@@ -248,13 +248,13 @@ mod tests {
         // On the equator PCO collapses to (phi, 0) - a degree-identity in x.
         let native = NativeCoord::new(Angle::from_degrees(45.0), Angle::from_degrees(0.0));
         let inter = proj.project(native).unwrap();
-        assert_ulp_lt!(inter.x_deg(), 45.0, 2);
+        assert_ulp_le!(inter.x_deg(), 45.0, 2);
         assert!(inter.y_deg().abs() < 1e-10);
 
         // Deprojection round trip on the equator.
         let inter = IntermediateCoord::new(30.0, 0.0);
         let result = proj.deproject(inter).unwrap();
-        assert_ulp_lt!(result.phi().degrees(), 30.0, 2);
+        assert_ulp_le!(result.phi().degrees(), 30.0, 2);
         assert!(result.theta().degrees().abs() < 1e-10);
 
         // Symmetry about the central meridian: (-phi, theta) -> (-x, y).
@@ -262,8 +262,8 @@ mod tests {
         let native_neg = NativeCoord::new(Angle::from_degrees(-30.0), Angle::from_degrees(45.0));
         let inter_pos = proj.project(native_pos).unwrap();
         let inter_neg = proj.project(native_neg).unwrap();
-        assert_ulp_lt!(inter_pos.x_deg(), -inter_neg.x_deg(), 2);
-        assert_ulp_lt!(inter_pos.y_deg(), inter_neg.y_deg(), 2);
+        assert_ulp_le!(inter_pos.x_deg(), -inter_neg.x_deg(), 2);
+        assert_ulp_le!(inter_pos.y_deg(), inter_neg.y_deg(), 2);
     }
 
     #[test]

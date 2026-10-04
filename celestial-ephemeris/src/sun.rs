@@ -1,5 +1,5 @@
 use celestial_coords::Vector3;
-use celestial_core::AstroResult;
+use celestial_core::errors::AstroResult;
 use celestial_time::julian::JulianDate;
 use celestial_time::TDB;
 

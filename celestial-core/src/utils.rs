@@ -1,28 +1,13 @@
-//! Utility functions for time and angle conversions.
-//!
-//! Helper functions for common operations: Julian Date to centuries conversion,
-//! angle normalization, and angular differences. These are building blocks used
-//! throughout the library.
-//!
-//! # Time Conversion
+//! Utility functions for time conversions.
 //!
 //! [`jd_to_centuries`] converts a two-part Julian Date to Julian centuries from J2000.0,
 //! the time unit used by most IAU precession/nutation models.
 //!
-//! # Angle Normalization
-//!
-//! | Function | Input | Output Range |
-//! |----------|-------|--------------|
-//! | [`normalize_longitude`] | degrees | (-180°, 180°] |
-//! | [`normalize_latitude`] | degrees | [-90°, 90°] (clamped) |
-//! | [`normalize_angle_rad`] | radians | (-π, π] |
-//!
-//! # Angular Difference
-//!
-//! [`angular_difference`] computes the shortest signed difference between two angles
-//! in degrees, handling the wraparound at ±180°.
+//! Angle normalization lives in [`crate::angle`] ([`wrap_pm_pi`](crate::angle::wrap_pm_pi),
+//! [`wrap_0_2pi`](crate::angle::wrap_0_2pi)).
 
-use crate::constants::{DAYS_PER_JULIAN_CENTURY, J2000_JD, PI, TWOPI};
+use crate::constants::{DAYS_PER_JULIAN_CENTURY, J2000_JD, MAX_CENTURIES_FROM_J2000};
+use crate::errors::{AstroError, AstroResult, MathErrorKind};
 
 /// Converts a two-part Julian Date to Julian centuries from J2000.0.
 ///
@@ -49,74 +34,29 @@ pub fn jd_to_centuries(jd1: f64, jd2: f64) -> f64 {
     ((jd1 - J2000_JD) + jd2) / DAYS_PER_JULIAN_CENTURY
 }
 
-/// Normalizes longitude to the range (-180°, 180°].
-///
-/// Wraps values outside the range by adding/subtracting 360°.
-#[inline]
-pub fn normalize_longitude(lon: f64) -> f64 {
-    let mut normalized = lon % 360.0;
-    if normalized > 180.0 {
-        normalized -= 360.0;
-    } else if normalized < -180.0 {
-        normalized += 360.0;
-    }
-    normalized
+pub(crate) fn checked_jd_to_centuries(jd1: f64, jd2: f64) -> AstroResult<f64> {
+    check_model_epoch(jd_to_centuries(jd1, jd2))
 }
 
-/// Clamps latitude to the valid range [-90°, 90°].
-///
-/// Values outside the range are clamped to the nearest pole.
-#[inline]
-pub fn normalize_latitude(lat: f64) -> f64 {
-    lat.clamp(-90.0, 90.0)
-}
-
-/// Normalizes an angle in radians to the range (-π, π].
-#[inline]
-pub fn normalize_angle_rad(angle: f64) -> f64 {
-    let mut normalized = angle % TWOPI;
-    if normalized > PI {
-        normalized -= TWOPI;
-    } else if normalized < -PI {
-        normalized += TWOPI;
+pub(crate) fn check_model_epoch(t: f64) -> AstroResult<f64> {
+    if !t.is_finite() {
+        return Err(AstroError::math_error(
+            "model epoch",
+            MathErrorKind::NotFinite,
+            "Julian date must be finite",
+        ));
     }
-    normalized
-}
-
-/// Normalizes an angle in radians to the range [0, 2π).
-#[inline]
-pub fn normalize_angle_to_positive(angle: f64) -> f64 {
-    let mut a = angle % TWOPI;
-    if a < 0.0 {
-        a += TWOPI;
+    if libm::fabs(t) <= MAX_CENTURIES_FROM_J2000 {
+        return Ok(t);
     }
-    a
-}
-
-/// Computes the shortest signed angular difference `a - b` in degrees.
-///
-/// Handles wraparound at ±180°. The result is in the range (-180°, 180°].
-///
-/// # Example
-///
-/// ```
-/// use celestial_core::utils::angular_difference;
-///
-/// // Simple case
-/// assert_eq!(angular_difference(90.0, 45.0), 45.0);
-///
-/// // Across the 0°/360° boundary: 10° is 20° ahead of 350°
-/// assert!((angular_difference(10.0, 350.0) - 20.0).abs() < 1e-12);
-/// ```
-#[inline]
-pub fn angular_difference(a: f64, b: f64) -> f64 {
-    let mut diff = a - b;
-    if diff > 180.0 {
-        diff -= 360.0;
-    } else if diff < -180.0 {
-        diff += 360.0;
-    }
-    diff
+    Err(AstroError::math_error(
+        "model epoch",
+        MathErrorKind::OutOfRange,
+        &format!(
+            "Epoch {:.1} centuries from J2000.0 is outside the model range",
+            t
+        ),
+    ))
 }
 
 #[cfg(test)]
@@ -151,60 +91,19 @@ mod tests {
     fn test_jd_to_centuries_precision() {
         let jd2 = 0.123456789;
         let t = jd_to_centuries(J2000_JD, jd2);
-        let expected = 0.123456789 / crate::constants::DAYS_PER_JULIAN_CENTURY;
-        assert!((t - expected).abs() < 1e-15);
+        assert_eq!(t, 0.123456789 / crate::constants::DAYS_PER_JULIAN_CENTURY);
     }
 
     #[test]
-    fn test_normalize_longitude() {
-        assert_eq!(normalize_longitude(0.0), 0.0);
-        assert_eq!(normalize_longitude(180.0), 180.0);
-        assert_eq!(normalize_longitude(-180.0), -180.0);
-        assert_eq!(normalize_longitude(181.0), -179.0);
-        assert_eq!(normalize_longitude(-181.0), 179.0);
-        assert_eq!(normalize_longitude(360.0), 0.0);
-        assert_eq!(normalize_longitude(720.0), 0.0);
-        assert_eq!(normalize_longitude(450.0), 90.0);
-    }
-
-    #[test]
-    fn test_normalize_latitude() {
-        assert_eq!(normalize_latitude(0.0), 0.0);
-        assert_eq!(normalize_latitude(45.0), 45.0);
-        assert_eq!(normalize_latitude(-45.0), -45.0);
-        assert_eq!(normalize_latitude(90.0), 90.0);
-        assert_eq!(normalize_latitude(-90.0), -90.0);
-        assert_eq!(normalize_latitude(100.0), 90.0);
-        assert_eq!(normalize_latitude(-100.0), -90.0);
-    }
-
-    #[test]
-    fn test_normalize_angle_rad() {
-        assert_eq!(normalize_angle_rad(0.0), 0.0);
-        assert!((normalize_angle_rad(PI) - PI).abs() < 1e-15);
-        assert!((normalize_angle_rad(-PI) - (-PI)).abs() < 1e-15);
-        assert!((normalize_angle_rad(TWOPI)).abs() < 1e-15);
-        assert!((normalize_angle_rad(3.0 * PI) - PI).abs() < 1e-15);
-    }
-
-    #[test]
-    fn test_angular_difference() {
-        assert_eq!(angular_difference(0.0, 0.0), 0.0);
-        assert_eq!(angular_difference(90.0, 45.0), 45.0);
-        assert_eq!(angular_difference(45.0, 90.0), -45.0);
-        assert!((angular_difference(10.0, 350.0) - 20.0).abs() < 1e-12);
-        assert!((angular_difference(-170.0, 170.0) - 20.0).abs() < 1e-12);
-        assert!((angular_difference(350.0, 10.0) + 20.0).abs() < 1e-12);
-    }
-
-    #[test]
-    fn test_normalize_angle_to_positive() {
-        assert_eq!(normalize_angle_to_positive(0.0), 0.0);
-        assert!((normalize_angle_to_positive(TWOPI)).abs() < 1e-15);
-        assert!((normalize_angle_to_positive(-PI) - PI).abs() < 1e-15);
-        assert!((normalize_angle_to_positive(3.0 * PI) - PI).abs() < 1e-15);
-        assert!(normalize_angle_to_positive(1.0) >= 0.0);
-        assert!(normalize_angle_to_positive(-1.0) >= 0.0);
-        assert!(normalize_angle_to_positive(-1.0) < TWOPI);
+    fn test_checked_jd_to_centuries_enforces_model_range() {
+        let limit_days = MAX_CENTURIES_FROM_J2000 * DAYS_PER_JULIAN_CENTURY;
+        assert_eq!(checked_jd_to_centuries(J2000_JD, limit_days).unwrap(), 20.0);
+        assert_eq!(
+            checked_jd_to_centuries(J2000_JD, -limit_days).unwrap(),
+            -20.0
+        );
+        assert!(checked_jd_to_centuries(J2000_JD, limit_days + 1.0).is_err());
+        assert!(checked_jd_to_centuries(J2000_JD, 1e300).is_err());
+        assert!(checked_jd_to_centuries(f64::NAN, 0.0).is_err());
     }
 }

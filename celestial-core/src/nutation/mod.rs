@@ -22,8 +22,8 @@
 //!
 //! # Time Argument
 //!
-//! All `compute(jd1, jd2)` methods accept a two-part Julian Date in TDB (Barycentric
-//! Dynamical Time). The split preserves precision: typically `jd1 = 2451545.0` (J2000.0)
+//! All `compute(jd1, jd2)` methods accept a two-part Julian Date in TT (Terrestrial
+//! Time). The split preserves precision: typically `jd1 = 2451545.0` (J2000.0)
 //! and `jd2` = days from that epoch.
 //!
 //! # Example
@@ -34,36 +34,42 @@
 //! let nutation = NutationIAU2006A::new();
 //! let result = nutation.compute(2451545.0, 0.0).unwrap();
 //!
-//! // At J2000.0: Δψ ≈ -0.04 arcsec, Δε ≈ -0.007 arcsec
+//! // At J2000.0: Δψ ≈ -13.932 arcsec, Δε ≈ -5.769 arcsec
 //! println!("Δψ = {:.6} rad", result.delta_psi);
 //! println!("Δε = {:.6} rad", result.delta_eps);
 //! ```
 //!
-//! # Sub-modules
+//! # Contents
 //!
-//! - [`iau2000a`]: Full IAU 2000A model (678 lunisolar + 687 planetary terms)
-//! - [`iau2000b`]: Truncated IAU 2000B model (77 terms + planetary bias)
-//! - [`iau2006a`]: IAU 2000A with J2 corrections for IAU 2006 precession compatibility
-//! - [`fundamental_args`]: Delaunay arguments and planetary mean longitudes
-//! - [`lunisolar_terms`]: Coefficient table for lunisolar nutation series
-//! - [`planetary_terms`]: Coefficient table for planetary nutation series
-//! - [`types`]: [`NutationResult`] and [`NutationModel`] wrapper
+//! - [`NutationIAU2000A`]: Full IAU 2000A model (678 lunisolar + 687 planetary terms)
+//! - [`NutationIAU2000B`]: Truncated IAU 2000B model (77 terms + planetary bias)
+//! - [`NutationIAU2006A`]: IAU 2000A with J2 corrections for IAU 2006 precession compatibility
+//! - `fundamental_args`: Delaunay arguments and planetary mean longitudes
+//! - `lunisolar_terms`: Coefficient table for lunisolar nutation series
+//! - `planetary_terms`: Coefficient table for planetary nutation series
+//! - [`NutationResult`]: nutation in longitude and obliquity
 
-#[cfg(feature = "erfa-tests")]
+#[cfg(feature = "test-support")]
 pub mod fundamental_args;
+#[cfg(not(feature = "test-support"))]
+pub(crate) mod fundamental_args;
 
-#[cfg(not(feature = "erfa-tests"))]
-mod fundamental_args;
-
-pub mod iau2000a;
-pub mod iau2000b;
-pub mod iau2006a;
+#[cfg(feature = "test-support")]
 pub mod lunisolar_terms;
-pub mod planetary_terms;
-pub mod types;
+#[cfg(not(feature = "test-support"))]
+mod lunisolar_terms;
 
-pub use fundamental_args::{IERS2010FundamentalArgs, MHB2000FundamentalArgs};
+#[cfg(feature = "test-support")]
+pub mod planetary_terms;
+#[cfg(not(feature = "test-support"))]
+mod planetary_terms;
+
+mod iau2000a;
+mod iau2000b;
+mod iau2006a;
+mod types;
+
 pub use iau2000a::NutationIAU2000A;
 pub use iau2000b::NutationIAU2000B;
 pub use iau2006a::NutationIAU2006A;
-pub use types::{NutationModel, NutationResult};
+pub use types::NutationResult;

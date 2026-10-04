@@ -22,7 +22,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ("Summer solstice 2024", &solstice),
         ("Vernal equinox 2024", &equinox),
     ] {
-        let orient = compute_solar_orientation(epoch);
+        let orient = compute_solar_orientation(epoch)?;
         let dist = sun_earth_distance(epoch);
         let cr = carrington_rotation_number(epoch);
 
@@ -74,7 +74,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     // Disk center in Stonyhurst is always (B0, 0) by definition
-    let center = HeliographicStonyhurst::disk_center(&solstice);
+    let center = HeliographicStonyhurst::disk_center(&solstice)?;
     println!("Disk center at solstice:");
     println!(
         "  lat = {:+.4}°, lon = {:.4}°\n",
@@ -114,7 +114,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     ];
 
     for (label, epoch) in &dates {
-        let orient = compute_lunar_orientation(epoch);
+        let orient = compute_lunar_orientation(epoch)?;
 
         println!("{label}:");
         println!(

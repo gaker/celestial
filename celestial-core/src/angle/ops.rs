@@ -2,10 +2,9 @@
 //!
 //! Implements standard math ops: `+`, `-`, `*`, `/`, and unary `-`.
 
-use super::core::Angle;
+use super::Angle;
 use core::ops::*;
 
-/// Angle + Angle → Angle
 impl Add for Angle {
     type Output = Self;
     #[inline]
@@ -14,7 +13,6 @@ impl Add for Angle {
     }
 }
 
-/// Angle - Angle → Angle
 impl Sub for Angle {
     type Output = Self;
 
@@ -24,7 +22,6 @@ impl Sub for Angle {
     }
 }
 
-/// Angle * scalar → Angle
 impl Mul<f64> for Angle {
     type Output = Self;
 
@@ -34,7 +31,6 @@ impl Mul<f64> for Angle {
     }
 }
 
-/// Angle / scalar → Angle
 impl Div<f64> for Angle {
     type Output = Self;
 
@@ -44,7 +40,6 @@ impl Div<f64> for Angle {
     }
 }
 
-/// -Angle → Angle
 impl Neg for Angle {
     type Output = Self;
 
