@@ -33,7 +33,8 @@ celestial-ephemeris = "0.1"
 use celestial_ephemeris::{Vsop2013Earth, Vsop2013Sun};
 use celestial_ephemeris::planets::{Vsop2013Mars, Vsop2013Jupiter};
 use celestial_ephemeris::moon::ElpMpp02Moon;
-use celestial_time::{TDB, JulianDate};
+use celestial_time::julian::JulianDate;
+use celestial_time::scales::tdb::TDB;
 
 // Create a TDB epoch
 let tdb = TDB::from_julian_date(JulianDate::j2000());

@@ -3,7 +3,7 @@ use celestial_core::angle::wrap_0_2pi;
 use celestial_core::angle::Angle;
 use celestial_core::constants::HALF_PI;
 use celestial_core::matrix::RotationMatrix3;
-use celestial_time::TT;
+use celestial_time::scales::tt::TT;
 
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};

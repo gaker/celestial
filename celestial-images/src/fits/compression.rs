@@ -152,8 +152,10 @@ fn plio_decode(data: &[u8], pixel_count: usize) -> Result<Vec<i32>> {
     }
 
     let words: Vec<i16> = data
-        .chunks_exact(2)
-        .map(|c| i16::from_be_bytes([c[0], c[1]]))
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|&c| i16::from_be_bytes(c))
         .collect();
     let mut output = vec![0i32; pixel_count];
     let mut pv: i32 = 0;
@@ -628,16 +630,20 @@ fn compress_rice_i8(data: &[u8]) -> Result<Vec<u8>> {
 
 fn compress_rice_i16(data: &[u8]) -> Result<Vec<u8>> {
     let pixels: Vec<i16> = data
-        .chunks_exact(2)
-        .map(|chunk| i16::from_be_bytes([chunk[0], chunk[1]]))
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|&chunk| i16::from_be_bytes(chunk))
         .collect();
     i16::compress(&pixels, DEFAULT_RICE_BLOCK_SIZE)
 }
 
 fn compress_rice_i32(data: &[u8]) -> Result<Vec<u8>> {
     let pixels: Vec<i32> = data
-        .chunks_exact(4)
-        .map(|chunk| i32::from_be_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .map(|&chunk| i32::from_be_bytes(chunk))
         .collect();
     i32::compress(&pixels, DEFAULT_RICE_BLOCK_SIZE)
 }
@@ -651,12 +657,16 @@ fn bytes_to_pixels(data: &[u8], bits_per_pixel: i32) -> Result<Vec<i32>> {
     match bits_per_pixel {
         8 => Ok(data.iter().map(|&b| b as i32).collect()),
         16 => Ok(data
-            .chunks_exact(2)
-            .map(|c| i16::from_be_bytes([c[0], c[1]]) as i32)
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|&c| i16::from_be_bytes(c) as i32)
             .collect()),
         32 => Ok(data
-            .chunks_exact(4)
-            .map(|c| i32::from_be_bytes([c[0], c[1], c[2], c[3]]))
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|&c| i32::from_be_bytes(c))
             .collect()),
         _ => Err(FitsError::InvalidFormat(format!(
             "Unsupported BITPIX {} for PLIO",

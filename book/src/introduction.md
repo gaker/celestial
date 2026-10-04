@@ -48,9 +48,9 @@ Convert a catalog position (ICRS) to where it appears in the local sky.
 
 ```rust
 use celestial_core::{angle::Angle, location::Location};
-use celestial_time::{tt_from_calendar, TT};
-use celestial_time::scales::conversions::ToUT1WithDeltaT;
-use celestial_time::sidereal::GAST;
+use celestial_time::scales::tt::{TT, tt_from_calendar};
+use celestial_time::scales::conversions::ut1_tai::ToUT1WithDeltaT;
+use celestial_time::sidereal::gast::GAST;
 use celestial_coords::{ICRSPosition, CoordinateFrame, CIRSPosition};
 
 // Sirius in ICRS (catalog coordinates)
@@ -60,7 +60,7 @@ let sirius = ICRSPosition::new(
 ).unwrap();
 
 // Observation epoch in TT
-let tt = tt_from_calendar(2024, 6, 15, 22, 30, 0.0);
+let tt = tt_from_calendar(2024, 6, 15, 22, 30, 0.0).unwrap();
 
 // ICRS -> CIRS (applies precession, nutation, aberration, light deflection)
 let cirs = CIRSPosition::from_icrs(&sirius, &tt).unwrap();

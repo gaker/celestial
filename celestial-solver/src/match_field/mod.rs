@@ -15,7 +15,7 @@ use celestial_catalog::query::{neighbor_quads, Quad};
 use celestial_coords::ICRSPosition;
 use celestial_core::constants::PI;
 use celestial_images::formats::Image;
-use celestial_time::JulianDate;
+use celestial_time::julian::JulianDate;
 use rayon::prelude::*;
 
 use crate::detect::DetectedStar;
@@ -142,7 +142,7 @@ pub struct FieldMatch {
 /// # let img = celestial_images::formats::Image::open("f.fits")?;
 /// # let catalog = celestial_catalog::query::Catalog::open("cat.bin")?;
 /// # let hint = celestial_coords::ICRSPosition::from_degrees(180.0, 30.0)?;
-/// # let epoch = celestial_time::JulianDate::new(2_400_000.5, 0.0);
+/// # let epoch = celestial_time::julian::JulianDate::new(2_400_000.5, 0.0);
 /// let field = match_field(&stars, &img, &catalog, &hint, 1.5, epoch, &MatchParams::default())?;
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
@@ -335,7 +335,7 @@ mod tests {
 
     use celestial_catalog::query::Catalog;
     use celestial_images::formats::PixelData;
-    use celestial_time::JulianDate;
+    use celestial_time::julian::JulianDate;
 
     use crate::detect::DetectedStar;
 

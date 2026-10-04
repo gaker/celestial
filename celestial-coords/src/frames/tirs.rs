@@ -1,7 +1,9 @@
 use crate::{frames::ITRSPosition, CoordResult};
 use celestial_core::constants::ARCSEC_TO_RAD;
 use celestial_core::matrix::Vector3;
-use celestial_time::{scales::conversions::ToUT1WithDeltaT, transforms::earth_rotation_angle, TT};
+use celestial_time::scales::conversions::ut1_tai::ToUT1WithDeltaT;
+use celestial_time::scales::tt::TT;
+use celestial_time::transforms::rotation::earth_rotation_angle;
 
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};

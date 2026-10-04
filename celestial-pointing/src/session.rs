@@ -3,7 +3,7 @@ use crate::model::PointingModel;
 use crate::observation::{IndatFile, IndatOption, MountType, Observation, SiteParams};
 use crate::solver::{self, FitResult};
 use celestial_core::angle::Angle;
-use celestial_time::JulianDate;
+use celestial_time::julian::JulianDate;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum AdjustDirection {
@@ -163,7 +163,7 @@ impl Session {
 mod tests {
     use super::*;
     use crate::test_support::{obs_with_ha_offset as make_obs, FitResultBuilder, ObsBuilder};
-    use celestial_time::JulianDate;
+    use celestial_time::julian::JulianDate;
 
     fn site(lat_deg: f64, pressure: f64) -> SiteParams {
         SiteParams {
@@ -185,7 +185,7 @@ mod tests {
             observations,
             mount_type: MountType::Altazimuth,
             header_lines: vec!["!hdr".into()],
-            date: JulianDate::from_calendar(2024, 7, 14, 0, 0, 0.0),
+            date: JulianDate::from_calendar(2024, 7, 14, 0, 0, 0.0).unwrap(),
         }
     }
 

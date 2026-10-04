@@ -327,7 +327,8 @@ mod tests {
     fn test_newton_raphson_2d_recovers_distortion() {
         // Two distortion shapes - separable quadratic and mixed cross-term -
         // exercise both diagonal and off-diagonal Jacobian terms.
-        let cases: &[(fn(f64, f64) -> (f64, f64), f64, f64)] = &[
+        type Case = (fn(f64, f64) -> (f64, f64), f64, f64);
+        let cases: &[Case] = &[
             (|x, y| (x + 0.001 * x * x, y + 0.001 * y * y), 100.0, 200.0),
             (|x, y| (x + 0.0001 * x * y, y + 0.0002 * x * x), 50.0, 75.0),
         ];

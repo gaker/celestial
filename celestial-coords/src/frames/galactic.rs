@@ -2,7 +2,7 @@ use crate::{
     constants::GALACTIC_TO_ICRS, transforms::CoordinateFrame, CoordResult, Distance, ICRSPosition,
 };
 use celestial_core::angle::Angle;
-use celestial_time::TT;
+use celestial_time::scales::tt::TT;
 
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};

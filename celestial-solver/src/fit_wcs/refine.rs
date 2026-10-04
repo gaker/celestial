@@ -3,7 +3,7 @@ use celestial_catalog::query::{
     cone_search, tan_deproject_star, tan_project_star, Catalog, ConeSearchParams,
 };
 use celestial_core::constants::{DEG_TO_RAD, RAD_TO_DEG};
-use celestial_time::JulianDate;
+use celestial_time::julian::JulianDate;
 
 use crate::detect::DetectedStar;
 use crate::match_field::StarPair;
@@ -86,7 +86,7 @@ pub struct RefineResult {
 /// # let initial = unimplemented!();
 /// # let stars = vec![];
 /// # let catalog: celestial_catalog::query::Catalog = unimplemented!();
-/// # let epoch = celestial_time::JulianDate::new(2_400_000.5, 0.0);
+/// # let epoch = celestial_time::julian::JulianDate::new(2_400_000.5, 0.0);
 /// let refined = refine_wcs(&initial, &stars, &catalog, epoch, &RefineParams::default())?;
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```

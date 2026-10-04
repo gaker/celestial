@@ -1,7 +1,7 @@
 use crate::{CoordResult, Distance};
 use celestial_core::constants::{HALF_PI, TWOPI};
 use celestial_core::{angle::Angle, location::Location};
-use celestial_time::TT;
+use celestial_time::scales::tt::TT;
 
 const EARTH_RADIUS_AU: f64 = 4.2635e-5; // 6378.137 km
 
@@ -537,8 +537,8 @@ impl HourAnglePosition {
     }
 
     pub fn to_cirs(&self, delta_t: f64) -> CoordResult<crate::frames::CIRSPosition> {
-        use celestial_time::scales::conversions::ToUT1WithDeltaT;
-        use celestial_time::sidereal::GAST;
+        use celestial_time::scales::conversions::ut1_tai::ToUT1WithDeltaT;
+        use celestial_time::sidereal::gast::GAST;
 
         let ut1 = self.epoch.to_ut1_with_delta_t(delta_t)?;
         let gast = GAST::from_ut1_and_tt(&ut1, &self.epoch)?;

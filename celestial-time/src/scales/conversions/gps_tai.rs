@@ -16,7 +16,9 @@
 //! # Usage
 //!
 //! ```
-//! use celestial_time::{JulianDate, GPS, TAI};
+//! use celestial_time::julian::JulianDate;
+//! use celestial_time::scales::gps::GPS;
+//! use celestial_time::scales::tai::TAI;
 //! use celestial_time::scales::conversions::{ToGPS, ToTAI};
 //!
 //! let gps = GPS::from_julian_date(JulianDate::new(2451545.0, 0.0));
@@ -27,22 +29,16 @@
 //!
 //! # Precision
 //!
-//! Conversions are exact. Round-trip GPS -> TAI -> GPS preserves both JD components
-//! with no floating-point error, as only addition/subtraction of a fixed offset occurs.
+//! Only a fixed offset is added or subtracted. Round-trip GPS -> TAI -> GPS comes back
+//! within 1 ulp of jd2, from rounding when the offset is added.
 
 use super::{ToGPS, ToTAI};
 use crate::constants::GPS_TO_TAI_OFFSET_SECONDS;
-use crate::scales::{GPS, TAI};
+use crate::julian::finite_jd;
+use crate::scales::gps::GPS;
+use crate::scales::tai::TAI;
 use crate::TimeResult;
 use celestial_core::constants::SECONDS_PER_DAY_F64;
-
-/// Identity conversion for GPS.
-impl ToGPS for GPS {
-    /// Returns self unchanged.
-    fn to_gps(&self) -> TimeResult<GPS> {
-        Ok(*self)
-    }
-}
 
 /// GPS to TAI conversion. Adds 19 seconds.
 impl ToTAI for GPS {
@@ -50,16 +46,12 @@ impl ToTAI for GPS {
     ///
     /// The offset is added to the smaller-magnitude JD component to preserve precision.
     fn to_tai(&self) -> TimeResult<TAI> {
-        let gps_jd = self.to_julian_date();
+        let gps_jd = finite_jd(self.to_julian_date())?;
         let offset_days = GPS_TO_TAI_OFFSET_SECONDS / SECONDS_PER_DAY_F64;
 
-        let (tai_jd1, tai_jd2) = if gps_jd.jd1().abs() > gps_jd.jd2().abs() {
-            (gps_jd.jd1(), gps_jd.jd2() + offset_days)
-        } else {
-            (gps_jd.jd1() + offset_days, gps_jd.jd2())
-        };
+        let tai_jd = gps_jd.map_smaller_part(|_, small| small + offset_days);
 
-        Ok(TAI::from_julian_date_raw(tai_jd1, tai_jd2))
+        Ok(TAI::from_julian_date(tai_jd))
     }
 }
 
@@ -69,47 +61,26 @@ impl ToGPS for TAI {
     ///
     /// The offset is subtracted from the smaller-magnitude JD component to preserve precision.
     fn to_gps(&self) -> TimeResult<GPS> {
-        let tai_jd = self.to_julian_date();
+        let tai_jd = finite_jd(self.to_julian_date())?;
         let offset_days = GPS_TO_TAI_OFFSET_SECONDS / SECONDS_PER_DAY_F64;
 
-        let (gps_jd1, gps_jd2) = if tai_jd.jd1().abs() > tai_jd.jd2().abs() {
-            (tai_jd.jd1(), tai_jd.jd2() - offset_days)
-        } else {
-            (tai_jd.jd1() - offset_days, tai_jd.jd2())
-        };
+        let gps_jd = tai_jd.map_smaller_part(|_, small| small - offset_days);
 
-        Ok(GPS::from_julian_date_raw(gps_jd1, gps_jd2))
+        Ok(GPS::from_julian_date(gps_jd))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::constants::GPS_EPOCH_JD;
-    use crate::JulianDate;
+    use crate::julian::JulianDate;
+    use crate::TimeError;
     use celestial_core::constants::J2000_JD;
-
-    #[test]
-    fn test_gps_identity_conversion() {
-        let gps = GPS::from_julian_date(JulianDate::new(J2000_JD, 0.999999999999999));
-        let identity_gps = gps.to_gps().unwrap();
-
-        assert_eq!(
-            gps.to_julian_date().jd1(),
-            identity_gps.to_julian_date().jd1(),
-            "GPS identity conversion should preserve JD1"
-        );
-        assert_eq!(
-            gps.to_julian_date().jd2(),
-            identity_gps.to_julian_date().jd2(),
-            "GPS identity conversion should preserve JD2"
-        );
-    }
 
     #[test]
     fn test_gps_tai_offset_19_seconds() {
         let test_dates = [
-            (GPS_EPOCH_JD, "GPS epoch 1980-01-06"),
+            (2444244.5, "GPS epoch 1980-01-06"),
             (J2000_JD, "J2000.0"),
             (2455197.5, "2010-01-01"),
             (2459580.5, "2022-01-01"),
@@ -202,5 +173,16 @@ mod tests {
             alt_round_trip.to_julian_date().jd2(),
             "Alternate split GPS->TAI->GPS JD2 must be exact"
         );
+    }
+
+    #[test]
+    fn test_non_finite_julian_date_is_rejected() {
+        for bad in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            let jd = JulianDate::new(bad, 0.0);
+            let expected =
+                TimeError::InvalidEpoch(format!("Julian Date ({}, 0) is not finite", bad));
+            assert_eq!(GPS::from_julian_date(jd).to_tai().unwrap_err(), expected);
+            assert_eq!(TAI::from_julian_date(jd).to_gps().unwrap_err(), expected);
+        }
     }
 }

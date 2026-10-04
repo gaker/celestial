@@ -2,7 +2,7 @@ use crate::{CoordResult, ICRSPosition};
 use celestial_core::angle::Angle;
 use celestial_core::angle::{wrap_0_2pi, wrap_pm_pi};
 use celestial_core::constants::{ARCSEC_TO_RAD, DEG_TO_RAD, J2000_JD};
-use celestial_time::TT;
+use celestial_time::scales::tt::TT;
 
 const SOLAR_EQUATOR_INCLINATION_DEG: f64 = 7.25;
 const SOLAR_EQUATOR_INCLINATION_RAD: f64 = SOLAR_EQUATOR_INCLINATION_DEG * DEG_TO_RAD;

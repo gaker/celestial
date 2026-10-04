@@ -1,7 +1,7 @@
 use crate::planets::Vsop2013Venus;
 use celestial_core::constants::{AU_KM, J2000_JD};
 use celestial_time::julian::JulianDate;
-use celestial_time::TDB;
+use celestial_time::scales::tdb::TDB;
 
 const VENUS_VSOP2013_REF: &[(f64, f64, f64, f64)] = &[
     (2411545.0, -0.7178452043, 0.0139241146, 0.0517532468),

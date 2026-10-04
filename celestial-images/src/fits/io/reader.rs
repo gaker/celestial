@@ -436,7 +436,7 @@ impl<R: Read + Seek> FitsFile<R> {
 
             blocks_read += 1;
 
-            for chunk in block_buffer.chunks_exact(CARD_SIZE) {
+            for chunk in block_buffer.as_chunks::<CARD_SIZE>().0 {
                 let keyword_part = std::str::from_utf8(&chunk[0..8])
                     .map_err(|_| FitsError::InvalidFormat("Invalid UTF-8 in header".to_string()))?;
 

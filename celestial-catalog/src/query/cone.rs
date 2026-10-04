@@ -8,7 +8,8 @@
 //! arbitrary observation epoch before matching.
 
 use celestial_coords::proper_motion;
-use celestial_time::{JulianDate, TT};
+use celestial_time::julian::JulianDate;
+use celestial_time::scales::tt::TT;
 
 use super::catalog::{Catalog, StarRecord};
 use super::healpix::{angular_separation_deg, query_disc_nest};

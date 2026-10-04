@@ -1,57 +1,57 @@
 pub mod constants;
 pub mod julian;
-pub mod parsing;
+pub(crate) mod parsing;
 pub mod scales;
 pub mod sidereal;
 pub mod transforms;
 
-pub use julian::JulianDate;
-pub use scales::{GPS, TAI, TCB, TCG, TDB, TT, UT1, UTC};
-
-pub use scales::{
-    gps_from_calendar, tai_from_calendar, tcb_from_calendar, tcg_from_calendar, tdb_from_calendar,
-    tt_from_calendar, ut1_from_calendar, utc_from_calendar,
-};
-
-pub use scales::conversions::{
-    TcbToTdb, TdbToTcb, ToGPS, ToTAI, ToTAIWithOffset, ToTCB, ToTCG, ToTCGFromTCB, ToTDB, ToTT,
-    ToTTFromTDB, ToTTWithDeltaT, ToUT1, ToUT1WithDUT1, ToUT1WithDeltaT, ToUT1WithOffset, ToUTC,
-    ToUTCViaTAI, ToUTCWithDUT1,
-};
-pub use sidereal::{ObservatoryContext, SiderealAngle, GAST, GMST, LAST, LMST};
-pub use transforms::{NutationCalculator, NutationModel, NutationResult};
-
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
+use thiserror::Error;
 
 pub type TimeResult<T> = Result<T, TimeError>;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Error, Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum TimeError {
-    InvalidDate,
+    #[error("Invalid date: {0}")]
+    InvalidDate(String),
+    #[error("Conversion error: {0}")]
     ConversionError(String),
+    #[error("Parse error: {0}")]
     ParseError(String),
+    #[error("Calculation error: {0}")]
     CalculationError(String),
+    #[error("Invalid epoch: {0}")]
     InvalidEpoch(String),
 }
-
-impl std::fmt::Display for TimeError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::InvalidDate => write!(f, "Invalid date"),
-            Self::ConversionError(msg) => write!(f, "Conversion error: {}", msg),
-            Self::ParseError(msg) => write!(f, "Parse error: {}", msg),
-            Self::CalculationError(msg) => write!(f, "Calculation error: {}", msg),
-            Self::InvalidEpoch(msg) => write!(f, "Invalid epoch: {}", msg),
-        }
-    }
-}
-
-impl std::error::Error for TimeError {}
 
 impl From<celestial_core::errors::AstroError> for TimeError {
     fn from(err: celestial_core::errors::AstroError) -> Self {
         Self::CalculationError(err.to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_error_display() {
+        for (error, shown) in [
+            (TimeError::InvalidDate("a".into()), "Invalid date: a"),
+            (
+                TimeError::ConversionError("b".into()),
+                "Conversion error: b",
+            ),
+            (TimeError::ParseError("c".into()), "Parse error: c"),
+            (
+                TimeError::CalculationError("d".into()),
+                "Calculation error: d",
+            ),
+            (TimeError::InvalidEpoch("e".into()), "Invalid epoch: e"),
+        ] {
+            assert_eq!(error.to_string(), shown);
+        }
     }
 }

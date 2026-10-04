@@ -1,37 +1,25 @@
 pub const UNIX_EPOCH_JD: f64 = 2440587.5;
 
-pub const MODIFIED_JULIAN_DATE_EPOCH: f64 = celestial_core::constants::MJD_ZERO_POINT;
+pub(crate) const GPS_TO_TAI_OFFSET_SECONDS: f64 = 19.0;
 
-pub const TAI_TO_TT_OFFSET_SECONDS: f64 = 32.184;
+pub(crate) const TT_TAI_OFFSET: f64 = 32.184;
 
-pub const GPS_TO_TAI_OFFSET_SECONDS: f64 = 19.0;
+pub(crate) const TCG_RATE_LG: f64 = 6.969290134e-10;
 
-pub const SECONDS_TO_DAYS: f64 = 1.0 / celestial_core::constants::SECONDS_PER_DAY_F64;
+pub(crate) const TCB_RATE_LB: f64 = 1.550519768e-8;
 
-pub const TT_MINUS_TAI_SECONDS: f64 = TAI_TO_TT_OFFSET_SECONDS;
+pub(crate) const TDB_OFFSET_1977: f64 = -6.55e-5;
 
-pub const GPS_EPOCH_JD: f64 = 2444244.5;
+pub(crate) const MJD_1977_JAN_1: f64 = 43144.0;
 
-pub const TT_TAI_OFFSET: f64 = 32.184;
-
-pub const TCG_RATE_LG: f64 = 6.969290134e-10;
-
-pub const TCB_RATE_LB: f64 = 1.550519768e-8;
-
-pub const TDB_OFFSET_1977: f64 = -6.55e-5;
-
-pub const MJD_1977_JAN_1: f64 = 43144.0;
-
-pub const TCG_REFERENCE_EPOCH: f64 =
+pub(crate) const TCG_REFERENCE_EPOCH: f64 =
     MJD_1977_JAN_1 + TT_TAI_OFFSET / celestial_core::constants::SECONDS_PER_DAY_F64;
 
-pub const TCG_RATE_RATIO: f64 = TCG_RATE_LG / (1.0 - TCG_RATE_LG);
+pub(crate) const TCG_RATE_RATIO: f64 = TCG_RATE_LG / (1.0 - TCG_RATE_LG);
 
-pub const TCB_RATE_RATIO: f64 = TCB_RATE_LB / (1.0 - TCB_RATE_LB);
+pub(crate) const TCB_RATE_RATIO: f64 = TCB_RATE_LB / (1.0 - TCB_RATE_LB);
 
-pub const TCB_REFERENCE_EPOCH: f64 = TCG_REFERENCE_EPOCH;
-
-pub const TAI_UTC_OFFSETS: &[(i32, i32, f64)] = &[
+pub(crate) const TAI_UTC_OFFSETS: &[(i32, i32, f64)] = &[
     (1960, 1, 1.4178180),
     (1961, 1, 1.4228180),
     (1961, 8, 1.3728180),
@@ -76,13 +64,12 @@ pub const TAI_UTC_OFFSETS: &[(i32, i32, f64)] = &[
     (2017, 1, 37.0),
 ];
 
-pub const UTC_DRIFT_CORRECTIONS: &[(f64, f64)] = &[
+pub(crate) const UTC_DRIFT_CORRECTIONS: &[(f64, f64)] = &[
     (37300.0, 0.0012960),
     (37300.0, 0.0012960),
     (37300.0, 0.0012960),
     (37665.0, 0.0011232),
     (37665.0, 0.0011232),
-    (38761.0, 0.0012960),
     (38761.0, 0.0012960),
     (38761.0, 0.0012960),
     (38761.0, 0.0012960),
@@ -91,42 +78,12 @@ pub const UTC_DRIFT_CORRECTIONS: &[(f64, f64)] = &[
     (38761.0, 0.0012960),
     (38761.0, 0.0012960),
     (39126.0, 0.0025920),
+    (39126.0, 0.0025920),
 ];
 
-pub const PRE_LEAP_SECOND_ENTRIES: usize = 14;
+pub(crate) const PRE_LEAP_SECOND_ENTRIES: usize = 14;
 
-pub const LEAP_SECOND_TABLE: &[(i64, f64)] = &[
-    (63072000, 10.0),
-    (78796800, 11.0),
-    (94694400, 12.0),
-    (126230400, 13.0),
-    (157766400, 14.0),
-    (189302400, 15.0),
-    (220924800, 16.0),
-    (252460800, 17.0),
-    (283996800, 18.0),
-    (315532800, 19.0),
-    (362793600, 20.0),
-    (394329600, 21.0),
-    (425865600, 22.0),
-    (489024000, 23.0),
-    (567993600, 24.0),
-    (631152000, 25.0),
-    (662688000, 26.0),
-    (709948800, 27.0),
-    (741484800, 28.0),
-    (773020800, 29.0),
-    (820454400, 30.0),
-    (867715200, 31.0),
-    (915148800, 32.0),
-    (1136073600, 33.0),
-    (1230768000, 34.0),
-    (1341100800, 35.0),
-    (1435708800, 36.0),
-    (1483228800, 37.0),
-];
-
-pub static FAIRHD: [[f64; 3]; 787] = [
+pub(crate) static FAIRHD: [[f64; 3]; 787] = [
     [1656.674564e-6, 6283.075849991, 6.240054195],
     [22.417471e-6, 5753.384884897, 4.296977442],
     [13.839792e-6, 12566.151699983, 6.196904410],

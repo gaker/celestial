@@ -2,7 +2,8 @@ use crate::{CoordError, CoordResult};
 use celestial_core::constants::{
     ARCSEC_TO_RAD, DAYS_PER_JULIAN_CENTURY, J2000_JD, MILLIARCSEC_TO_RAD, MJD_ZERO_POINT,
 };
-use celestial_time::{transforms::earth_rotation_angle, JulianDate};
+use celestial_time::julian::JulianDate;
+use celestial_time::transforms::rotation::earth_rotation_angle;
 
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};

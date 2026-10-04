@@ -63,35 +63,19 @@ fn quadcube_face_from_xy(x: f64, y: f64) -> (u8, f64, f64, f64, f64) {
     let x_deg = x;
     let y_deg = y;
 
-    let face;
-    let phi_c;
-    let theta_c;
-
-    if y_deg > 45.0 {
-        face = 0;
-        phi_c = 0.0;
-        theta_c = 90.0;
+    let (face, phi_c, theta_c) = if y_deg > 45.0 {
+        (0, 0.0, 90.0)
     } else if y_deg < -45.0 {
-        face = 5;
-        phi_c = 0.0;
-        theta_c = -90.0;
+        (5, 0.0, -90.0)
     } else if (-45.0..45.0).contains(&x_deg) {
-        face = 1;
-        phi_c = 0.0;
-        theta_c = 0.0;
+        (1, 0.0, 0.0)
     } else if (45.0..135.0).contains(&x_deg) {
-        face = 2;
-        phi_c = 90.0;
-        theta_c = 0.0;
+        (2, 90.0, 0.0)
     } else if !(-135.0..135.0).contains(&x_deg) {
-        face = 3;
-        phi_c = 180.0;
-        theta_c = 0.0;
+        (3, 180.0, 0.0)
     } else {
-        face = 4;
-        phi_c = -90.0;
-        theta_c = 0.0;
-    }
+        (4, -90.0, 0.0)
+    };
 
     (face, phi_c, theta_c, x_deg - phi_c, y_deg - theta_c)
 }

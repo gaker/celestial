@@ -28,11 +28,8 @@ pub enum WcsError {
     #[error("Non-invertible matrix (determinant = {determinant})")]
     NonInvertibleMatrix { determinant: f64 },
 
-    #[error("Coordinate error: {source}")]
-    CoordinateError {
-        #[from]
-        source: celestial_coords::CoordError,
-    },
+    #[error("Coordinate error: {0}")]
+    CoordinateError(#[from] celestial_coords::CoordError),
 }
 
 impl WcsError {

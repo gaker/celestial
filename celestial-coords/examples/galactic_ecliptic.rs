@@ -1,10 +1,10 @@
 use celestial_coords::frames::{EclipticPosition, GalacticPosition, ICRSPosition};
 use celestial_coords::transforms::CoordinateFrame;
 use celestial_coords::Distance;
-use celestial_time::tt_from_calendar;
+use celestial_time::scales::tt::tt_from_calendar;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let tt = tt_from_calendar(2024, 6, 21, 12, 0, 0.0); // Summer solstice 2024
+    let tt = tt_from_calendar(2024, 6, 21, 12, 0, 0.0)?; // Summer solstice 2024
 
     // --- Galactic coordinates ---
     // The galactic frame is fixed (IAU 1958 definition, refined by Hipparcos).

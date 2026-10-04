@@ -1,5 +1,5 @@
 use celestial_core::constants::{DEG_TO_RAD, RAD_TO_DEG};
-use celestial_time::JulianDate;
+use celestial_time::julian::JulianDate;
 
 use super::catalog::Catalog;
 use super::cone::{cone_search, ConeSearchParams};

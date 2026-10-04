@@ -14,7 +14,7 @@
 //!
 //! Where:
 //! - `L_B = 1.550519768e-8` (IAU 2006, exact by definition)
-//! - `T0 = 1977 January 1, 0h TAI` (MJD 43144.0, the common reference epoch)
+//! - `T0 = 1977 January 1, 0h TAI` (MJD 43144.0003725 in TT/TCG/TCB, the common reference epoch)
 //! - `TDB_0 = -6.55e-5 seconds` (offset to align TDB with TT at J2000.0 on average)
 //!
 //! The L_B value represents the average fractional rate difference between TCB and TDB.
@@ -39,28 +39,28 @@
 //! In practice:
 //! - TCB is used in relativistic equations of motion
 //! - TDB is used in JPL ephemerides (DE series) and for practical timekeeping
-//! - The difference grows linearly: ~17 seconds at J2000.0 relative to 1977
+//! - The difference grows linearly: ~11.25 seconds at J2000.0 relative to 1977
 //!
 //! # Precision
 //!
-//! Round-trip conversions (TCB -> TDB -> TCB or TDB -> TCB -> TDB) achieve sub-picosecond
-//! accuracy. The implementation applies corrections to the smaller-magnitude Julian Date
+//! Round-trip conversions (TCB -> TDB -> TCB or TDB -> TCB -> TDB) come back within
+//! 1 ulp of jd2 (at most ~10 ps). The implementation applies corrections to the smaller-magnitude Julian Date
 //! component to preserve precision.
 //!
 //! # Usage
 //!
 //! ```
-//! use celestial_time::scales::{TCB, TDB};
-//! use celestial_time::scales::conversions::{TcbToTdb, TdbToTcb};
+//! use celestial_time::scales::tcb::TCB;
+//! use celestial_time::scales::tdb::TDB;
+//! use celestial_time::scales::conversions::tcb_tdb::{TcbToTdb, TdbToTcb};
 //! use celestial_time::julian::JulianDate;
 //! use celestial_core::constants::J2000_JD;
 //!
 //! let tcb = TCB::from_julian_date(JulianDate::new(J2000_JD, 0.0));
 //! let tdb = tcb.tcb_to_tdb().unwrap();
 //!
-//! // At J2000.0, TDB is about 11.3 ms behind TCB (accumulated since 1977)
-//! let offset_days = tdb.to_julian_date().to_f64() - tcb.to_julian_date().to_f64();
-//! assert!(offset_days < 0.0, "TDB should be behind TCB after 1977");
+//! // At J2000.0, TDB is about 11.25 s behind TCB (accumulated since 1977)
+//! assert_eq!(tdb.to_julian_date(), JulianDate::new(J2000_JD, -0.00013025216543700573));
 //! ```
 //!
 //! # References
@@ -69,34 +69,24 @@
 //! - IERS Conventions (2010), Chapter 10: General Relativistic Models for Time
 //! - Soffel et al. (2003): The IAU 2000 Resolutions for Astrometry
 
-use crate::constants::TT_TAI_OFFSET;
-use crate::julian::JulianDate;
-use crate::scales::{TCB, TDB};
+use crate::constants::{
+    MJD_1977_JAN_1, TCB_RATE_LB, TCB_RATE_RATIO, TDB_OFFSET_1977, TT_TAI_OFFSET,
+};
+use crate::julian::finite_jd;
+use crate::scales::tcb::TCB;
+use crate::scales::tdb::TDB;
 use crate::TimeResult;
 use celestial_core::constants::{MJD_ZERO_POINT, SECONDS_PER_DAY_F64};
 
-/// L_B rate factor from IAU 2006 Resolution B3.
-/// Represents the fractional rate difference: TCB runs faster than TDB by this amount.
-const TCB_RATE: f64 = 1.550519768e-8;
-
-/// MJD of the reference epoch: 1977 January 1, 0h TAI.
-const MJD_1977: f64 = 43144.0;
-
-/// TDB_0 offset in seconds. Chosen so TDB matches TT rate on average at geocenter.
-const TDB_OFFSET: f64 = -6.55e-5;
-
-/// Reference epoch as full Julian Date (MJD_ZERO_POINT + MJD_1977).
-const T77TD: f64 = MJD_ZERO_POINT + MJD_1977;
+/// Reference epoch as full Julian Date (MJD_ZERO_POINT + MJD_1977_JAN_1).
+const T77TD: f64 = MJD_ZERO_POINT + MJD_1977_JAN_1;
 
 /// TT-TAI offset in days (32.184s / 86400), for epoch alignment.
 const T77TF: f64 = TT_TAI_OFFSET / SECONDS_PER_DAY_F64;
 
-/// TDB_0 offset in days (-6.55e-5s / 86400).
-const TDB0: f64 = TDB_OFFSET / SECONDS_PER_DAY_F64;
-
-/// Derived rate ratio: L_B / (1 - L_B).
-/// Used for TDB -> TCB conversion to invert the rate scaling.
-const TCB_RATE_RATIO: f64 = TCB_RATE / (1.0 - TCB_RATE);
+/// TDB_0 offset in days (-6.55e-5s / 86400). L_B matches the rate; this offset
+/// keeps TDB-TT near zero at the geocenter.
+const TDB0: f64 = TDB_OFFSET_1977 / SECONDS_PER_DAY_F64;
 
 /// Convert Barycentric Coordinate Time (TCB) to Barycentric Dynamical Time (TDB).
 ///
@@ -107,7 +97,7 @@ pub trait TcbToTdb {
     ///
     /// Applies: `TDB = TCB - L_B * (TCB - T0) + TDB_0`
     ///
-    /// At J2000.0, TDB is approximately 11 milliseconds behind TCB due to the
+    /// At J2000.0, TDB is approximately 11.25 seconds behind TCB due to the
     /// accumulated rate difference since 1977.
     fn tcb_to_tdb(&self) -> TimeResult<TDB>;
 }
@@ -120,7 +110,7 @@ pub trait TdbToTcb {
     /// Convert TDB to TCB.
     ///
     /// Applies the inverse transformation using the derived rate ratio.
-    /// At J2000.0, TCB is approximately 11 milliseconds ahead of TDB.
+    /// At J2000.0, TCB is approximately 11.25 seconds ahead of TDB.
     fn tdb_to_tcb(&self) -> TimeResult<TCB>;
 }
 
@@ -132,23 +122,11 @@ impl TcbToTdb for TCB {
     ///
     /// Applies the correction to the smaller-magnitude JD component for precision.
     fn tcb_to_tdb(&self) -> TimeResult<TDB> {
-        let tcb_jd = self.to_julian_date();
-        let (tcb1, tcb2) = (tcb_jd.jd1(), tcb_jd.jd2());
-
-        let (big, small) = if tcb1.abs() > tcb2.abs() {
-            (tcb1, tcb2)
-        } else {
-            (tcb2, tcb1)
-        };
-        let d = big - T77TD;
-        let corrected = small + TDB0 - (d + (small - T77TF)) * TCB_RATE;
-        let (tdb1, tdb2) = if tcb1.abs() > tcb2.abs() {
-            (big, corrected)
-        } else {
-            (corrected, big)
-        };
-
-        Ok(TDB::from_julian_date(JulianDate::new(tdb1, tdb2)))
+        let tcb_jd = finite_jd(self.to_julian_date())?;
+        let tdb_jd = tcb_jd.map_smaller_part(|big, small| {
+            small + TDB0 - ((big - T77TD) + (small - T77TF)) * TCB_RATE_LB
+        });
+        Ok(TDB::from_julian_date(tdb_jd))
     }
 }
 
@@ -160,126 +138,90 @@ impl TdbToTcb for TDB {
     ///
     /// Applies the correction to the smaller-magnitude JD component for precision.
     fn tdb_to_tcb(&self) -> TimeResult<TCB> {
-        let tdb_jd = self.to_julian_date();
-        let (tdb1, tdb2) = (tdb_jd.jd1(), tdb_jd.jd2());
-
-        let (big, small) = if tdb1.abs() > tdb2.abs() {
-            (tdb1, tdb2)
-        } else {
-            (tdb2, tdb1)
-        };
-        let d = T77TD - big;
-        let f = small - TDB0;
-        let corrected = f - (d - (f - T77TF)) * TCB_RATE_RATIO;
-        let (tcb1, tcb2) = if tdb1.abs() > tdb2.abs() {
-            (big, corrected)
-        } else {
-            (corrected, big)
-        };
-
-        Ok(TCB::from_julian_date(JulianDate::new(tcb1, tcb2)))
+        let tdb_jd = finite_jd(self.to_julian_date())?;
+        let tcb_jd = tdb_jd.map_smaller_part(|big, small| {
+            let f = small - TDB0;
+            f - ((T77TD - big) - (f - T77TF)) * TCB_RATE_RATIO
+        });
+        Ok(TCB::from_julian_date(tcb_jd))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::julian::JulianDate;
+    use crate::TimeError;
     use celestial_core::constants::J2000_JD;
 
     #[test]
-    fn test_tcb_tdb_relationship() {
-        // Identity conversions
+    fn test_tcb_tdb_matches_erfa() {
+        // eraTcbtdb and eraTdbtcb at J2000.0, where TCB is about 11.25 s ahead.
         let tcb = TCB::from_julian_date(JulianDate::new(J2000_JD, 0.0));
-        let tdb = tcb.tcb_to_tdb().unwrap();
-        let tcb_jd = tcb.to_julian_date();
-        let tdb_jd = tdb.to_julian_date();
-
-        // TCB runs faster than TDB, so at J2000 (after 1977 epoch), TDB < TCB
-        assert!(
-            tdb_jd.to_f64() < tcb_jd.to_f64(),
-            "TDB should be behind TCB at J2000"
+        assert_eq!(
+            tcb.tcb_to_tdb().unwrap().to_julian_date().parts(),
+            (J2000_JD, -0.00013025216543700573)
         );
-
-        // Verify inverse relationship holds
         let tdb = TDB::from_julian_date(JulianDate::new(J2000_JD, 0.0));
-        let tcb = tdb.tdb_to_tcb().unwrap();
-        let tdb_jd = tdb.to_julian_date();
-        let tcb_jd = tcb.to_julian_date();
-
-        assert!(
-            tcb_jd.to_f64() > tdb_jd.to_f64(),
-            "TCB should be ahead of TDB at J2000"
+        assert_eq!(
+            tdb.tdb_to_tcb().unwrap().to_julian_date().parts(),
+            (J2000_JD, 0.00013025216745659132)
         );
     }
 
     #[test]
-    fn test_tcb_tdb_round_trip_precision() {
-        // TCB/TDB conversions involve rate scaling. 1e-14 days = ~1 picosecond tolerance.
-        const TOLERANCE_DAYS: f64 = 1e-14;
+    fn test_tcb_tdb_round_trip_matches_erfa() {
+        // eraTcbtdb then eraTdbtcb, and the reverse. Only TDB at the (JD, 0) split
+        // doesn't come back exactly, by under 3e-20 d.
+        let cases = [
+            (J2000_JD, 0.0, 0.0, -2.710505431213761e-20),
+            (J2000_JD, 0.5, 0.5, 0.5),
+            (
+                J2000_JD,
+                0.123456789012345,
+                0.123456789012345,
+                0.123456789012345,
+            ),
+            (
+                J2000_JD,
+                -0.123456789012345,
+                -0.123456789012345,
+                -0.123456789012345,
+            ),
+            (J2000_JD, 0.987654321, 0.987654321, 0.987654321),
+        ];
+        for (jd1, jd2, tcb_back, tdb_back) in cases {
+            let tcb = TCB::from_julian_date(JulianDate::new(jd1, jd2));
+            let back = tcb.tcb_to_tdb().unwrap().tdb_to_tcb().unwrap();
+            assert_eq!(back.to_julian_date().parts(), (jd1, tcb_back));
 
-        let test_jd2_values = [0.0, 0.5, 0.123456789012345, -0.123456789012345, 0.987654321];
-
-        for jd2 in test_jd2_values {
-            // TCB -> TDB -> TCB
-            let original_tcb = TCB::from_julian_date(JulianDate::new(J2000_JD, jd2));
-            let tdb = original_tcb.tcb_to_tdb().unwrap();
-            let round_trip_tcb = tdb.tdb_to_tcb().unwrap();
-
-            assert_eq!(
-                original_tcb.to_julian_date().jd1(),
-                round_trip_tcb.to_julian_date().jd1(),
-                "TCB->TDB->TCB JD1 must be exact for jd2={}",
-                jd2
-            );
-            let jd2_diff =
-                (original_tcb.to_julian_date().jd2() - round_trip_tcb.to_julian_date().jd2()).abs();
-            assert!(
-                jd2_diff <= TOLERANCE_DAYS,
-                "TCB->TDB->TCB JD2 diff {} exceeds tolerance {} for jd2={}",
-                jd2_diff,
-                TOLERANCE_DAYS,
-                jd2
-            );
-
-            // TDB -> TCB -> TDB
-            let original_tdb = TDB::from_julian_date(JulianDate::new(J2000_JD, jd2));
-            let tcb = original_tdb.tdb_to_tcb().unwrap();
-            let round_trip_tdb = tcb.tcb_to_tdb().unwrap();
-
-            assert_eq!(
-                original_tdb.to_julian_date().jd1(),
-                round_trip_tdb.to_julian_date().jd1(),
-                "TDB->TCB->TDB JD1 must be exact for jd2={}",
-                jd2
-            );
-            let jd2_diff =
-                (original_tdb.to_julian_date().jd2() - round_trip_tdb.to_julian_date().jd2()).abs();
-            assert!(
-                jd2_diff <= TOLERANCE_DAYS,
-                "TDB->TCB->TDB JD2 diff {} exceeds tolerance {} for jd2={}",
-                jd2_diff,
-                TOLERANCE_DAYS,
-                jd2
-            );
+            let tdb = TDB::from_julian_date(JulianDate::new(jd1, jd2));
+            let back = tdb.tdb_to_tcb().unwrap().tcb_to_tdb().unwrap();
+            assert_eq!(back.to_julian_date().parts(), (jd1, tdb_back));
         }
 
-        // Alternate JD split case (jd2 > jd1)
-        let alt_tcb = TCB::from_julian_date(JulianDate::new(0.5, J2000_JD));
-        let alt_tdb = alt_tcb.tcb_to_tdb().unwrap();
-        let alt_round_trip = alt_tdb.tdb_to_tcb().unwrap();
+        let tcb = TCB::from_julian_date(JulianDate::new(0.5, J2000_JD));
+        let back = tcb.tcb_to_tdb().unwrap().tdb_to_tcb().unwrap();
+        assert_eq!(back.to_julian_date().parts(), tcb.to_julian_date().parts());
+        let tdb = TDB::from_julian_date(JulianDate::new(0.5, J2000_JD));
+        let back = tdb.tdb_to_tcb().unwrap().tcb_to_tdb().unwrap();
+        assert_eq!(back.to_julian_date().parts(), tdb.to_julian_date().parts());
+    }
 
-        assert_eq!(
-            alt_tcb.to_julian_date().jd1(),
-            alt_round_trip.to_julian_date().jd1(),
-            "Alternate split TCB->TDB->TCB JD1 must be exact"
-        );
-        let jd2_diff =
-            (alt_tcb.to_julian_date().jd2() - alt_round_trip.to_julian_date().jd2()).abs();
-        assert!(
-            jd2_diff <= TOLERANCE_DAYS,
-            "Alternate split TCB->TDB->TCB JD2 diff {} exceeds tolerance {}",
-            jd2_diff,
-            TOLERANCE_DAYS
-        );
+    #[test]
+    fn test_non_finite_julian_date_is_rejected() {
+        for bad in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            let jd = JulianDate::new(bad, 0.0);
+            let expected =
+                TimeError::InvalidEpoch(format!("Julian Date ({}, 0) is not finite", bad));
+            assert_eq!(
+                TCB::from_julian_date(jd).tcb_to_tdb().unwrap_err(),
+                expected
+            );
+            assert_eq!(
+                TDB::from_julian_date(jd).tdb_to_tcb().unwrap_err(),
+                expected
+            );
+        }
     }
 }

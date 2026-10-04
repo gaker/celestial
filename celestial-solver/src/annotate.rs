@@ -340,7 +340,7 @@ mod tests {
     }
 
     fn any_pixel_matches(ann: &Annotation, color: [u8; 3]) -> bool {
-        ann.rgb.chunks_exact(3).any(|c| c == color)
+        ann.rgb.as_chunks::<3>().0.contains(&color)
     }
 
     #[test]
@@ -440,8 +440,10 @@ mod tests {
 
         let count_magenta = |ann: &Annotation| {
             ann.rgb
-                .chunks_exact(3)
-                .filter(|c| *c == COLOR_RESIDUAL)
+                .as_chunks::<3>()
+                .0
+                .iter()
+                .filter(|&&c| c == COLOR_RESIDUAL)
                 .count()
         };
         assert!(count_magenta(&long) > count_magenta(&short));

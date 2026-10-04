@@ -1,75 +1,80 @@
+use super::conversions::utc_tai::calendar_to_julian;
+use crate::constants::{PRE_LEAP_SECOND_ENTRIES, TAI_UTC_OFFSETS, UTC_DRIFT_CORRECTIONS};
 use crate::{TimeError, TimeResult};
 
-pub fn get_tai_utc_offset(year: i32, month: i32, day: i32, fraction: f64) -> f64 {
-    use crate::constants::{PRE_LEAP_SECOND_ENTRIES, TAI_UTC_OFFSETS, UTC_DRIFT_CORRECTIONS};
+// The calendar arithmetic needs iypmy + 4800 >= 0; ERFA's cal2jd has the same limit.
+const MIN_CALENDAR_YEAR: i32 = -4799;
 
+pub fn get_tai_utc_offset(year: i32, month: i32, day: i32, fraction: f64) -> TimeResult<f64> {
     if !(0.0..=1.0).contains(&fraction) {
-        return 0.0;
+        return Err(TimeError::ConversionError(format!(
+            "Day fraction {} is outside [0, 1]",
+            fraction
+        )));
     }
-
-    let my = (month - 14) / 12;
-    let iypmy = year + my;
-    let modified_jd = ((1461 * (iypmy + 4800)) / 4 + (367 * (month - 2 - 12 * my)) / 12
-        - (3 * ((iypmy + 4900) / 100)) / 4
-        + day
-        - 2432076) as f64;
-
-    if year < TAI_UTC_OFFSETS[0].0 {
-        return 0.0;
-    }
-
-    let m = 12 * year + month;
-
-    let i = match TAI_UTC_OFFSETS
-        .binary_search_by(|&(entry_year, entry_month, _)| (12 * entry_year + entry_month).cmp(&m))
-    {
-        Ok(idx) => idx, // Exact match found
-        Err(idx) => {
-            if idx == 0 {
-                return 0.0; // Before the first entry
-            }
-            idx - 1 // Use the entry just before the insertion point
-        }
+    let (_, modified_jd) = calendar_to_julian(year, month, day)?;
+    let Some(i) = offset_table_index(year, month) else {
+        return Ok(0.0);
     };
 
     let mut tai_minus_utc = TAI_UTC_OFFSETS[i].2;
-
     if i < PRE_LEAP_SECOND_ENTRIES {
         let (drift_mjd, drift_rate) = UTC_DRIFT_CORRECTIONS[i];
         tai_minus_utc += (modified_jd + fraction - drift_mjd) * drift_rate;
     }
-
-    tai_minus_utc
+    Ok(tai_minus_utc)
 }
 
-pub fn next_calendar_day(year: i32, month: i32, day: i32) -> TimeResult<(i32, i32, i32)> {
-    let days_in_month = match month {
-        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
-        4 | 6 | 9 | 11 => 30,
-        2 => {
-            if is_leap_year(year) {
-                29
-            } else {
-                28
-            }
-        }
-        _ => {
-            return Err(TimeError::ConversionError(format!(
-                "Invalid month: {}",
-                month
-            )))
-        }
-    };
+fn offset_table_index(year: i32, month: i32) -> Option<usize> {
+    match TAI_UTC_OFFSETS.binary_search_by(|&(entry_year, entry_month, _)| {
+        (entry_year, entry_month).cmp(&(year, month))
+    }) {
+        Ok(i) => Some(i),
+        Err(i) => i.checked_sub(1),
+    }
+}
 
-    if day < days_in_month {
+pub(crate) fn next_calendar_day(year: i32, month: i32, day: i32) -> TimeResult<(i32, i32, i32)> {
+    validate_calendar_date(year, month, day)?;
+    if Some(day) != days_in_month(year, month) {
         Ok((year, month, day + 1))
     } else if month < 12 {
         Ok((year, month + 1, 1))
     } else {
-        Ok((year + 1, 1, 1))
+        let next_year = year
+            .checked_add(1)
+            .ok_or_else(|| invalid_date(year, month, day, "the next day is out of range"))?;
+        Ok((next_year, 1, 1))
     }
 }
 
-pub fn is_leap_year(year: i32) -> bool {
+pub(crate) fn validate_calendar_date(year: i32, month: i32, day: i32) -> TimeResult<()> {
+    if year < MIN_CALENDAR_YEAR {
+        return Err(invalid_date(year, month, day, "year is before -4799"));
+    }
+    match days_in_month(year, month) {
+        None => Err(invalid_date(year, month, day, "month is out of range")),
+        Some(last) if !(1..=last).contains(&day) => {
+            Err(invalid_date(year, month, day, "day is out of range"))
+        }
+        Some(_) => Ok(()),
+    }
+}
+
+fn days_in_month(year: i32, month: i32) -> Option<i32> {
+    match month {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => Some(31),
+        4 | 6 | 9 | 11 => Some(30),
+        2 if is_leap_year(year) => Some(29),
+        2 => Some(28),
+        _ => None,
+    }
+}
+
+fn invalid_date(year: i32, month: i32, day: i32, reason: &str) -> TimeError {
+    TimeError::InvalidDate(format!("{:04}-{:02}-{:02}: {}", year, month, day, reason))
+}
+
+fn is_leap_year(year: i32) -> bool {
     (year % 4 == 0) && (year % 100 != 0 || year % 400 == 0)
 }

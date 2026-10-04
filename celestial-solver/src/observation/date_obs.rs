@@ -4,7 +4,7 @@ use celestial_images::formats::Image;
 ///
 /// Returns the header value verbatim — no parsing, no normalization. Returns `None` if
 /// `DATE-OBS` is missing or non-string. Use [`crate::metadata::jd_from_image`] when
-/// you need a parsed [`celestial_time::JulianDate`].
+/// you need a parsed [`celestial_time::julian::JulianDate`].
 ///
 /// # Examples
 ///

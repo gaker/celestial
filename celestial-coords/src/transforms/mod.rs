@@ -1,7 +1,7 @@
 pub mod cartesian;
 
 use crate::{frames::ICRSPosition, CoordResult};
-use celestial_time::TT;
+use celestial_time::scales::tt::TT;
 
 pub use cartesian::CartesianFrame;
 

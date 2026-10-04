@@ -1,5 +1,5 @@
 use celestial_core::angle::Angle;
-use celestial_time::JulianDate;
+use celestial_time::julian::JulianDate;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MountType {

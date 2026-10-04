@@ -2,7 +2,7 @@ use crate::{CoordResult, ICRSPosition};
 use celestial_core::angle::Angle;
 use celestial_core::angle::{wrap_0_2pi, wrap_pm_pi};
 use celestial_core::constants::{DEG_TO_RAD, J2000_JD};
-use celestial_time::TT;
+use celestial_time::scales::tt::TT;
 
 const LUNAR_AXIAL_INCLINATION_DEG: f64 = 1.5424;
 const LUNAR_AXIAL_INCLINATION_RAD: f64 = LUNAR_AXIAL_INCLINATION_DEG * DEG_TO_RAD;

@@ -6,7 +6,7 @@ use celestial_core::{
     constants::{DAYS_PER_JULIAN_YEAR, J2000_JD, SPEED_OF_LIGHT_AU_PER_DAY, TWOPI},
     matrix::Vector3,
 };
-use celestial_time::TT;
+use celestial_time::scales::tt::TT;
 use coefficients::Coefficients;
 
 pub struct EarthState {
@@ -390,7 +390,7 @@ mod tests {
     }
 
     fn spring_equinox_tt() -> TT {
-        TT::from_julian_date(celestial_time::JulianDate::from_f64(2460389.5))
+        TT::from_julian_date(celestial_time::julian::JulianDate::from_f64(2460389.5))
     }
 
     fn arcsec_diff(a: Angle, b: Angle) -> f64 {

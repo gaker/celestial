@@ -272,12 +272,18 @@ impl KeywordBuilder {
         self
     }
 
-    pub fn date_from_utc(&mut self, utc: &celestial_time::UTC) -> &mut Self {
-        self.date(utc.to_iso8601())
+    pub fn date_from_utc(
+        &mut self,
+        utc: &celestial_time::scales::utc::UTC,
+    ) -> celestial_time::TimeResult<&mut Self> {
+        Ok(self.date(utc.to_iso8601()?))
     }
 
-    pub fn date_obs_from_utc(&mut self, utc: &celestial_time::UTC) -> &mut Self {
-        self.date_obs(utc.to_iso8601())
+    pub fn date_obs_from_utc(
+        &mut self,
+        utc: &celestial_time::scales::utc::UTC,
+    ) -> celestial_time::TimeResult<&mut Self> {
+        Ok(self.date_obs(utc.to_iso8601()?))
     }
 
     pub fn object<S: Into<String>>(&mut self, name: S) -> &mut Self {
@@ -844,9 +850,9 @@ mod tests {
     #[test]
     fn keyword_builder_date_from_utc() {
         use crate::core::BitPix;
-        let utc = celestial_time::UTC::j2000();
+        let utc = celestial_time::scales::utc::UTC::j2000();
         let mut builder = KeywordBuilder::from_image([100, 100], BitPix::F32);
-        builder.date_from_utc(&utc);
+        builder.date_from_utc(&utc).unwrap();
         let keywords = builder.build();
 
         let date_kw = keywords.iter().find(|k| k.name == "DATE").unwrap();

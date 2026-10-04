@@ -22,14 +22,18 @@
 //! `from_julian_date` or `*_from_calendar` helper functions:
 //!
 //! ```
-//! use celestial_time::{JulianDate, TAI, TT, UTC};
-//! use celestial_time::scales::{tai_from_calendar, tt_from_calendar};
+//! use celestial_time::julian::JulianDate;
+//! use celestial_time::scales::tai::TAI;
+//! use celestial_time::scales::tt::TT;
+//! use celestial_time::scales::utc::UTC;
+//! use celestial_time::scales::tai::tai_from_calendar;
+//! use celestial_time::scales::tt::tt_from_calendar;
 //!
 //! // From Julian Date
 //! let tai = TAI::from_julian_date(JulianDate::new(2451545.0, 0.0));
 //!
 //! // From calendar components
-//! let tt = tt_from_calendar(2000, 1, 1, 12, 0, 0.0);
+//! let tt = tt_from_calendar(2000, 1, 1, 12, 0, 0.0).unwrap();
 //! ```
 //!
 //! # Conversions
@@ -37,7 +41,10 @@
 //! Convert between scales using traits from the [`conversions`] submodule:
 //!
 //! ```
-//! use celestial_time::{JulianDate, GPS, TAI, TT};
+//! use celestial_time::julian::JulianDate;
+//! use celestial_time::scales::gps::GPS;
+//! use celestial_time::scales::tai::TAI;
+//! use celestial_time::scales::tt::TT;
 //! use celestial_time::scales::conversions::{ToTAI, ToTT, ToGPS};
 //!
 //! let tai = TAI::from_julian_date(JulianDate::new(2451545.0, 0.0));
@@ -45,14 +52,17 @@
 //! let gps = tai.to_gps().unwrap();
 //! ```
 //!
-//! Some conversions chain through intermediate scales internally. For example,
-//! GPS to TT converts GPS -> TAI -> TT.
+//! Scales without a direct conversion go through an intermediate one. For
+//! example, GPS to TT is `gps.to_tai()?.to_tt()`.
 //!
 //! # Precision
 //!
 //! All time scales use split Julian Date storage (jd1, jd2) to preserve
-//! nanosecond precision. When adding offsets, the offset is applied to
-//! the smaller-magnitude component.
+//! nanosecond precision. When adding time, the fraction of a day goes into
+//! jd2 and whole days are carried into jd1.
+
+#[macro_use]
+mod macros;
 
 pub mod common;
 pub mod conversions;
@@ -64,22 +74,3 @@ pub mod tdb;
 pub mod tt;
 pub mod ut1;
 pub mod utc;
-
-pub use gps::gps_from_calendar;
-pub use gps::GPS;
-pub use tai::tai_from_calendar;
-pub use tai::TAI;
-pub use tcb::tcb_from_calendar;
-pub use tcb::TCB;
-pub use tcg::tcg_from_calendar;
-pub use tcg::TCG;
-pub use tdb::tdb_from_calendar;
-pub use tdb::TDB;
-pub use tt::tt_from_calendar;
-pub use tt::TT;
-pub use ut1::ut1_from_calendar;
-pub use ut1::UT1;
-pub use utc::utc_from_calendar;
-pub use utc::UTC;
-
-pub use conversions::{ToTAI, ToTCB, ToTCG, ToTCGFromTCB, ToTDB, ToTT, ToTTFromTDB};

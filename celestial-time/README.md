@@ -29,7 +29,9 @@ celestial-time = "0.1"
 ## Example
 
 ```rust
-use celestial_time::{utc_from_calendar, ToTAI, ToTT, GMST};
+use celestial_time::scales::conversions::{ToTAI, ToTT};
+use celestial_time::scales::utc::utc_from_calendar;
+use celestial_time::sidereal::gmst::GMST;
 
 // Create UTC from calendar date
 let utc = utc_from_calendar(2024, 6, 15, 12, 0, 0.0).unwrap();

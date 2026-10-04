@@ -477,7 +477,8 @@ mod tests {
     fn test_roundtrip_across_surface_types() {
         // All three basis types share the same Newton-Raphson inverse, so a
         // single sweep covers the polynomial, Chebyshev and Legendre paths.
-        let cases: &[(SurfaceType, [f64; 9], &[(f64, f64)])] = &[
+        type Case = (SurfaceType, [f64; 9], &'static [(f64, f64)]);
+        let cases: &[Case] = &[
             (
                 SurfaceType::Polynomial,
                 [0.0, 0.001, 0.0, 0.0, 0.0, 0.001, 0.0, 0.0, 0.0],

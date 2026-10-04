@@ -1,7 +1,7 @@
 use crate::planets::Vsop2013Saturn;
 use celestial_core::constants::{AU_KM, J2000_JD};
 use celestial_time::julian::JulianDate;
-use celestial_time::TDB;
+use celestial_time::scales::tdb::TDB;
 
 const SATURN_VSOP2013_REF: &[(f64, f64, f64, f64)] = &[
     (2411545.0, -8.5151099046, 3.2825565780, 1.7200893604),

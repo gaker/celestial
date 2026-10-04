@@ -2,7 +2,8 @@ use celestial_coords::eop::record::EopRecord;
 use celestial_coords::frames::{CIRSPosition, ICRSPosition};
 use celestial_coords::transforms::CoordinateFrame;
 use celestial_coords::{Distance, EopProvider, Location};
-use celestial_time::{tt_from_calendar, ToTAI, ToUTC};
+use celestial_time::scales::conversions::{ToTAI, ToUTC};
+use celestial_time::scales::tt::tt_from_calendar;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // --- Setup: observer, time, EOP ---
@@ -11,7 +12,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let observer = Location::from_degrees(30.6714, -104.0225, 2070.0)?;
 
     // 2023-06-15 03:00:00 TT (nighttime in Texas)
-    let tt = tt_from_calendar(2023, 6, 15, 3, 0, 0.0);
+    let tt = tt_from_calendar(2023, 6, 15, 3, 0, 0.0)?;
     let utc = tt.to_tai()?.to_utc()?;
     println!("Epoch: TT JD = {:.6}", tt.to_julian_date().to_f64());
     println!("       UTC JD = {:.6}", utc.to_julian_date().to_f64());

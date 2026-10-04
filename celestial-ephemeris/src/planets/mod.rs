@@ -9,7 +9,7 @@ use crate::earth::Vsop2013Earth;
 use crate::planetary_coefficients::*;
 
 use celestial_time::julian::JulianDate;
-use celestial_time::TDB;
+use celestial_time::scales::tdb::TDB;
 
 const DT_DAYS: f64 = 1.0 / celestial_core::constants::SECONDS_PER_DAY_F64;
 

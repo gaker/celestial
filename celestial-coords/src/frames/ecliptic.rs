@@ -1,6 +1,7 @@
 use crate::{transforms::CoordinateFrame, CoordResult, Distance, ICRSPosition};
 use celestial_core::{angle::Angle, matrix::RotationMatrix3};
-use celestial_time::{transforms::PrecessionCalculator, TT};
+use celestial_time::scales::tt::TT;
+use celestial_time::transforms::precession::PrecessionCalculator;
 
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};

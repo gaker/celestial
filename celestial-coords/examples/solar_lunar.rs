@@ -5,7 +5,7 @@ use celestial_coords::lunar::compute_lunar_orientation;
 use celestial_coords::solar::{
     carrington_rotation_number, compute_solar_orientation, sun_earth_distance,
 };
-use celestial_time::tt_from_calendar;
+use celestial_time::scales::tt::tt_from_calendar;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // --- Solar orientation ---
@@ -13,8 +13,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // L0: Carrington longitude of central meridian
     // P:  position angle of the solar rotation axis
 
-    let solstice = tt_from_calendar(2024, 6, 21, 12, 0, 0.0);
-    let equinox = tt_from_calendar(2024, 3, 20, 3, 6, 0.0);
+    let solstice = tt_from_calendar(2024, 6, 21, 12, 0, 0.0)?;
+    let equinox = tt_from_calendar(2024, 3, 20, 3, 6, 0.0)?;
 
     println!("=== Solar Orientation ===\n");
 
@@ -97,19 +97,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let dates = [
         (
             "New Moon ~2024-01-11",
-            tt_from_calendar(2024, 1, 11, 12, 0, 0.0),
+            tt_from_calendar(2024, 1, 11, 12, 0, 0.0)?,
         ),
         (
             "Full Moon ~2024-01-25",
-            tt_from_calendar(2024, 1, 25, 17, 0, 0.0),
+            tt_from_calendar(2024, 1, 25, 17, 0, 0.0)?,
         ),
         (
             "New Moon ~2024-02-09",
-            tt_from_calendar(2024, 2, 9, 23, 0, 0.0),
+            tt_from_calendar(2024, 2, 9, 23, 0, 0.0)?,
         ),
         (
             "Full Moon ~2024-06-22",
-            tt_from_calendar(2024, 6, 22, 1, 0, 0.0),
+            tt_from_calendar(2024, 6, 22, 1, 0, 0.0)?,
         ),
     ];
 

@@ -11,9 +11,10 @@ use celestial_core::{
     angle::Angle,
     matrix::{RotationMatrix3, Vector3},
 };
-use celestial_time::{
-    scales::conversions::ToUT1WithDeltaT, sidereal::GAST, transforms::NutationCalculator, TT,
-};
+use celestial_time::scales::conversions::ut1_tai::ToUT1WithDeltaT;
+use celestial_time::scales::tt::TT;
+use celestial_time::sidereal::gast::GAST;
+use celestial_time::transforms::nutation::NutationCalculator;
 
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
@@ -439,8 +440,10 @@ mod tests {
     fn test_aberration_varies_with_epoch() {
         let icrs = ICRSPosition::from_degrees(180.0, 45.0).unwrap();
 
-        let epoch_jan = TT::from_julian_date(celestial_time::JulianDate::new(2451545.0, 0.0));
-        let epoch_jul = TT::from_julian_date(celestial_time::JulianDate::new(2451545.0, 182.5));
+        let epoch_jan =
+            TT::from_julian_date(celestial_time::julian::JulianDate::new(2451545.0, 0.0));
+        let epoch_jul =
+            TT::from_julian_date(celestial_time::julian::JulianDate::new(2451545.0, 182.5));
 
         let cirs_jan = CIRSPosition::from_icrs(&icrs, &epoch_jan).unwrap();
         let cirs_jul = CIRSPosition::from_icrs(&icrs, &epoch_jul).unwrap();

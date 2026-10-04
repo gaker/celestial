@@ -1,8 +1,8 @@
-pub mod constants;
-pub mod iau2000;
-pub mod iau2006;
+mod iau2000;
+mod iau2006;
 
-use crate::{TimeResult, TT};
+use crate::scales::tt::TT;
+use crate::TimeResult;
 use celestial_core::matrix::RotationMatrix3;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -15,7 +15,6 @@ pub struct PrecessionResult {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PrecessionModel {
-    IAU1976,
     IAU2000,
     IAU2006,
 }

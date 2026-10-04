@@ -2,7 +2,7 @@ use celestial_catalog::query::catalog::FLAG_SOURCE_HIPPARCOS;
 use celestial_catalog::query::{cone_search, Catalog, ConeSearchParams, ConeSearchResult};
 use celestial_core::angle::Angle;
 use celestial_core::angle::{AngleUnits, DmsFmt, HmsFmt};
-use celestial_time::JulianDate;
+use celestial_time::julian::JulianDate;
 use clap::{Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
 use std::time::Instant;
@@ -245,5 +245,5 @@ fn parse_date_to_jd(date_str: &str) -> anyhow::Result<JulianDate> {
     let month: u8 = parts[1].parse()?;
     let day: u8 = parts[2].parse()?;
 
-    Ok(JulianDate::from_calendar(year, month, day, 0, 0, 0.0))
+    Ok(JulianDate::from_calendar(year, month, day, 0, 0, 0.0)?)
 }

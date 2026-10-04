@@ -1,6 +1,6 @@
 use crate::CoordResult;
 use celestial_core::{angle::Angle, matrix::Vector3};
-use celestial_time::TT;
+use celestial_time::scales::tt::TT;
 
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};

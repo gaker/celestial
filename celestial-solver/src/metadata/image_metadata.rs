@@ -1,6 +1,6 @@
 use celestial_coords::ICRSPosition;
 use celestial_images::formats::Image;
-use celestial_time::JulianDate;
+use celestial_time::julian::JulianDate;
 
 use super::error::MetadataError;
 use super::hint::hint_from_image;
@@ -20,12 +20,12 @@ use super::time::jd_from_image;
 /// ```rust,ignore
 /// use celestial_solver::metadata::ImageMetadata;
 /// use celestial_coords::ICRSPosition;
-/// use celestial_time::utc_from_calendar;
+/// use celestial_time::scales::utc::utc_from_calendar;
 ///
 /// let meta = ImageMetadata {
 ///     hint: ICRSPosition::from_degrees(83.633, 22.014)?,
 ///     scale_arcsec: 1.5,
-///     epoch: utc_from_calendar(2026, 4, 21, 20, 0, 0.0).to_julian_date(),
+///     epoch: utc_from_calendar(2026, 4, 21, 20, 0, 0.0)?.to_julian_date(),
 ///     focal_mm: None,
 ///     pixel_um: None,
 /// };

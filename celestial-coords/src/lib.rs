@@ -25,4 +25,8 @@ pub use frames::{
 pub use transforms::{CartesianFrame, CoordinateFrame};
 
 pub use celestial_core::{location::Location, matrix::Vector3};
-pub use celestial_time::{TimeError, TimeResult, TAI, TT, UT1, UTC};
+pub use celestial_time::scales::tai::TAI;
+pub use celestial_time::scales::tt::TT;
+pub use celestial_time::scales::ut1::UT1;
+pub use celestial_time::scales::utc::UTC;
+pub use celestial_time::{TimeError, TimeResult};

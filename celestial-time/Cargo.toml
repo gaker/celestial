@@ -20,5 +20,4 @@ default = []
 serde = ["dep:serde", "celestial-core/serde"]
 
 [dev-dependencies]
-criterion.workspace = true
-serde_json.workspace = true
+serde_json = { workspace = true, features = ["float_roundtrip"] }

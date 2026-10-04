@@ -245,13 +245,8 @@ impl HeaderParser {
         let mut header = Header::new();
         let mut found_end = false;
 
-        for chunk in data.chunks_exact(CARD_SIZE) {
-            if chunk.len() != CARD_SIZE {
-                break;
-            }
-
-            let mut card_data = [0u8; CARD_SIZE];
-            card_data.copy_from_slice(chunk);
+        for chunk in data.as_chunks::<CARD_SIZE>().0 {
+            let mut card_data = *chunk;
 
             let card = match HeaderCard::parse(&card_data) {
                 Ok(card) => card,
@@ -291,17 +286,7 @@ impl HeaderParser {
         for block in data.chunks(HEADER_BLOCK_SIZE) {
             blocks += 1;
 
-            for chunk in block.chunks_exact(CARD_SIZE) {
-                if chunk.len() != CARD_SIZE {
-                    continue;
-                }
-
-                if chunk.len() < 8 {
-                    return Err(FitsError::InvalidFormat(
-                        "Header card too short".to_string(),
-                    ));
-                }
-
+            for chunk in block.as_chunks::<CARD_SIZE>().0 {
                 let keyword_part = str::from_utf8(&chunk[0..8])
                     .map_err(|_| FitsError::InvalidFormat("Invalid UTF-8 in header".to_string()))?;
 

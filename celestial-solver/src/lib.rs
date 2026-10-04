@@ -28,14 +28,14 @@
 //! ```rust,ignore
 //! use celestial_solver::metadata::ImageMetadata;
 //! use celestial_coords::ICRSPosition;
-//! use celestial_time::utc_from_calendar;
+//! use celestial_time::scales::utc::utc_from_calendar;
 //!
 //! # let img = celestial_images::formats::Image::open("frame.png")?;
 //! # let catalog = celestial_catalog::query::Catalog::open("cat.bin")?;
 //! let meta = ImageMetadata {
 //!     hint: ICRSPosition::from_degrees(83.633, 22.014)?,
 //!     scale_arcsec: 1.5,
-//!     epoch: utc_from_calendar(2026, 4, 21, 20, 0, 0.0).to_julian_date(),
+//!     epoch: utc_from_calendar(2026, 4, 21, 20, 0, 0.0)?.to_julian_date(),
 //!     focal_mm: None,
 //!     pixel_um: None,
 //! };

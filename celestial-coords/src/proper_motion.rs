@@ -1,5 +1,5 @@
 use celestial_core::angle::Angle;
-use celestial_time::TT;
+use celestial_time::scales::tt::TT;
 
 const MAS_PER_DEGREE: f64 = 3_600_000.0;
 const DAYS_PER_YEAR: f64 = 365.25;
@@ -49,14 +49,14 @@ pub fn propagate_degrees(
 fn epoch_delta_years(from_epoch: TT, to_epoch: TT) -> f64 {
     let from_jd = from_epoch.to_julian_date();
     let to_jd = to_epoch.to_julian_date();
-    (to_jd - from_jd).to_f64() / DAYS_PER_YEAR
+    (to_jd - from_jd) / DAYS_PER_YEAR
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use celestial_core::constants::J2000_JD;
-    use celestial_time::JulianDate;
+    use celestial_time::julian::JulianDate;
 
     fn tt_at_jd(jd: f64) -> TT {
         TT::from_julian_date(JulianDate::new(jd, 0.0))

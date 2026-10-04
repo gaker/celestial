@@ -11,7 +11,7 @@
 use crate::observation::SiteParams;
 use celestial_coords::frames::HourAnglePosition;
 use celestial_core::{angle::Angle, errors::AstroResult, location::Location};
-use celestial_time::TT;
+use celestial_time::scales::tt::TT;
 
 /// Adds atmospheric refraction to a sky direction.
 ///

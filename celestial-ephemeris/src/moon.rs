@@ -10,7 +10,7 @@ use celestial_core::{
     constants::{ARCSEC_TO_RAD, DEG_TO_RAD, J2000_JD, PI},
     errors::AstroResult,
 };
-use celestial_time::TDB;
+use celestial_time::scales::tdb::TDB;
 
 use crate::lunar_coefficients::{
     MainTerm, PertBlock, MAIN_DISTANCE, MAIN_LATITUDE, MAIN_LONGITUDE, PERT_DISTANCE,

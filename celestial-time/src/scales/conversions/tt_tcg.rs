@@ -9,13 +9,15 @@
 //! The defining relationship is:
 //!
 //! ```text
-//! TCG - TT = L_G * (JD_TT - T0) * 86400
+//! TCG - TT = L_G * (JD_TCG - T0) * 86400
 //! ```
 //!
 //! Where:
 //! - `L_G = 6.969290134e-10` (IAU 2000 Resolution B1.9, exact by definition)
 //! - `T0 = 1977 January 1, 0h TAI` (reference epoch where TCG = TT)
 //! - The factor 86400 converts days to seconds
+//!
+//! Measured from JD_TT instead, the rate is L_G / (1 - L_G).
 //!
 //! This means TCG gains about 22 milliseconds per year relative to TT.
 //!
@@ -26,14 +28,15 @@
 //!
 //! # Precision
 //!
-//! Round-trip conversions (TT -> TCG -> TT or TCG -> TT -> TCG) achieve sub-picosecond
-//! accuracy for dates within a few centuries of J2000.0. The implementation applies
+//! Round-trip conversions (TT -> TCG -> TT or TCG -> TT -> TCG) come back within
+//! 1 ulp of jd2 (at most ~10 ps) for dates within a few centuries of J2000.0. The implementation applies
 //! corrections to the smaller-magnitude Julian Date component to preserve precision.
 //!
 //! # Usage
 //!
 //! ```
-//! use celestial_time::scales::{TT, TCG};
+//! use celestial_time::scales::tcg::TCG;
+//! use celestial_time::scales::tt::TT;
 //! use celestial_time::scales::conversions::{ToTT, ToTCG};
 //! use celestial_time::julian::JulianDate;
 //! use celestial_core::constants::J2000_JD;
@@ -47,17 +50,11 @@
 
 use super::{ToTCG, ToTT};
 use crate::constants::{TCG_RATE_LG, TCG_RATE_RATIO, TCG_REFERENCE_EPOCH};
-use crate::julian::JulianDate;
-use crate::scales::{TCG, TT};
+use crate::julian::finite_jd;
+use crate::scales::tcg::TCG;
+use crate::scales::tt::TT;
 use crate::TimeResult;
 use celestial_core::constants::MJD_ZERO_POINT;
-
-impl ToTCG for TCG {
-    /// Identity conversion. Returns self unchanged.
-    fn to_tcg(&self) -> TimeResult<TCG> {
-        Ok(*self)
-    }
-}
 
 impl ToTT for TCG {
     /// Convert TCG to TT by removing the L_G rate correction.
@@ -67,21 +64,11 @@ impl ToTT for TCG {
     /// The correction is subtracted because TCG runs faster than TT.
     /// At J2000.0, this removes about 0.506 seconds.
     fn to_tt(&self) -> TimeResult<TT> {
-        let tcg_jd = self.to_julian_date();
+        let tcg_jd = finite_jd(self.to_julian_date())?;
 
-        let (tt_jd1, tt_jd2) = if tcg_jd.jd1().abs() > tcg_jd.jd2().abs() {
-            let correction = ((tcg_jd.jd1() - MJD_ZERO_POINT)
-                + (tcg_jd.jd2() - TCG_REFERENCE_EPOCH))
-                * TCG_RATE_LG;
-            (tcg_jd.jd1(), tcg_jd.jd2() - correction)
-        } else {
-            let correction = ((tcg_jd.jd2() - MJD_ZERO_POINT)
-                + (tcg_jd.jd1() - TCG_REFERENCE_EPOCH))
-                * TCG_RATE_LG;
-            (tcg_jd.jd1() - correction, tcg_jd.jd2())
-        };
-
-        let tt_jd = JulianDate::new(tt_jd1, tt_jd2);
+        let tt_jd = tcg_jd.map_smaller_part(|big, small| {
+            small - ((big - MJD_ZERO_POINT) + (small - TCG_REFERENCE_EPOCH)) * TCG_RATE_LG
+        });
         Ok(TT::from_julian_date(tt_jd))
     }
 }
@@ -94,19 +81,11 @@ impl ToTCG for TT {
     ///
     /// At J2000.0, this adds about 0.506 seconds.
     fn to_tcg(&self) -> TimeResult<TCG> {
-        let tt_jd = self.to_julian_date();
+        let tt_jd = finite_jd(self.to_julian_date())?;
 
-        let (tcg_jd1, tcg_jd2) = if tt_jd.jd1().abs() > tt_jd.jd2().abs() {
-            let correction = ((tt_jd.jd1() - MJD_ZERO_POINT) + (tt_jd.jd2() - TCG_REFERENCE_EPOCH))
-                * TCG_RATE_RATIO;
-            (tt_jd.jd1(), tt_jd.jd2() + correction)
-        } else {
-            let correction = ((tt_jd.jd2() - MJD_ZERO_POINT) + (tt_jd.jd1() - TCG_REFERENCE_EPOCH))
-                * TCG_RATE_RATIO;
-            (tt_jd.jd1() + correction, tt_jd.jd2())
-        };
-
-        let tcg_jd = JulianDate::new(tcg_jd1, tcg_jd2);
+        let tcg_jd = tt_jd.map_smaller_part(|big, small| {
+            small + ((big - MJD_ZERO_POINT) + (small - TCG_REFERENCE_EPOCH)) * TCG_RATE_RATIO
+        });
         Ok(TCG::from_julian_date(tcg_jd))
     }
 }
@@ -114,165 +93,88 @@ impl ToTCG for TT {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use celestial_core::constants::{J2000_JD, MJD_ZERO_POINT, SECONDS_PER_DAY_F64};
+    use crate::julian::JulianDate;
+    use crate::TimeError;
+    use celestial_core::constants::{J2000_JD, MJD_ZERO_POINT};
 
     #[test]
-    fn test_tcg_identity_conversion() {
-        let tcg = TCG::from_julian_date(JulianDate::new(J2000_JD, 0.999999999999999));
-        let identity_tcg = tcg.to_tcg().unwrap();
-
-        assert_eq!(
-            tcg.to_julian_date().jd1(),
-            identity_tcg.to_julian_date().jd1(),
-            "TCG identity conversion should preserve JD1"
-        );
-        assert_eq!(
-            tcg.to_julian_date().jd2(),
-            identity_tcg.to_julian_date().jd2(),
-            "TCG identity conversion should preserve JD2"
-        );
-    }
-
-    #[test]
-    fn test_tt_tcg_offset() {
-        let test_cases = [
-            (J2000_JD, 0.5058332857, "J2000.0"),
-            (2455197.5, 0.7257673560, "2010-01-01"),
-            (2458849.5, 0.9456713190, "2020-01-01"),
-            (2469807.5, 1.6055036373, "2050-01-01"),
+    fn test_tt_tcg_matches_erfa() {
+        // eraTttcg and eraTcgtt.
+        let cases = [
+            (J2000_JD, 5.85455192154085e-6, -5.854551917460643e-6),
+            (2455197.5, 8.400085144758405e-6, -8.400085138904144e-6),
+            (2458849.5, 1.0945269903469018e-5, -1.0945269895840943e-5),
+            (2469807.5, 1.8582218037628628e-5, -1.8582218024678145e-5),
         ];
-
-        let tolerance_seconds = 1e-6;
-
-        for (jd, expected_offset_seconds, description) in test_cases {
-            let tt = TT::from_julian_date(JulianDate::new(jd, 0.0));
-            let tcg = tt.to_tcg().unwrap();
-
-            let tt_jd = tt.to_julian_date();
-            let tcg_jd = tcg.to_julian_date();
-
-            let offset_days = (tcg_jd.jd1() - tt_jd.jd1()) + (tcg_jd.jd2() - tt_jd.jd2());
-            let offset_seconds = offset_days * SECONDS_PER_DAY_F64;
-
-            let diff = (offset_seconds - expected_offset_seconds).abs();
-            assert!(
-                diff < tolerance_seconds,
-                "{}: TT->TCG offset should be {:.10}s, got {:.10}s (diff: {:.2e}s)",
-                description,
-                expected_offset_seconds,
-                offset_seconds,
-                diff
-            );
-
-            let tcg = TCG::from_julian_date(JulianDate::new(jd, 0.0));
-            let tt = tcg.to_tt().unwrap();
-
-            let tcg_jd = tcg.to_julian_date();
-            let tt_jd = tt.to_julian_date();
-
-            let offset_days = (tcg_jd.jd1() - tt_jd.jd1()) + (tcg_jd.jd2() - tt_jd.jd2());
-            let offset_seconds = offset_days * SECONDS_PER_DAY_F64;
-
-            let diff = (offset_seconds - expected_offset_seconds).abs();
-            assert!(
-                diff < tolerance_seconds,
-                "{}: TCG->TT means TCG is {:.10}s ahead, got {:.10}s (diff: {:.2e}s)",
-                description,
-                expected_offset_seconds,
-                offset_seconds,
-                diff
-            );
-        }
-    }
-
-    #[test]
-    fn test_tt_tcg_at_reference_epoch() {
-        let reference_epoch_jd = MJD_ZERO_POINT + TCG_REFERENCE_EPOCH;
-
-        let tt = TT::from_julian_date(JulianDate::new(reference_epoch_jd, 0.0));
-        let tcg = tt.to_tcg().unwrap();
-
-        let tt_jd = tt.to_julian_date();
-        let tcg_jd = tcg.to_julian_date();
-
-        let offset_days = (tcg_jd.jd1() - tt_jd.jd1()) + (tcg_jd.jd2() - tt_jd.jd2());
-        let offset_seconds = offset_days * SECONDS_PER_DAY_F64;
-
-        let tolerance_seconds = 1e-12;
-        assert!(
-            offset_seconds.abs() < tolerance_seconds,
-            "At reference epoch T0, TCG-TT should be 0, got {:.2e}s",
-            offset_seconds
-        );
-    }
-
-    #[test]
-    fn test_tt_tcg_round_trip_precision() {
-        // TCG conversions involve multiplicative scaling (LG rate). Precision loss
-        // varies by jd2 magnitude: ~220 attoseconds for jd2~0, up to ~2 picoseconds
-        // for jd2~+/-0.25 due to f64 magnitude mismatch when adding small corrections.
-        const TOLERANCE_DAYS: f64 = 1e-14; // ~1 picosecond
-
-        let test_jd2_values = [0.0, 0.5, 0.123456789012345, -0.123456789012345, 0.987654321];
-
-        for jd2 in test_jd2_values {
-            let original_tt = TT::from_julian_date(JulianDate::new(J2000_JD, jd2));
-            let tcg = original_tt.to_tcg().unwrap();
-            let round_trip_tt = tcg.to_tt().unwrap();
-
-            assert_eq!(
-                original_tt.to_julian_date().jd1(),
-                round_trip_tt.to_julian_date().jd1(),
-                "TT->TCG->TT JD1 must be exact for jd2={}",
-                jd2
-            );
-            let jd2_diff =
-                (original_tt.to_julian_date().jd2() - round_trip_tt.to_julian_date().jd2()).abs();
-            assert!(
-                jd2_diff <= TOLERANCE_DAYS,
-                "TT->TCG->TT JD2 difference {} exceeds tolerance {} for jd2={}",
-                jd2_diff,
-                TOLERANCE_DAYS,
-                jd2
-            );
-
-            let original_tcg = TCG::from_julian_date(JulianDate::new(J2000_JD, jd2));
-            let tt = original_tcg.to_tt().unwrap();
-            let round_trip_tcg = tt.to_tcg().unwrap();
-
-            assert_eq!(
-                original_tcg.to_julian_date().jd1(),
-                round_trip_tcg.to_julian_date().jd1(),
-                "TCG->TT->TCG JD1 must be exact for jd2={}",
-                jd2
-            );
-            let jd2_diff =
-                (original_tcg.to_julian_date().jd2() - round_trip_tcg.to_julian_date().jd2()).abs();
-            assert!(
-                jd2_diff <= TOLERANCE_DAYS,
-                "TCG->TT->TCG JD2 difference {} exceeds tolerance {} for jd2={}",
-                jd2_diff,
-                TOLERANCE_DAYS,
-                jd2
-            );
+        for (jd, tcg_jd2, tt_jd2) in cases {
+            let tcg = TT::from_julian_date(JulianDate::new(jd, 0.0))
+                .to_tcg()
+                .unwrap();
+            assert_eq!(tcg.to_julian_date().parts(), (jd, tcg_jd2));
+            let tt = TCG::from_julian_date(JulianDate::new(jd, 0.0))
+                .to_tt()
+                .unwrap();
+            assert_eq!(tt.to_julian_date().parts(), (jd, tt_jd2));
         }
 
-        let alt_tt = TT::from_julian_date(JulianDate::new(0.5, J2000_JD));
-        let alt_tcg = alt_tt.to_tcg().unwrap();
-        let alt_round_trip = alt_tcg.to_tt().unwrap();
-
+        // At the 1977 reference epoch they agree, up to the rounding of the epoch.
+        let epoch = MJD_ZERO_POINT + TCG_REFERENCE_EPOCH;
+        let tcg = TT::from_julian_date(JulianDate::new(epoch, 0.0))
+            .to_tcg()
+            .unwrap();
         assert_eq!(
-            alt_tt.to_julian_date().jd1(),
-            alt_round_trip.to_julian_date().jd1(),
-            "Alternate split TT->TCG->TT JD1 must be exact"
+            tcg.to_julian_date().parts(),
+            (epoch, 1.1155817123279573e-19)
         );
-        let jd2_diff =
-            (alt_tt.to_julian_date().jd2() - alt_round_trip.to_julian_date().jd2()).abs();
-        assert!(
-            jd2_diff <= TOLERANCE_DAYS,
-            "Alternate split TT->TCG->TT JD2 difference {} exceeds tolerance {}",
-            jd2_diff,
-            TOLERANCE_DAYS
-        );
+    }
+
+    #[test]
+    fn test_tt_tcg_round_trip_matches_erfa() {
+        // eraTttcg then eraTcgtt, and the reverse. Only the (JD, 0) split doesn't
+        // come back exactly, by under 3e-21 d.
+        let cases = [
+            (J2000_JD, 0.0, 2.541098841762901e-21, 1.6940658945086007e-21),
+            (J2000_JD, 0.5, 0.5, 0.5),
+            (
+                J2000_JD,
+                0.123456789012345,
+                0.123456789012345,
+                0.123456789012345,
+            ),
+            (
+                J2000_JD,
+                -0.123456789012345,
+                -0.123456789012345,
+                -0.123456789012345,
+            ),
+            (J2000_JD, 0.987654321, 0.987654321, 0.987654321),
+        ];
+        for (jd1, jd2, tt_back, tcg_back) in cases {
+            let tt = TT::from_julian_date(JulianDate::new(jd1, jd2));
+            let back = tt.to_tcg().unwrap().to_tt().unwrap();
+            assert_eq!(back.to_julian_date().parts(), (jd1, tt_back));
+
+            let tcg = TCG::from_julian_date(JulianDate::new(jd1, jd2));
+            let back = tcg.to_tt().unwrap().to_tcg().unwrap();
+            assert_eq!(back.to_julian_date().parts(), (jd1, tcg_back));
+        }
+
+        let tt = TT::from_julian_date(JulianDate::new(0.5, J2000_JD));
+        let back = tt.to_tcg().unwrap().to_tt().unwrap();
+        assert_eq!(back.to_julian_date().parts(), tt.to_julian_date().parts());
+        let tcg = TCG::from_julian_date(JulianDate::new(0.5, J2000_JD));
+        let back = tcg.to_tt().unwrap().to_tcg().unwrap();
+        assert_eq!(back.to_julian_date().parts(), tcg.to_julian_date().parts());
+    }
+
+    #[test]
+    fn test_non_finite_julian_date_is_rejected() {
+        for bad in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            let jd = JulianDate::new(bad, 0.0);
+            let expected =
+                TimeError::InvalidEpoch(format!("Julian Date ({}, 0) is not finite", bad));
+            assert_eq!(TCG::from_julian_date(jd).to_tt().unwrap_err(), expected);
+            assert_eq!(TT::from_julian_date(jd).to_tcg().unwrap_err(), expected);
+        }
     }
 }

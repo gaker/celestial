@@ -4,7 +4,7 @@ use celestial_catalog::query::{
     cone_search, tan_project_star, Catalog, ConeSearchParams, ConeSearchResult, QuadStar,
 };
 use celestial_core::constants::PI;
-use celestial_time::JulianDate;
+use celestial_time::julian::JulianDate;
 
 use crate::detect::DetectedStar;
 
@@ -215,7 +215,7 @@ mod tests {
     }
 
     use celestial_catalog::query::Catalog;
-    use celestial_time::JulianDate;
+    use celestial_time::julian::JulianDate;
 
     use super::super::test_catalog::{build, SynthStar};
 
@@ -300,7 +300,7 @@ mod tests {
 
         let (qs, res) = catalog_cone_search(&catalog, center_ra, center_dec, 180.0, 50, epoch);
         // Both stars are within the cone, but only the near one projects.
-        assert!(res.len() >= 1);
+        assert!(!res.is_empty());
         assert!(qs.len() < res.len() || qs.iter().all(|s| s.source_id != 2));
     }
 }

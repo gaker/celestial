@@ -1,7 +1,7 @@
 use celestial_coords::Vector3;
 use celestial_core::errors::AstroResult;
 use celestial_time::julian::JulianDate;
-use celestial_time::TDB;
+use celestial_time::scales::tdb::TDB;
 
 use crate::earth::Vsop2013Earth;
 

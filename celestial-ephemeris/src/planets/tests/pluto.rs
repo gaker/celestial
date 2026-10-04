@@ -1,7 +1,7 @@
 use crate::planets::Vsop2013Pluto;
 use celestial_core::constants::{AU_KM, J2000_JD};
 use celestial_time::julian::JulianDate;
-use celestial_time::TDB;
+use celestial_time::scales::tdb::TDB;
 
 const PLUTO_VSOP2013_REF: &[(f64, f64, f64, f64)] = &[
     (2411545.0, 17.6213054610, 43.9412232438, 8.4004533071),

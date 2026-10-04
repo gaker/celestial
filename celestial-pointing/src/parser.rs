@@ -19,7 +19,7 @@ use crate::observation::{
     decode_pier_side, IndatFile, IndatOption, MountType, Observation, PierSide, SiteParams,
 };
 use celestial_core::angle::Angle;
-use celestial_time::JulianDate;
+use celestial_time::julian::JulianDate;
 
 /// Parses an INDAT file's contents into an [`IndatFile`].
 ///
@@ -170,7 +170,8 @@ fn build_julian_date(parts: &[&str]) -> Result<JulianDate> {
     let day: u8 = parts[2]
         .parse()
         .map_err(|e| Error::Parse(format!("day: {}", e)))?;
-    Ok(JulianDate::from_calendar(year, month, day, 0, 0, 0.0))
+    JulianDate::from_calendar(year, month, day, 0, 0, 0.0)
+        .map_err(|e| Error::Parse(format!("date: {}", e)))
 }
 
 fn parse_dms_latitude(d: f64, m: f64, s: f64) -> Angle {
@@ -355,7 +356,7 @@ ASCOM Mount
     #[test]
     fn parse_site_date() {
         let indat = parse_indat(SIMPLE_DAT).unwrap();
-        let expected = JulianDate::from_calendar(2024, 7, 14, 0, 0, 0.0);
+        let expected = JulianDate::from_calendar(2024, 7, 14, 0, 0, 0.0).unwrap();
         assert_eq!(indat.date, expected);
     }
 

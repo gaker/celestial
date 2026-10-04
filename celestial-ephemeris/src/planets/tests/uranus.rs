@@ -1,7 +1,7 @@
 use crate::planets::Vsop2013Uranus;
 use celestial_core::constants::{AU_KM, J2000_JD};
 use celestial_time::julian::JulianDate;
-use celestial_time::TDB;
+use celestial_time::scales::tdb::TDB;
 
 const URANUS_VSOP2013_REF: &[(f64, f64, f64, f64)] = &[
     (2411545.0, -16.4159097008, -7.7936503250, -3.1804126500),

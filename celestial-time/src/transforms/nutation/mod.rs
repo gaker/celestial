@@ -1,8 +1,9 @@
-pub mod iau2000a;
-pub mod iau2000b;
-pub mod iau2006a;
+mod iau2000a;
+mod iau2000b;
+mod iau2006a;
 
-use crate::{TimeResult, TT};
+use crate::scales::tt::TT;
+use crate::TimeResult;
 
 #[derive(Debug)]
 pub struct NutationResult {
@@ -11,7 +12,7 @@ pub struct NutationResult {
 }
 
 impl NutationResult {
-    pub fn new(
+    pub(crate) fn new(
         core_result: celestial_core::nutation::NutationResult,
         model: NutationModel,
     ) -> Self {
@@ -67,79 +68,43 @@ impl NutationCalculator for TT {
 #[cfg(test)]
 mod integration_tests {
     use super::*;
-    use crate::TT;
+    use crate::scales::tt::TT;
     use celestial_core::constants::J2000_JD;
 
     #[test]
-    fn test_all_nutation_models_at_j2000() {
-        let j2000_tt = TT::j2000();
-
-        let result_2000a = j2000_tt.nutation_iau2000a().unwrap();
-        let result_2000b = j2000_tt.nutation_iau2000b().unwrap();
-        let result_2006a = j2000_tt.nutation_iau2006a().unwrap();
-
-        assert!(
-            result_2000a.nutation_longitude().abs() < 1e-3,
-            "2000A nutation too large"
-        );
-        assert!(
-            result_2000b.nutation_longitude().abs() < 1e-3,
-            "2000B nutation too large"
-        );
-        assert!(
-            result_2006a.nutation_longitude().abs() < 1e-3,
-            "2006A nutation too large"
-        );
-
-        assert_eq!(result_2000a.model, NutationModel::IAU2000A);
-        assert_eq!(result_2000b.model, NutationModel::IAU2000B);
-        assert_eq!(result_2006a.model, NutationModel::IAU2006A);
-    }
-
-    #[test]
-    fn test_iau2000b_is_abbreviated_version() {
-        let j2000_tt = TT::j2000();
-
-        let result_2000a = j2000_tt.nutation_iau2000a().unwrap();
-        let result_2000b = j2000_tt.nutation_iau2000b().unwrap();
-
-        let diff_psi =
-            (result_2000a.nutation_longitude() - result_2000b.nutation_longitude()).abs();
-        let diff_eps =
-            (result_2000a.nutation_obliquity() - result_2000b.nutation_obliquity()).abs();
-
-        assert!(
-            diff_psi < 5e-9,
-            "2000B differs too much from 2000A in longitude: {:.3} mas",
-            diff_psi * 206264806.247
-        );
-        assert!(
-            diff_eps < 5e-9,
-            "2000B differs too much from 2000A in obliquity: {:.3} mas",
-            diff_eps * 206264806.247
-        );
-    }
-
-    #[test]
-    fn test_iau2006a_corrections_reasonable() {
-        let j2000_tt = TT::j2000();
-
-        let result_2000a = j2000_tt.nutation_iau2000a().unwrap();
-        let result_2006a = j2000_tt.nutation_iau2006a().unwrap();
-
-        let diff_psi =
-            (result_2000a.nutation_longitude() - result_2006a.nutation_longitude()).abs();
-        let diff_eps =
-            (result_2000a.nutation_obliquity() - result_2006a.nutation_obliquity()).abs();
-
-        assert!(
-            diff_psi < 1e-8,
-            "2006A corrections too large relative to 2000A"
-        );
-        assert!(
-            diff_eps < 1e-8,
-            "2006A corrections too large relative to 2000A"
-        );
+    fn test_nutation_models_match_erfa() {
+        // eraNut00a, eraNut00b and eraNut06a
+        let models = [
+            TT::nutation_iau2000a,
+            TT::nutation_iau2000b,
+            TT::nutation_iau2006a,
+        ];
+        let cases = [
+            (
+                0.0,
+                [
+                    (-6.754422426417298e-5, -2.7970831192374137e-5),
+                    (-6.754261253992235e-5, -2.7970923310985653e-5),
+                    (-6.754425598969512e-5, -2.7970831192374137e-5),
+                ],
+            ),
+            (
+                9131.987654321,
+                [
+                    (1.2842967635988853e-6, 4.1352977363819786e-5),
+                    (1.2870930153185514e-6, 4.135339367587379e-5),
+                    (1.2842964750095786e-6, 4.135294864806038e-5),
+                ],
+            ),
+        ];
+        for (jd2, expected) in cases {
+            let tt = TT::from_julian_date(crate::julian::JulianDate::new(J2000_JD, jd2));
+            for (model, (dpsi, deps)) in models.iter().zip(expected) {
+                let result = model(&tt).unwrap();
+                let got = (result.nutation_longitude(), result.nutation_obliquity());
+                assert_eq!(got, (dpsi, deps), "{jd2}, {:?}", result.model());
+            }
+        }
     }
 
     #[test]
@@ -165,38 +130,13 @@ mod integration_tests {
 
     #[test]
     fn test_nutation_epoch_too_far_from_j2000() {
-        use crate::JulianDate;
-
-        let far_future_jd = J2000_JD + (25.0 * celestial_core::constants::DAYS_PER_JULIAN_CENTURY);
-        let far_future_tt = TT::from_julian_date(JulianDate::from_f64(far_future_jd));
-
-        let result = far_future_tt.nutation_iau2006a();
-        assert!(result.is_err());
-
-        if let Err(crate::TimeError::InvalidEpoch(msg)) = result {
-            assert!(msg.contains("Epoch too far from J2000.0"));
-        } else {
-            panic!("Expected InvalidEpoch error");
-        }
+        let days = 25.0 * celestial_core::constants::DAYS_PER_JULIAN_CENTURY;
+        let tt = TT::from_julian_date(crate::julian::JulianDate::new(J2000_JD, days));
+        let expected = crate::TimeError::InvalidEpoch(
+            "Epoch too far from J2000.0 for the IAU models: 25.0 centuries".into(),
+        );
+        assert_eq!(tt.nutation_iau2000a().unwrap_err(), expected);
+        assert_eq!(tt.nutation_iau2000b().unwrap_err(), expected);
+        assert_eq!(tt.nutation_iau2006a().unwrap_err(), expected);
     }
 }
-
-mod utils {
-    use crate::{TimeError, TimeResult, TT};
-
-    pub fn tt_to_centuries(tt: &TT) -> TimeResult<f64> {
-        let jd = tt.to_julian_date();
-        let centuries = celestial_core::utils::jd_to_centuries(jd.jd1(), jd.jd2());
-
-        if centuries.abs() > celestial_core::constants::MAX_CENTURIES_FROM_J2000 {
-            return Err(TimeError::InvalidEpoch(format!(
-                "Epoch too far from J2000.0 for nutation model: {:.1} centuries",
-                centuries
-            )));
-        }
-
-        Ok(centuries)
-    }
-}
-
-pub(crate) use utils::tt_to_centuries;

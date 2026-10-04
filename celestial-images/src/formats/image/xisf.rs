@@ -24,29 +24,37 @@ impl Image {
             crate::xisf::header::SampleFormat::UInt8 => PixelData::U8(raw_bytes),
             crate::xisf::header::SampleFormat::UInt16 => {
                 let data: Vec<u16> = raw_bytes
-                    .chunks_exact(2)
-                    .map(|b| u16::from_le_bytes([b[0], b[1]]))
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
+                    .map(|&b| u16::from_le_bytes(b))
                     .collect();
                 PixelData::U16(data)
             }
             crate::xisf::header::SampleFormat::UInt32 => {
                 let data: Vec<i32> = raw_bytes
-                    .chunks_exact(4)
-                    .map(|b| i32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+                    .as_chunks::<4>()
+                    .0
+                    .iter()
+                    .map(|&b| i32::from_le_bytes(b))
                     .collect();
                 PixelData::I32(data)
             }
             crate::xisf::header::SampleFormat::Float32 => {
                 let data: Vec<f32> = raw_bytes
-                    .chunks_exact(4)
-                    .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+                    .as_chunks::<4>()
+                    .0
+                    .iter()
+                    .map(|&b| f32::from_le_bytes(b))
                     .collect();
                 PixelData::F32(data)
             }
             crate::xisf::header::SampleFormat::Float64 => {
                 let data: Vec<f64> = raw_bytes
-                    .chunks_exact(8)
-                    .map(|b| f64::from_le_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]]))
+                    .as_chunks::<8>()
+                    .0
+                    .iter()
+                    .map(|&b| f64::from_le_bytes(b))
                     .collect();
                 PixelData::F64(data)
             }

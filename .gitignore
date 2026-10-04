@@ -7,6 +7,7 @@ build_rs_cov.profraw
 _tmp/*
 vendor/*
 vsop2013/*
+scratch/*
 
 
 # Python

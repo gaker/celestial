@@ -199,7 +199,7 @@ fn format_lst_hm(lst: Angle) -> String {
 mod tests {
     use super::*;
     use crate::parser::parse_indat;
-    use celestial_time::JulianDate;
+    use celestial_time::julian::JulianDate;
 
     fn make_site() -> SiteParams {
         SiteParams {
@@ -245,7 +245,7 @@ mod tests {
             observations,
             mount_type: MountType::GermanEquatorial,
             header_lines: vec!["!source: writer test".into()],
-            date: JulianDate::from_calendar(2024, 7, 14, 0, 0, 0.0),
+            date: JulianDate::from_calendar(2024, 7, 14, 0, 0, 0.0).unwrap(),
         }
     }
 

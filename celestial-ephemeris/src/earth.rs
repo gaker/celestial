@@ -2,7 +2,7 @@ use celestial_coords::Vector3;
 use celestial_core::constants::{AU_KM, MOON_EMB_MASS_RATIO};
 use celestial_core::errors::AstroResult;
 use celestial_time::julian::JulianDate;
-use celestial_time::TDB;
+use celestial_time::scales::tdb::TDB;
 
 use crate::moon::ElpMpp02Moon;
 use crate::planets::Vsop2013Emb;

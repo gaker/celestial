@@ -1,7 +1,8 @@
 use chrono::{Datelike, NaiveDate, NaiveDateTime, NaiveTime, Timelike};
 
 use celestial_images::formats::Image;
-use celestial_time::{utc_from_calendar, JulianDate};
+use celestial_time::julian::JulianDate;
+use celestial_time::scales::utc::utc_from_calendar;
 
 use super::error::MetadataError;
 
@@ -17,7 +18,9 @@ use super::error::MetadataError;
 ///
 /// Returns [`MetadataError::MissingHeader`] if neither header exists,
 /// [`MetadataError::MissingTimeOfDay`] if `DATE-OBS` is date-only without `TIME-OBS`,
-/// or [`MetadataError::DateParse`] / [`MetadataError::TimeParse`] for malformed values.
+/// [`MetadataError::DateParse`] / [`MetadataError::TimeParse`] for malformed values,
+/// or [`MetadataError::InvalidTime`] for a time that UTC doesn't have, such as
+/// `23:59:60` on a day without a leap second.
 ///
 /// # Examples
 ///
@@ -53,7 +56,7 @@ pub fn jd_from_image(img: &Image) -> Result<JulianDate, MetadataError> {
         dt.hour() as u8,
         dt.minute() as u8,
         sec,
-    );
+    )?;
     Ok(utc.to_julian_date())
 }
 
@@ -126,7 +129,9 @@ mod tests {
         let mut img = stub_image();
         img.set_keyword(Keyword::string("DATE-OBS", "2024-06-15T03:22:45.123"));
         let jd = jd_from_image(&img).unwrap();
-        let expected = utc_from_calendar(2024, 6, 15, 3, 22, 45.123).to_julian_date();
+        let expected = utc_from_calendar(2024, 6, 15, 3, 22, 45.123)
+            .unwrap()
+            .to_julian_date();
         assert_eq!(jd.to_f64(), expected.to_f64());
     }
 
@@ -136,7 +141,9 @@ mod tests {
         img.set_keyword(Keyword::string("DATE-OBS", "2024-06-15"));
         img.set_keyword(Keyword::string("TIME-OBS", "03:22:45.123"));
         let jd = jd_from_image(&img).unwrap();
-        let expected = utc_from_calendar(2024, 6, 15, 3, 22, 45.123).to_julian_date();
+        let expected = utc_from_calendar(2024, 6, 15, 3, 22, 45.123)
+            .unwrap()
+            .to_julian_date();
         assert_eq!(jd.to_f64(), expected.to_f64());
     }
 
@@ -194,7 +201,31 @@ mod tests {
         let mut img = stub_image();
         img.set_keyword(Keyword::string("DATE-OBS", "2024-06-15T12:00:00.5"));
         let jd = jd_from_image(&img).unwrap();
-        let expected = utc_from_calendar(2024, 6, 15, 12, 0, 0.5).to_julian_date();
+        let expected = utc_from_calendar(2024, 6, 15, 12, 0, 0.5)
+            .unwrap()
+            .to_julian_date();
         assert_eq!(jd.to_f64(), expected.to_f64());
+    }
+
+    #[test]
+    fn leap_second_is_accepted_on_a_leap_second_day() {
+        let mut img = stub_image();
+        img.set_keyword(Keyword::string("DATE-OBS", "2016-12-31T23:59:60.5"));
+        let jd = jd_from_image(&img).unwrap();
+        let expected = utc_from_calendar(2016, 12, 31, 23, 59, 60.5)
+            .unwrap()
+            .to_julian_date();
+        assert_eq!(jd, expected);
+    }
+
+    #[test]
+    fn leap_second_on_an_ordinary_day_returns_invalid_time() {
+        let mut img = stub_image();
+        img.set_keyword(Keyword::string("DATE-OBS", "2016-12-30T23:59:60"));
+        let err = jd_from_image(&img).unwrap_err();
+        assert!(
+            matches!(err, MetadataError::InvalidTime(_)),
+            "unexpected error: {err}"
+        );
     }
 }

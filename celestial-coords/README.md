@@ -50,7 +50,7 @@ celestial-coords = "0.1"
 ```rust
 use celestial_coords::{ICRSPosition, GalacticPosition, Distance};
 use celestial_coords::transforms::CoordinateFrame;
-use celestial_time::TT;
+use celestial_time::scales::tt::TT;
 
 // Create a position in ICRS (catalog coordinates)
 let sirius = ICRSPosition::from_hours_degrees(6.752, -16.716)?;
@@ -148,7 +148,7 @@ let provider = EopProvider::from_finals_str(&text_content)?;
 ```rust
 use celestial_coords::{TopocentricPosition, Distance};
 use celestial_core::{angle::Angle, location::Location};
-use celestial_time::TT;
+use celestial_time::scales::tt::TT;
 
 let observer = Location::from_degrees(19.8283, -155.4783, 4145.0)?; // Keck
 let epoch = TT::j2000();
@@ -179,7 +179,7 @@ println!("Parallax: {:.1}'", parallax.arcminutes());
 ```rust
 use celestial_coords::solar::{compute_solar_orientation, carrington_rotation_number};
 use celestial_coords::lunar::compute_optical_libration;
-use celestial_time::TT;
+use celestial_time::scales::tt::TT;
 
 let epoch = TT::j2000();
 

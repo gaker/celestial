@@ -12,11 +12,8 @@ pub enum CoordError {
     #[error("Invalid coordinate: {message}")]
     InvalidCoordinate { message: String },
 
-    #[error("Epoch conversion failed: {source}")]
-    EpochError {
-        #[from]
-        source: celestial_time::TimeError,
-    },
+    #[error("Epoch conversion failed: {0}")]
+    EpochError(#[from] celestial_time::TimeError),
 
     #[error("Core astronomical calculation failed: {message}")]
     CoreError { message: String },

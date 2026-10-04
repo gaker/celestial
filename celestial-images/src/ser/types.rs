@@ -1,7 +1,9 @@
 use crate::ser::SerError;
 use byteorder::{ByteOrder, LittleEndian};
 use celestial_core::constants::SECONDS_PER_DAY_F64;
-use celestial_time::{constants::UNIX_EPOCH_JD, TimeError, TimeResult, UTC};
+use celestial_time::constants::UNIX_EPOCH_JD;
+use celestial_time::scales::utc::UTC;
+use celestial_time::{TimeError, TimeResult};
 use std::fmt;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -143,7 +145,7 @@ impl SerTimestamp {
         let ticks = Self::unix_seconds_to_ticks(seconds)?;
         let unix_secs = libm::trunc(seconds) as i64;
         let unix_nanos = (((seconds - libm::trunc(seconds)) * 1e9) as u32).min(999_999_999);
-        let utc = UTC::new(unix_secs, unix_nanos);
+        let utc = UTC::new(unix_secs, unix_nanos)?;
         Ok(Self {
             ticks,
             utc: Some(utc),
@@ -179,7 +181,7 @@ impl SerTimestamp {
         let fractional_ticks = delta_ticks % Self::TICKS_PER_SECOND;
         let nanos = (fractional_ticks * 100) as u32;
 
-        Ok(UTC::new(seconds_since_epoch as i64, nanos))
+        UTC::new(seconds_since_epoch as i64, nanos)
     }
 
     pub fn precision_100ns() -> u64 {
@@ -267,7 +269,7 @@ impl SerFile {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use celestial_time::UTC;
+    use celestial_time::scales::utc::UTC;
 
     #[test]
     fn color_id_from_u32_all_variants() {
@@ -360,7 +362,7 @@ mod tests {
 
     #[test]
     fn ser_timestamp_from_celestial_time() {
-        let utc = UTC::new(1672531200, 500_000_000);
+        let utc = UTC::new(1672531200, 500_000_000).unwrap();
         let ts = SerTimestamp::from_celestial_time(utc).unwrap();
         assert!(ts.ticks > 0);
         assert!(ts.utc.is_some());
@@ -368,7 +370,7 @@ mod tests {
 
     #[test]
     fn ser_timestamp_to_celestial_time_cached() {
-        let utc = UTC::new(1672531200, 0);
+        let utc = UTC::new(1672531200, 0).unwrap();
         let ts = SerTimestamp::from_celestial_time(utc).unwrap();
         let recovered = ts.to_utc().unwrap();
         assert_eq!(recovered.to_julian_date(), utc.to_julian_date());
@@ -386,7 +388,7 @@ mod tests {
 
     #[test]
     fn ser_timestamp_to_utc() {
-        let utc = UTC::new(1672531200, 0);
+        let utc = UTC::new(1672531200, 0).unwrap();
         let ts = SerTimestamp::from_celestial_time(utc).unwrap();
         let utc_result = ts.to_utc();
         assert!(utc_result.is_ok());

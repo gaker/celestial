@@ -1,7 +1,7 @@
 use crate::planets::Vsop2013Mars;
 use celestial_core::constants::{AU_KM, J2000_JD};
 use celestial_time::julian::JulianDate;
-use celestial_time::TDB;
+use celestial_time::scales::tdb::TDB;
 
 const MARS_VSOP2013_REF: &[(f64, f64, f64, f64)] = &[
     (2411545.0, -0.1474461434, -1.3278375334, -0.6049474049),

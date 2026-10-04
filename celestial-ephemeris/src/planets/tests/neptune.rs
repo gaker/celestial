@@ -1,7 +1,7 @@
 use crate::planets::Vsop2013Neptune;
 use celestial_core::constants::{AU_KM, J2000_JD};
 use celestial_time::julian::JulianDate;
-use celestial_time::TDB;
+use celestial_time::scales::tdb::TDB;
 
 const NEPTUNE_VSOP2013_REF: &[(f64, f64, f64, f64)] = &[
     (2411545.0, 12.1323801234, 25.3226220555, 10.0628233249),

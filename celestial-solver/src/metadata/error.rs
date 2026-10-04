@@ -63,6 +63,9 @@ pub enum MetadataError {
     #[error("invalid position: {0}")]
     InvalidPosition(#[from] celestial_coords::CoordError),
 
+    #[error("invalid observation time: {0}")]
+    InvalidTime(#[from] celestial_time::TimeError),
+
     /// A numeric header that must be positive was zero or negative.
     #[error("{field} must be positive, got {value}")]
     NonPositiveValue {

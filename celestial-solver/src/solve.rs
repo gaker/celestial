@@ -7,7 +7,7 @@ use anyhow::{ensure, Result};
 use celestial_catalog::query::Catalog;
 use celestial_coords::ICRSPosition;
 use celestial_core::{angle::Angle, math::angular_separation};
-use celestial_time::JulianDate;
+use celestial_time::julian::JulianDate;
 
 use celestial_images::formats::{Image, PixelData};
 
@@ -207,11 +207,11 @@ impl<'a> Solver<'a> {
     /// # Examples
     ///
     /// ```rust,ignore
-    /// use celestial_time::utc_from_calendar;
+    /// use celestial_time::scales::utc::utc_from_calendar;
     ///
     /// # let img = celestial_images::formats::Image::open("f.fits")?;
     /// # let catalog = celestial_catalog::query::Catalog::open("cat.bin")?;
-    /// let jd = utc_from_calendar(2026, 4, 21, 20, 0, 0.0).to_julian_date();
+    /// let jd = utc_from_calendar(2026, 4, 21, 20, 0, 0.0)?.to_julian_date();
     /// let result = celestial_solver::solve(&img, &catalog).epoch(jd).run()?;
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
@@ -294,14 +294,14 @@ impl<'a> Solver<'a> {
     /// ```rust,ignore
     /// use celestial_solver::metadata::ImageMetadata;
     /// use celestial_coords::ICRSPosition;
-    /// use celestial_time::utc_from_calendar;
+    /// use celestial_time::scales::utc::utc_from_calendar;
     ///
     /// # let img = celestial_images::formats::Image::open("frame.png")?;
     /// # let catalog = celestial_catalog::query::Catalog::open("cat.bin")?;
     /// let meta = ImageMetadata {
     ///     hint: ICRSPosition::from_degrees(83.633, 22.014)?,
     ///     scale_arcsec: 1.5,
-    ///     epoch: utc_from_calendar(2026, 4, 21, 20, 0, 0.0).to_julian_date(),
+    ///     epoch: utc_from_calendar(2026, 4, 21, 20, 0, 0.0)?.to_julian_date(),
     ///     focal_mm: None,
     ///     pixel_um: None,
     /// };
@@ -751,9 +751,8 @@ mod tests {
     #[test]
     fn detect_stars_zero_image_errors_with_no_stars_detected() {
         let img = zero_image(128, 128);
-        let err = detect_stars(&img, &DetectionParams::default())
-            .err()
-            .expect("zero image must error");
+        let err =
+            detect_stars(&img, &DetectionParams::default()).expect_err("zero image must error");
         assert!(err.to_string().contains("no stars detected"));
     }
 
@@ -915,9 +914,8 @@ mod tests {
         ];
         let meta = meta_at(180.0, 30.0, 1.5);
         let params = SolveParams::default();
-        let err = fit_initial_wcs(&pairs, 1024, 1024, &meta, &params)
-            .err()
-            .expect("2 pairs must error");
+        let err =
+            fit_initial_wcs(&pairs, 1024, 1024, &meta, &params).expect_err("2 pairs must error");
         assert!(err.to_string().contains("at least 3"), "got: {err}");
     }
 
