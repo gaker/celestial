@@ -1,2 +1,1 @@
-pub mod moon;
-pub use moon::*;
+pub(crate) mod moon;

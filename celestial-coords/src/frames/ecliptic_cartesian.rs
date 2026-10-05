@@ -1,5 +1,5 @@
 use crate::transforms::cartesian::CartesianFrame;
-use celestial_core::constants::{VSOP2013_OBLIQUITY_RAD, VSOP2013_PHI_RAD};
+use celestial_core::ecliptic::{icrs_to_vsop2013, vsop2013_to_icrs};
 use celestial_core::matrix::Vector3;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -25,41 +25,19 @@ impl EclipticCartesian {
 
 impl CartesianFrame for EclipticCartesian {
     fn to_icrs(&self) -> Vector3 {
-        let eps = VSOP2013_OBLIQUITY_RAD;
-        let phi = VSOP2013_PHI_RAD;
-        let (sin_eps, cos_eps) = libm::sincos(eps);
-        let (sin_phi, cos_phi) = libm::sincos(phi);
-
-        let y1 = self.y * cos_eps - self.z * sin_eps;
-        let z1 = self.y * sin_eps + self.z * cos_eps;
-
-        Vector3::new(
-            self.x * cos_phi - y1 * sin_phi,
-            self.x * sin_phi + y1 * cos_phi,
-            z1,
-        )
+        vsop2013_to_icrs(&Vector3::new(self.x, self.y, self.z))
     }
 
     fn from_icrs(icrs: &Vector3) -> Self {
-        let eps = VSOP2013_OBLIQUITY_RAD;
-        let phi = VSOP2013_PHI_RAD;
-        let (sin_eps, cos_eps) = libm::sincos(eps);
-        let (sin_phi, cos_phi) = libm::sincos(phi);
-
-        let x1 = icrs.x * cos_phi + icrs.y * sin_phi;
-        let y1 = icrs.y * cos_phi - icrs.x * sin_phi;
-
-        Self {
-            x: x1,
-            y: y1 * cos_eps + icrs.z * sin_eps,
-            z: -y1 * sin_eps + icrs.z * cos_eps,
-        }
+        let v = icrs_to_vsop2013(icrs);
+        Self::new(v.x, v.y, v.z)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use celestial_core::constants::{VSOP2013_OBLIQUITY_RAD, VSOP2013_PHI_RAD};
 
     #[test]
     fn test_roundtrip() {

@@ -28,9 +28,10 @@ celestial-core              (no internal deps)
     |
 celestial-time              (core)
     |
+    +-- celestial-ephemeris  (core, time)
+    |
 celestial-coords            (core, time)
     |
-    +-- celestial-ephemeris  (core, time, coords)
     +-- celestial-wcs        (core, coords)
     +-- celestial-pointing   (core, time, coords)
     +-- celestial-catalog    (core, time, coords)
@@ -39,8 +40,8 @@ celestial-images            (core, time, wcs)
 ```
 
 No circular dependencies. `core` depends on nothing internal. `time` depends
-only on `core`. `coords` depends on `core` and `time`. Everything else builds
-on those three.
+only on `core`. `coords` and `ephemeris` depend on `core` and `time`.
+Everything else builds on `coords`.
 
 ## Example
 

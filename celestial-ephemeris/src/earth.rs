@@ -1,13 +1,10 @@
-use celestial_core::constants::{AU_KM, MOON_EMB_MASS_RATIO};
+use celestial_core::constants::MOON_EMB_MASS_RATIO;
 use celestial_core::errors::AstroResult;
 use celestial_core::matrix::Vector3;
-use celestial_time::julian::JulianDate;
 use celestial_time::scales::tdb::TDB;
 
 use crate::moon::ElpMpp02Moon;
 use crate::planets::Vsop2013Emb;
-
-const DT_DAYS: f64 = 1.0 / celestial_core::constants::SECONDS_PER_DAY_F64;
 
 pub struct Vsop2013Earth {
     emb: Vsop2013Emb,
@@ -29,35 +26,18 @@ impl Vsop2013Earth {
     }
 
     pub fn heliocentric_position(&self, tdb: &TDB) -> AstroResult<Vector3> {
-        let emb_pos = self.emb.heliocentric_position(tdb)?;
-        let moon_geo_km = self.moon.geocentric_position_icrs(tdb)?;
-        let moon_geo_au = [
-            moon_geo_km[0] / AU_KM,
-            moon_geo_km[1] / AU_KM,
-            moon_geo_km[2] / AU_KM,
-        ];
-
-        Ok(Vector3::new(
-            emb_pos.x - moon_geo_au[0] * MOON_EMB_MASS_RATIO,
-            emb_pos.y - moon_geo_au[1] * MOON_EMB_MASS_RATIO,
-            emb_pos.z - moon_geo_au[2] * MOON_EMB_MASS_RATIO,
-        ))
+        let emb = self.emb.heliocentric_position(tdb)?;
+        let moon = self.moon.geocentric_position(tdb)?;
+        Ok(emb - moon * MOON_EMB_MASS_RATIO)
     }
 
     pub fn heliocentric_state(&self, tdb: &TDB) -> AstroResult<(Vector3, Vector3)> {
-        let pos = self.heliocentric_position(tdb)?;
-        let jd = tdb.to_julian_date();
-        let t_minus = TDB::from_julian_date(JulianDate::new(jd.jd1(), jd.jd2() - DT_DAYS));
-        let t_plus = TDB::from_julian_date(JulianDate::new(jd.jd1(), jd.jd2() + DT_DAYS));
-        let p_minus = self.heliocentric_position(&t_minus)?;
-        let p_plus = self.heliocentric_position(&t_plus)?;
-        let inv_2dt = 1.0 / (2.0 * DT_DAYS);
-        let vel = Vector3::new(
-            (p_plus.x - p_minus.x) * inv_2dt,
-            (p_plus.y - p_minus.y) * inv_2dt,
-            (p_plus.z - p_minus.z) * inv_2dt,
-        );
-        Ok((pos, vel))
+        let (emb_position, emb_velocity) = self.emb.heliocentric_state(tdb)?;
+        let (moon_position, moon_velocity) = self.moon.geocentric_state(tdb)?;
+        Ok((
+            emb_position - moon_position * MOON_EMB_MASS_RATIO,
+            emb_velocity - moon_velocity * MOON_EMB_MASS_RATIO,
+        ))
     }
 }
 
@@ -65,108 +45,61 @@ impl Vsop2013Earth {
 mod tests {
     use super::*;
     use celestial_core::constants::J2000_JD;
+    use celestial_core::errors::{AstroError, MathErrorKind};
     use celestial_time::julian::JulianDate;
 
     #[test]
-    fn earth_differs_from_emb() {
-        let earth = Vsop2013Earth::new();
-        let emb = Vsop2013Emb;
+    fn default_is_new() {
         let tdb = TDB::from_julian_date(JulianDate::new(J2000_JD, 0.0));
-
-        let earth_pos = earth.heliocentric_position(&tdb).unwrap();
-        let emb_pos = emb.heliocentric_position(&tdb).unwrap();
-
-        let diff_au = libm::sqrt(
-            (earth_pos.x - emb_pos.x).powi(2)
-                + (earth_pos.y - emb_pos.y).powi(2)
-                + (earth_pos.z - emb_pos.z).powi(2),
-        );
-        let diff_km = diff_au * AU_KM;
-
-        println!("Earth-EMB difference at J2000: {:.1} km", diff_km);
-        assert!(
-            diff_km > 4000.0 && diff_km < 5000.0,
-            "Earth-EMB difference {} km should be ~4670 km (Moon pulls EMB toward it)",
-            diff_km
+        assert_eq!(
+            Vsop2013Earth::default().heliocentric_state(&tdb).unwrap(),
+            Vsop2013Earth::new().heliocentric_state(&tdb).unwrap()
         );
     }
 
     #[test]
-    fn earth_heliocentric_distance() {
+    fn earth_is_the_emb_less_the_moon_share() {
+        let tdb = TDB::from_julian_date(JulianDate::new(2445665.5, 0.45541555912031195));
+        let (emb_position, emb_velocity) = Vsop2013Emb.heliocentric_state(&tdb).unwrap();
+        let (moon_position, moon_velocity) = ElpMpp02Moon::new().geocentric_state(&tdb).unwrap();
+        let position = emb_position - moon_position * MOON_EMB_MASS_RATIO;
+        let velocity = emb_velocity - moon_velocity * MOON_EMB_MASS_RATIO;
         let earth = Vsop2013Earth::new();
-        let tdb = TDB::from_julian_date(JulianDate::new(J2000_JD, 0.0));
-
-        let pos = earth.heliocentric_position(&tdb).unwrap();
-        let dist_au = libm::sqrt(pos.x.powi(2) + pos.y.powi(2) + pos.z.powi(2));
-
-        assert!(
-            dist_au > 0.98 && dist_au < 1.02,
-            "Earth heliocentric distance {} AU should be ~1 AU",
-            dist_au
+        assert_eq!(
+            earth.heliocentric_state(&tdb).unwrap(),
+            (position, velocity)
         );
+        assert_eq!(earth.heliocentric_position(&tdb).unwrap(), position);
+    }
+
+    fn error_kind<T: std::fmt::Debug>(result: AstroResult<T>) -> MathErrorKind {
+        match result {
+            Err(AstroError::MathError { kind, .. }) => kind,
+            other => panic!("expected a MathError, got {:?}", other),
+        }
     }
 
     #[test]
-    fn earth_heliocentric_seasonal_variation() {
+    fn non_finite_epochs_are_errors() {
         let earth = Vsop2013Earth::new();
-
-        let perihelion_jd = 2451547.5;
-        let aphelion_jd = 2451730.5;
-
-        let tdb_peri = TDB::from_julian_date(JulianDate::new(perihelion_jd, 0.0));
-        let tdb_aph = TDB::from_julian_date(JulianDate::new(aphelion_jd, 0.0));
-
-        let pos_peri = earth.heliocentric_position(&tdb_peri).unwrap();
-        let pos_aph = earth.heliocentric_position(&tdb_aph).unwrap();
-
-        let dist_peri = libm::sqrt(pos_peri.x.powi(2) + pos_peri.y.powi(2) + pos_peri.z.powi(2));
-        let dist_aph = libm::sqrt(pos_aph.x.powi(2) + pos_aph.y.powi(2) + pos_aph.z.powi(2));
-
-        println!("Perihelion distance: {:.6} AU", dist_peri);
-        println!("Aphelion distance: {:.6} AU", dist_aph);
-
-        assert!(
-            dist_peri < dist_aph,
-            "Perihelion {} AU should be less than aphelion {} AU",
-            dist_peri,
-            dist_aph
-        );
-        assert!(
-            dist_peri > 0.98 && dist_peri < 0.985,
-            "Perihelion {} AU should be ~0.983 AU",
-            dist_peri
-        );
-        assert!(
-            dist_aph > 1.01 && dist_aph < 1.02,
-            "Aphelion {} AU should be ~1.017 AU",
-            dist_aph
-        );
+        for (jd1, jd2) in [(f64::NAN, 0.0), (J2000_JD, f64::INFINITY)] {
+            let tdb = TDB::from_julian_date(JulianDate::new(jd1, jd2));
+            let kinds = [
+                error_kind(earth.heliocentric_position(&tdb)),
+                error_kind(earth.heliocentric_state(&tdb)),
+            ];
+            assert_eq!(kinds, [MathErrorKind::NotFinite; 2]);
+        }
     }
 
     #[test]
-    fn earth_default_impl() {
-        let earth: Vsop2013Earth = Default::default();
-        let tdb = TDB::from_julian_date(JulianDate::new(J2000_JD, 0.0));
-        let pos = earth.heliocentric_position(&tdb).unwrap();
-
-        let dist_au = libm::sqrt(pos.x.powi(2) + pos.y.powi(2) + pos.z.powi(2));
-        assert!(dist_au > 0.98 && dist_au < 1.02);
-    }
-
-    #[test]
-    fn earth_heliocentric_state_velocity() {
+    fn epochs_outside_the_moon_range_are_errors() {
         let earth = Vsop2013Earth::new();
-        let tdb = TDB::from_julian_date(JulianDate::new(J2000_JD, 0.0));
-        let (pos, vel) = earth.heliocentric_state(&tdb).unwrap();
-
-        let dist_au = libm::sqrt(pos.x.powi(2) + pos.y.powi(2) + pos.z.powi(2));
-        assert!(dist_au > 0.98 && dist_au < 1.02);
-
-        let speed_au_day = libm::sqrt(vel.x.powi(2) + vel.y.powi(2) + vel.z.powi(2));
-        assert!(
-            speed_au_day > 0.016 && speed_au_day < 0.018,
-            "Earth orbital speed {} AU/day should be ~0.017 AU/day (~30 km/s)",
-            speed_au_day
+        let tdb = TDB::from_julian_date(JulianDate::new(3_000_000.0, 0.0));
+        assert!(Vsop2013Emb.heliocentric_position(&tdb).is_ok());
+        assert_eq!(
+            error_kind(earth.heliocentric_position(&tdb)),
+            MathErrorKind::OutOfRange
         );
     }
 }

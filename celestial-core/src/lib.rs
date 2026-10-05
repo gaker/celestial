@@ -74,6 +74,7 @@
 pub mod angle;
 pub mod cio;
 pub mod constants;
+pub mod ecliptic;
 pub mod errors;
 pub mod location;
 pub mod math;
