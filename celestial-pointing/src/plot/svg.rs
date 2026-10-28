@@ -1,7 +1,13 @@
-use plotters::prelude::*;
+use rizzma::artist::Rgba;
+use rizzma::core::AxisBelow;
+use rizzma::figure::{Bins, HistOptions, QuiverAngles, QuiverOptions, QuiverUnits};
+use rizzma::{Axes, Figure};
 use std::path::Path;
 
 type PlotResult = std::result::Result<(), Box<dyn std::error::Error>>;
+
+const TITLE_SIZE_PX: f64 = 19.0;
+const MARKER_DIAMETER_PT: f64 = 6.0 * 72.0 / 100.0;
 
 pub fn scatter_svg(
     points: &[(f64, f64)],
@@ -11,12 +17,12 @@ pub fn scatter_svg(
     y_label: &str,
 ) -> PlotResult {
     let (x_range, y_range) = padded_ranges(points);
-    let root = SVGBackend::new(path, (800, 600)).into_drawing_area();
-    root.fill(&WHITE)?;
-    let mut chart = build_chart(&root, title, x_label, y_label, &x_range, &y_range)?;
-    draw_crosshairs(&mut chart, &x_range, &y_range)?;
-    draw_points(&mut chart, points)?;
-    root.present()?;
+    let mut fig = new_figure();
+    let ax = fig.add_subplot(1, 1, 1);
+    setup_axes(ax, title, x_label, y_label, &x_range, &y_range);
+    draw_crosshairs(ax);
+    draw_points(ax, points);
+    fig.save_svg(path)?;
     Ok(())
 }
 
@@ -24,24 +30,27 @@ pub fn histogram_svg(values: &[f64], path: &Path, title: &str, x_label: &str) ->
     if values.is_empty() {
         return Ok(());
     }
-    let (bins, bin_width, min_val) = bin_values(values, 20);
-    let max_count = bins.iter().copied().max().unwrap_or(1);
-    let root = SVGBackend::new(path, (800, 600)).into_drawing_area();
-    root.fill(&WHITE)?;
-    let x_max = min_val + 20.0 * bin_width;
-    let mut chart = ChartBuilder::on(&root)
-        .caption(title, ("sans-serif", 24))
-        .margin(20)
-        .x_label_area_size(40)
-        .y_label_area_size(60)
-        .build_cartesian_2d(min_val..x_max, 0u32..(max_count + 1))?;
-    chart
-        .configure_mesh()
-        .x_desc(x_label)
-        .y_desc("Count")
-        .draw()?;
-    draw_histogram_bars(&mut chart, &bins, min_val, bin_width)?;
-    root.present()?;
+    let mut fig = new_figure();
+    let ax = fig.add_subplot(1, 1, 1);
+    let hist = ax.hist_with(
+        values,
+        &HistOptions::new().bins(Bins::Count(20)).color(Rgba::BLUE),
+    );
+    let (Some(&x_min), Some(&x_max)) = (hist.edges.first(), hist.edges.last()) else {
+        return Ok(());
+    };
+    let max_count = hist.counts.iter().copied().fold(1.0, f64::max);
+    setup_axes(
+        ax,
+        title,
+        x_label,
+        "Count",
+        &(x_min, x_max),
+        &(0.0, max_count + 1.0),
+    );
+    // Keep the grid behind the bars.
+    ax.set_axisbelow(AxisBelow::Below);
+    fig.save_svg(path)?;
     Ok(())
 }
 
@@ -55,12 +64,17 @@ pub fn vector_map_svg(
     scale: f64,
 ) -> PlotResult {
     let (x_range, y_range) = padded_ranges(positions);
-    let root = SVGBackend::new(path, (800, 600)).into_drawing_area();
-    root.fill(&WHITE)?;
-    let mut chart = build_chart(&root, title, x_label, y_label, &x_range, &y_range)?;
-    draw_vectors(&mut chart, positions, vectors, scale)?;
-    root.present()?;
+    let mut fig = new_figure();
+    let ax = fig.add_subplot(1, 1, 1);
+    setup_axes(ax, title, x_label, y_label, &x_range, &y_range);
+    draw_points(ax, positions);
+    draw_vectors(ax, positions, vectors, scale);
+    fig.save_svg(path)?;
     Ok(())
+}
+
+fn new_figure() -> Figure {
+    Figure::new(8.0, 6.0).with_dpi(100.0)
 }
 
 fn padded_ranges(points: &[(f64, f64)]) -> ((f64, f64), (f64, f64)) {
@@ -84,131 +98,53 @@ fn extent(iter: impl Iterator<Item = f64>) -> (f64, f64) {
     })
 }
 
-fn build_chart<'a, DB: DrawingBackend + 'a>(
-    area: &'a DrawingArea<DB, plotters::coord::Shift>,
+fn setup_axes(
+    ax: &mut Axes,
     title: &str,
     x_label: &str,
     y_label: &str,
     x_range: &(f64, f64),
     y_range: &(f64, f64),
-) -> std::result::Result<
-    ChartContext<
-        'a,
-        DB,
-        Cartesian2d<plotters::coord::types::RangedCoordf64, plotters::coord::types::RangedCoordf64>,
-    >,
-    Box<dyn std::error::Error>,
->
-where
-    DB::ErrorType: 'static,
-{
-    let mut chart = ChartBuilder::on(area)
-        .caption(title, ("sans-serif", 24))
-        .margin(20)
-        .x_label_area_size(40)
-        .y_label_area_size(60)
-        .build_cartesian_2d(x_range.0..x_range.1, y_range.0..y_range.1)?;
-    chart
-        .configure_mesh()
-        .x_desc(x_label)
-        .y_desc(y_label)
-        .draw()?;
-    Ok(chart)
+) {
+    ax.set_title(title)
+        .set_title_size(TITLE_SIZE_PX)
+        .set_xlabel(x_label)
+        .set_ylabel(y_label)
+        .set_xlim(x_range.0, x_range.1)
+        .set_ylim(y_range.0, y_range.1)
+        .grid(true);
 }
 
-fn draw_crosshairs<DB: DrawingBackend>(
-    chart: &mut ChartContext<
-        DB,
-        Cartesian2d<plotters::coord::types::RangedCoordf64, plotters::coord::types::RangedCoordf64>,
-    >,
-    x_range: &(f64, f64),
-    y_range: &(f64, f64),
-) -> PlotResult
-where
-    DB::ErrorType: 'static,
-{
-    let style = BLACK.mix(0.3).stroke_width(1);
-    chart.draw_series(std::iter::once(PathElement::new(
-        vec![(x_range.0, 0.0), (x_range.1, 0.0)],
-        style,
-    )))?;
-    chart.draw_series(std::iter::once(PathElement::new(
-        vec![(0.0, y_range.0), (0.0, y_range.1)],
-        style,
-    )))?;
-    Ok(())
+fn draw_crosshairs(ax: &mut Axes) {
+    let color = Rgba::BLACK.with_alpha(0.3);
+    ax.axhline_with(0.0, color, 1.0);
+    ax.axvline_with(0.0, color, 1.0);
 }
 
-fn draw_points<DB: DrawingBackend>(
-    chart: &mut ChartContext<
-        DB,
-        Cartesian2d<plotters::coord::types::RangedCoordf64, plotters::coord::types::RangedCoordf64>,
-    >,
-    points: &[(f64, f64)],
-) -> PlotResult
-where
-    DB::ErrorType: 'static,
-{
-    chart.draw_series(
-        points
-            .iter()
-            .map(|&(x, y)| Circle::new((x, y), 3, BLUE.filled())),
-    )?;
-    Ok(())
+fn draw_points(ax: &mut Axes, points: &[(f64, f64)]) {
+    let xs: Vec<f64> = points.iter().map(|p| p.0).collect();
+    let ys: Vec<f64> = points.iter().map(|p| p.1).collect();
+    ax.scatter(&xs, &ys)
+        .set_facecolors(vec![Rgba::BLUE])
+        .set_sizes(vec![MARKER_DIAMETER_PT]);
 }
 
-fn draw_histogram_bars<DB: DrawingBackend>(
-    chart: &mut ChartContext<
-        DB,
-        Cartesian2d<plotters::coord::types::RangedCoordf64, plotters::coord::types::RangedCoordu32>,
-    >,
-    bins: &[u32],
-    min_val: f64,
-    bin_width: f64,
-) -> PlotResult
-where
-    DB::ErrorType: 'static,
-{
-    chart.draw_series(bins.iter().enumerate().map(|(i, &count)| {
-        let x0 = min_val + i as f64 * bin_width;
-        let x1 = x0 + bin_width;
-        Rectangle::new([(x0, 0), (x1, count)], BLUE.filled())
-    }))?;
-    Ok(())
-}
-
-fn draw_vectors<DB: DrawingBackend>(
-    chart: &mut ChartContext<
-        DB,
-        Cartesian2d<plotters::coord::types::RangedCoordf64, plotters::coord::types::RangedCoordf64>,
-    >,
-    positions: &[(f64, f64)],
-    vectors: &[(f64, f64)],
-    scale: f64,
-) -> PlotResult
-where
-    DB::ErrorType: 'static,
-{
-    for (&(px, py), &(vx, vy)) in positions.iter().zip(vectors.iter()) {
-        chart.draw_series(std::iter::once(Circle::new((px, py), 3, BLUE.filled())))?;
-        let ex = px + vx * scale;
-        let ey = py + vy * scale;
-        chart.draw_series(std::iter::once(PathElement::new(
-            vec![(px, py), (ex, ey)],
-            RED.stroke_width(1),
-        )))?;
+/// Each residual becomes an arrow from its position to `position + scale * vector`, in data units.
+fn draw_vectors(ax: &mut Axes, positions: &[(f64, f64)], vectors: &[(f64, f64)], scale: f64) {
+    if scale <= 0.0 || !scale.is_finite() {
+        return;
     }
-    Ok(())
-}
-
-fn bin_values(values: &[f64], n_bins: usize) -> (Vec<u32>, f64, f64) {
-    let (min_val, max_val) = extent(values.iter().copied());
-    let range = (max_val - min_val).max(1e-10);
-    let bin_width = range / n_bins as f64;
-    let mut bins = vec![0u32; n_bins];
-    for &v in values {
-        let idx = libm::floor((v - min_val) / bin_width) as usize;
-        bins[idx.min(n_bins - 1)] += 1;
-    }
-    (bins, bin_width, min_val)
+    let (xs, ys): (Vec<f64>, Vec<f64>) = positions.iter().copied().unzip();
+    let (us, vs): (Vec<f64>, Vec<f64>) = vectors.iter().copied().unzip();
+    ax.quiver_with(
+        &xs,
+        &ys,
+        &us,
+        &vs,
+        &QuiverOptions::new()
+            .scale_units(QuiverUnits::Xy)
+            .angles(QuiverAngles::Xy)
+            .scale(1.0 / scale)
+            .color(Rgba::RED),
+    );
 }
