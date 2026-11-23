@@ -1,187 +1,206 @@
-use celestial_core::constants::{DEG_TO_RAD, HALF_PI};
-
 use crate::common::{
-    intermediate_to_polar, native_coord_from_radians, pole_native_coord, radial_to_intermediate,
+    intermediate_to_polar, native_coord, pole_native_coord, radial_to_intermediate,
 };
 use crate::coordinate::{IntermediateCoord, NativeCoord};
 use crate::error::{WcsError, WcsResult};
+use crate::newton::bracketed_newton;
+use crate::trig::{asind, sincosd, to_degrees, to_radians};
 
-pub(crate) fn project_air(native: NativeCoord, theta_b: f64) -> WcsResult<IntermediateCoord> {
-    let phi = native.phi().radians();
-    let theta = native.theta().radians();
-
-    if theta == HALF_PI {
+pub(crate) fn project_air(native: NativeCoord, k: &WcsResult<f64>) -> WcsResult<IntermediateCoord> {
+    let theta = native.theta_deg();
+    if theta == 90.0 {
         return Ok(IntermediateCoord::new(0.0, 0.0));
     }
-
-    if theta <= -HALF_PI + 1e-10 {
+    if theta == -90.0 {
         return Err(WcsError::singularity(
             "AIR projection diverges at theta = -90",
         ));
     }
-
-    let r_theta = compute_air_r_theta(theta, theta_b)?;
-    Ok(radial_to_intermediate(r_theta, phi))
+    let r_theta = compute_air_r_theta(theta, k)?;
+    Ok(radial_to_intermediate(r_theta, native.phi_deg()))
 }
 
-fn compute_air_r_theta(theta: f64, theta_b: f64) -> WcsResult<f64> {
-    let xi = (HALF_PI - theta) / 2.0;
-    let xi_b = (HALF_PI - theta_b * DEG_TO_RAD) / 2.0;
+// Paper II eq. 71.
+fn compute_air_r_theta(theta: f64, k: &WcsResult<f64>) -> WcsResult<f64> {
+    let h = half_colatitude(theta)
+        .ok_or_else(|| WcsError::singularity("AIR projection: cos(xi) <= 0"))?;
+    Ok(-2.0 * to_degrees(h.ln_cos / h.tan + k.clone()? * h.tan))
+}
 
-    if xi.abs() < 1e-15 {
-        return Ok(0.0);
+// Eq. 71's ln(cos ξb) / tan² ξb, which the paper notes tends to −1/2 as θb
+// approaches 90°. That limit stands for it at θb = 90°, where ξb = 0.
+pub(crate) fn air_k(theta_b: f64) -> WcsResult<f64> {
+    if theta_b == 90.0 {
+        return Ok(-0.5);
     }
-
-    let cos_xi = libm::cos(xi);
-    let tan_xi = libm::tan(xi);
-
-    let term1 = if cos_xi > 0.0 {
-        libm::log(cos_xi) / tan_xi
-    } else {
-        return Err(WcsError::singularity("AIR projection: cos(xi) <= 0"));
-    };
-
-    let term2 = if xi_b.abs() < 1e-10 {
-        -0.5 * tan_xi
-    } else {
-        let cos_xi_b = libm::cos(xi_b);
-        let tan_xi_b = libm::tan(xi_b);
-        if cos_xi_b > 0.0 && tan_xi_b.abs() > 1e-15 {
-            libm::log(cos_xi_b) * tan_xi / (tan_xi_b * tan_xi_b)
-        } else {
-            return Err(WcsError::singularity(
-                "AIR projection: invalid theta_b parameter",
-            ));
-        }
-    };
-
-    Ok(-2.0 * (term1 + term2))
+    match half_colatitude(theta_b) {
+        Some(h) => Ok(h.ln_cos / (h.tan * h.tan)),
+        None => Err(WcsError::singularity(
+            "AIR projection: invalid theta_b parameter",
+        )),
+    }
 }
 
-pub(crate) fn deproject_air(inter: IntermediateCoord, theta_b: f64) -> WcsResult<NativeCoord> {
-    let x = inter.x_deg() * DEG_TO_RAD;
-    let y = inter.y_deg() * DEG_TO_RAD;
-    let (phi, r, is_pole) = intermediate_to_polar(x, y);
+// The functions of ξ = (90° − θ)/2 that eq. 71 and its derivative use. Where
+// cos ξ is near 1, ln cos ξ is ½ log1p(−sin² ξ), which keeps the digits that
+// the log of the rounded cosine loses.
+struct HalfColatitude {
+    ln_cos: f64,
+    tan: f64,
+    sin2: f64,
+    cos2: f64,
+}
 
+fn half_colatitude(theta: f64) -> Option<HalfColatitude> {
+    let (sin_xi, cos_xi) = sincosd((90.0 - theta) / 2.0);
+    (cos_xi > 0.0).then(|| {
+        let (sin2, cos2) = (sin_xi * sin_xi, cos_xi * cos_xi);
+        let ln_cos = if sin2 < cos2 {
+            libm::log1p(-sin2) / 2.0
+        } else {
+            libm::log(cos_xi)
+        };
+        HalfColatitude {
+            ln_cos,
+            tan: sin_xi / cos_xi,
+            sin2,
+            cos2,
+        }
+    })
+}
+
+pub(crate) fn deproject_air(
+    inter: IntermediateCoord,
+    k: &WcsResult<f64>,
+) -> WcsResult<NativeCoord> {
+    let (phi, r_theta, is_pole) = intermediate_to_polar(inter.x_deg(), inter.y_deg());
     if is_pole {
         return Ok(pole_native_coord());
     }
-
-    let theta = solve_air_inverse(r, theta_b)?;
-
-    native_coord_from_radians(phi, theta)
+    native_coord(phi, solve_air_inverse(r_theta, k)?)
 }
 
-fn solve_air_inverse(r: f64, theta_b: f64) -> WcsResult<f64> {
-    const MAX_ITER: usize = 50;
-    const RESIDUAL_TOL: f64 = 5e-16;
-    const LOWER_BOUND: f64 = -HALF_PI + 0.01;
-
-    let zea_guess = HALF_PI - 2.0 * libm::asin((r / 2.0).clamp(-1.0, 1.0));
-    let mut theta = zea_guess.clamp(LOWER_BOUND, HALF_PI);
-    let mut prev_abs_f = f64::INFINITY;
-
-    for _ in 0..MAX_ITER {
-        let r_theta = compute_air_r_theta(theta, theta_b)?;
-        let f = r_theta - r;
-        let abs_f = f.abs();
-
-        if abs_f < RESIDUAL_TOL {
-            return Ok(theta);
-        }
-        if abs_f >= prev_abs_f {
-            return Ok(theta);
-        }
-        prev_abs_f = abs_f;
-
-        let f_prime = compute_air_dr_dtheta(theta, theta_b)?;
-        if f_prime.abs() < 1e-15 {
-            return Err(WcsError::convergence_failure(
-                "AIR inverse: derivative too small",
-            ));
-        }
-
-        theta = (theta - f / f_prime).clamp(LOWER_BOUND, HALF_PI);
-    }
-
-    Err(WcsError::convergence_failure(
-        "AIR inverse: Newton-Raphson did not converge",
-    ))
-}
-
-fn compute_air_dr_dtheta(theta: f64, theta_b: f64) -> WcsResult<f64> {
-    let xi = (HALF_PI - theta) / 2.0;
-    let xi_b = (HALF_PI - theta_b * DEG_TO_RAD) / 2.0;
-
-    if xi.abs() < 1e-15 {
-        return Ok(0.0);
-    }
-
-    let sin_xi = libm::sin(xi);
-    let cos_xi = libm::cos(xi);
-    if cos_xi <= 0.0 {
-        return Err(WcsError::singularity("AIR derivative: cos(xi) <= 0"));
-    }
-
-    let term1 = -1.0 - libm::log(cos_xi) / (sin_xi * sin_xi);
-
-    let term2 = if xi_b.abs() < 1e-10 {
-        -0.5 / (cos_xi * cos_xi)
+// Eq. 71 solved for θ. R runs from 0 at the north pole to infinity at the
+// south, so (−90°, 90°] always holds the root, and r − R rises through it.
+// The ZEA radius (eq. 70) seeds the iteration where it is defined.
+fn solve_air_inverse(r: f64, k: &WcsResult<f64>) -> WcsResult<f64> {
+    let rho = to_radians(r) / 2.0;
+    let seed = if rho < 1.0 {
+        90.0 - 2.0 * asind(rho)
     } else {
-        let cos_xi_b = libm::cos(xi_b);
-        let tan_xi_b = libm::tan(xi_b);
-        if cos_xi_b <= 0.0 || tan_xi_b.abs() < 1e-15 {
-            return Err(WcsError::singularity(
-                "AIR derivative: invalid theta_b parameter",
-            ));
-        }
-        libm::log(cos_xi_b) / (tan_xi_b * tan_xi_b * cos_xi * cos_xi)
+        0.0
     };
+    let f_and_slope = |theta| {
+        let r_theta = compute_air_r_theta(theta, k)?;
+        Ok((r - r_theta, -compute_air_dr_dtheta(theta, k)?))
+    };
+    bracketed_newton((-90.0, 90.0), seed, f_and_slope, "AIR inverse")
+}
 
-    Ok(term1 + term2)
+// dRθ/dθ in degrees per degree, the same number as in radians per radian.
+fn compute_air_dr_dtheta(theta: f64, k: &WcsResult<f64>) -> WcsResult<f64> {
+    let h = half_colatitude(theta)
+        .ok_or_else(|| WcsError::singularity("AIR derivative: cos(xi) <= 0"))?;
+    Ok(-1.0 - h.ln_cos / h.sin2 + k.clone()? / h.cos2)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::common::phi_on_same_edge;
-    use crate::Projection;
-    use celestial_core::angle::Angle;
-    use celestial_core::assert_ulp_le;
-    #[test]
-    fn test_air_roundtrip() {
-        for theta_b in [30.0, 45.0, 60.0, 75.0, 90.0] {
-            let proj = Projection::air(theta_b);
-            for phi_deg in [-180.0, -90.0, 0.0, 30.0, 90.0, 135.0, 180.0] {
-                for theta_deg in [10.0, 30.0, 45.0, 60.0, 75.0, 85.0, 89.0] {
-                    let original = NativeCoord::new(
-                        Angle::from_degrees(phi_deg),
-                        Angle::from_degrees(theta_deg),
-                    );
-                    let inter = proj.project(original).unwrap();
-                    let recovered = proj.deproject(inter).unwrap();
+    use crate::common::assert_pinned;
+    use crate::spherical::Projection;
 
-                    let ulp_bar = if theta_deg >= 85.0 { 64 } else { 20 };
-                    assert_ulp_le!(
-                        original.phi().degrees(),
-                        phi_on_same_edge(original.phi(), recovered.phi()).degrees(),
-                        ulp_bar,
-                        "phi (theta_b={}, phi={}, theta={})",
-                        theta_b,
-                        phi_deg,
-                        theta_deg
-                    );
-                    assert_ulp_le!(
-                        original.theta().degrees(),
-                        recovered.theta().degrees(),
-                        ulp_bar,
-                        "theta (theta_b={}, phi={}, theta={})",
-                        theta_b,
-                        phi_deg,
-                        theta_deg
-                    );
-                }
-            }
+    // Against a 60-digit evaluation the projected values are within 3.53 ulp
+    // and the deprojected φ within 0.44 ulp. The inverse finds θ to the ~2 ulp
+    // to which eq. 71 evaluates R, so θ is 16.17 ulp low at θ = 10° for
+    // θb = 30°: R ≈ 78 there is three binades above θ.
+    #[test]
+    fn test_air_pinned_both_ways() {
+        let cases = [
+            (
+                90.0,
+                (
+                    (-180.0, 10.0),
+                    (0.0, 84.47347480700826),
+                    (180.0, 10.000000000000012),
+                ),
+            ),
+            (
+                90.0,
+                (
+                    (135.0, 30.0),
+                    (43.57833528667381, 43.57833528667382),
+                    (135.0, 29.999999999999993),
+                ),
+            ),
+            (
+                45.0,
+                (
+                    (30.0, 89.0),
+                    (0.4807314393582714, -0.8326512777642426),
+                    (30.000000000000004, 89.0),
+                ),
+            ),
+            (
+                45.0,
+                ((-90.0, 60.0), (-28.99519052100856, -0.0), (-90.0, 60.0)),
+            ),
+            (
+                30.0,
+                (
+                    (30.0, 10.0),
+                    (38.944582975502854, -67.45399639315286),
+                    (30.000000000000004, 10.000000000000009),
+                ),
+            ),
+        ];
+        for (theta_b, row) in cases {
+            assert_pinned(&Projection::air(theta_b), &[row]);
+        }
+    }
+
+    #[test]
+    fn test_air_near_pole_keeps_the_radius() {
+        // 1e-6° from the pole, cos ξ is within an ulp of 1 and its log rounds
+        // to zero. Against a 60-digit evaluation, θb = 90 is correctly rounded;
+        // the θb = 45 x is 0.79 ulp low and y 1.62 ulp high, from the rounding
+        // of ln cos ξb / tan² ξb.
+        let native = NativeCoord::new(37.5, 89.999999);
+        let cases = [
+            (90.0, (6.087614274717458e-7, -7.933533382882105e-7)),
+            (45.0, (5.85298246638504e-7, -7.627755256987684e-7)),
+        ];
+        for (theta_b, expected) in cases {
+            let inter = Projection::air(theta_b).project(native).unwrap();
+            assert_eq!((inter.x_deg(), inter.y_deg()), expected, "θb = {theta_b}");
+        }
+    }
+
+    #[test]
+    fn test_air_near_origin_keeps_the_latitude() {
+        // Against a 60-digit evaluation, φ is 0.81 ulp low and both θ are
+        // correctly rounded.
+        let inter = IntermediateCoord::new(1e-6, -2e-6);
+        let cases = [(90.0, 89.99999776393203), (45.0, 89.99999767429351)];
+        for (theta_b, expected) in cases {
+            let native = Projection::air(theta_b).deproject(inter).unwrap();
+            let got = (native.phi_deg(), native.theta_deg());
+            assert_eq!(got, (26.565051177077986, expected), "θb = {theta_b}");
+        }
+    }
+
+    #[test]
+    fn test_air_inverse_reaches_the_far_south() {
+        // These latitudes lie south of −89.43°, where an iteration that stalls
+        // against a bound must not report success. This far south 90° − θ
+        // keeps one bit fewer than θ, so against a 60-digit evaluation the
+        // θb = 90 θ is 1.28 ulp low and the θb = 45 θ 0.76 ulp low.
+        let inter = IntermediateCoord::new(20000.0, 0.0);
+        let cases = [(90.0, -89.67168870721409), (45.0, -89.69699833037569)];
+        for (theta_b, expected) in cases {
+            let native = Projection::air(theta_b).deproject(inter).unwrap();
+            let got = (native.phi_deg(), native.theta_deg());
+            assert_eq!(got, (90.0, expected), "θb = {theta_b}");
         }
     }
 
@@ -189,18 +208,12 @@ mod tests {
     fn test_air_edge_cases() {
         // South pole: AIR diverges at theta = -90.
         let proj = Projection::air(90.0);
-        let native = NativeCoord::new(Angle::from_degrees(0.0), Angle::from_degrees(-90.0));
+        let native = NativeCoord::new(0.0, -90.0);
         assert!(proj.project(native).is_err());
 
-        // theta near pi/2 takes the xi ≈ 0 early return — result must be tiny.
-        let native = NativeCoord::new(Angle::from_degrees(0.0), Angle::from_degrees(89.9999999));
-        let inter = project_air(native, 90.0).unwrap();
-        assert!(inter.x_deg().abs() < 1e-6);
-        assert!(inter.y_deg().abs() < 1e-6);
-
         // Invalid theta_b (outside valid range) errors.
-        let native = NativeCoord::new(Angle::from_degrees(0.0), Angle::from_degrees(45.0));
-        let err = project_air(native, -100.0).unwrap_err();
+        let native = NativeCoord::new(0.0, 45.0);
+        let err = Projection::air(-100.0).project(native).unwrap_err();
         assert!(
             matches!(err, WcsError::Singularity { .. }),
             "invalid theta_b: {:?}",

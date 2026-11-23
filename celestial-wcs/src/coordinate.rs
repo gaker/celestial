@@ -1,5 +1,6 @@
 use celestial_core::angle::Angle;
-use celestial_core::constants::DEG_TO_RAD;
+
+use crate::error::{WcsError, WcsResult};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PixelCoord {
@@ -24,10 +25,8 @@ impl PixelCoord {
     }
 
     #[inline]
-    pub fn to_array_index(&self) -> (usize, usize) {
-        let row = libm::round(self.y - 1.0) as usize;
-        let col = libm::round(self.x - 1.0) as usize;
-        (row, col)
+    pub fn to_array_index(&self) -> WcsResult<(usize, usize)> {
+        Ok((array_index(self.y)?, array_index(self.x)?))
     }
 
     #[inline]
@@ -37,6 +36,16 @@ impl PixelCoord {
             y: row as f64 + 1.0,
         }
     }
+}
+
+// FITS pixel n is centred on n and covers array index n − 1.
+fn array_index(pixel: f64) -> WcsResult<usize> {
+    let index = libm::round(pixel - 1.0);
+    if !(0.0..usize::MAX as f64).contains(&index) {
+        let message = format!("pixel {pixel} has no array index");
+        return Err(WcsError::out_of_bounds(message));
+    }
+    Ok(index as usize)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -60,61 +69,79 @@ impl IntermediateCoord {
     pub fn y_deg(&self) -> f64 {
         self.y
     }
-
-    #[inline]
-    pub fn x_rad(&self) -> f64 {
-        self.x * DEG_TO_RAD
-    }
-
-    #[inline]
-    pub fn y_rad(&self) -> f64 {
-        self.y * DEG_TO_RAD
-    }
 }
 
+// Paper II gives native and celestial coordinates in degrees, so they are
+// stored that way; an `Angle` is made only when a caller asks for one.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct NativeCoord {
-    phi: Angle,
-    theta: Angle,
+    phi: f64,
+    theta: f64,
 }
 
 impl NativeCoord {
     #[inline]
-    pub fn new(phi: Angle, theta: Angle) -> Self {
-        Self { phi, theta }
+    pub fn new(phi_deg: f64, theta_deg: f64) -> Self {
+        Self {
+            phi: phi_deg,
+            theta: theta_deg,
+        }
     }
 
     #[inline]
-    pub fn phi(&self) -> Angle {
+    pub fn phi_deg(&self) -> f64 {
         self.phi
     }
 
     #[inline]
-    pub fn theta(&self) -> Angle {
+    pub fn theta_deg(&self) -> f64 {
         self.theta
+    }
+
+    #[inline]
+    pub fn phi(&self) -> Angle {
+        Angle::from_degrees(self.phi)
+    }
+
+    #[inline]
+    pub fn theta(&self) -> Angle {
+        Angle::from_degrees(self.theta)
     }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct CelestialCoord {
-    alpha: Angle,
-    delta: Angle,
+    alpha: f64,
+    delta: f64,
 }
 
 impl CelestialCoord {
     #[inline]
-    pub fn new(alpha: Angle, delta: Angle) -> Self {
-        Self { alpha, delta }
+    pub fn new(alpha_deg: f64, delta_deg: f64) -> Self {
+        Self {
+            alpha: alpha_deg,
+            delta: delta_deg,
+        }
     }
 
     #[inline]
-    pub fn alpha(&self) -> Angle {
+    pub fn alpha_deg(&self) -> f64 {
         self.alpha
     }
 
     #[inline]
-    pub fn delta(&self) -> Angle {
+    pub fn delta_deg(&self) -> f64 {
         self.delta
+    }
+
+    #[inline]
+    pub fn alpha(&self) -> Angle {
+        Angle::from_degrees(self.alpha)
+    }
+
+    #[inline]
+    pub fn delta(&self) -> Angle {
+        Angle::from_degrees(self.delta)
     }
 }
 
@@ -132,8 +159,12 @@ mod tests {
     #[test]
     fn test_pixel_array_index_conversion() {
         // Forward direction: 1-indexed FITS pixel -> 0-indexed (row, col).
-        assert_eq!(PixelCoord::new(1.0, 1.0).to_array_index(), (0, 0));
-        assert_eq!(PixelCoord::new(10.0, 20.0).to_array_index(), (19, 9));
+        assert_eq!(PixelCoord::new(1.0, 1.0).to_array_index().unwrap(), (0, 0));
+        assert_eq!(
+            PixelCoord::new(10.0, 20.0).to_array_index().unwrap(),
+            (19, 9)
+        );
+        assert_eq!(PixelCoord::new(0.6, 1.4).to_array_index().unwrap(), (0, 0));
 
         // Inverse direction: (row, col) -> FITS pixel.
         assert_eq!(
@@ -147,8 +178,26 @@ mod tests {
 
         // Round trip preserves the original pixel.
         let p = PixelCoord::new(50.0, 100.0);
-        let (row, col) = p.to_array_index();
+        let (row, col) = p.to_array_index().unwrap();
         assert_eq!(PixelCoord::from_array_index(row, col), p);
+    }
+
+    #[test]
+    fn test_pixel_off_the_array_has_no_index() {
+        let off = [
+            (f64::NAN, 1.0),
+            (1.0, f64::INFINITY),
+            (0.4, 1.0),
+            (1.0, -3.0),
+            (1e20, 1.0),
+        ];
+        for (x, y) in off {
+            let result = PixelCoord::new(x, y).to_array_index();
+            assert!(
+                matches!(result, Err(WcsError::OutOfBounds { .. })),
+                "({x}, {y}): {result:?}"
+            );
+        }
     }
 
     #[test]
@@ -156,25 +205,24 @@ mod tests {
         let c = IntermediateCoord::new(0.001, -0.002);
         assert_eq!(c.x_deg(), 0.001);
         assert_eq!(c.y_deg(), -0.002);
-        assert!((c.x_rad() - 0.001_f64.to_radians()).abs() < 1e-15);
-        assert!((c.y_rad() - (-0.002_f64).to_radians()).abs() < 1e-15);
     }
 
     #[test]
     fn test_native_coord() {
-        let phi = Angle::from_degrees(45.0);
-        let theta = Angle::from_degrees(30.0);
-        let n = NativeCoord::new(phi, theta);
-        assert_eq!(n.phi(), phi);
-        assert_eq!(n.theta(), theta);
+        let n = NativeCoord::new(45.0, 30.0);
+        assert_eq!(n.phi_deg(), 45.0);
+        assert_eq!(n.theta_deg(), 30.0);
+        assert_eq!(n.phi(), Angle::from_degrees(45.0));
+        assert_eq!(n.theta(), Angle::from_degrees(30.0));
     }
 
     #[test]
-    fn test_celestial_coord() {
-        let alpha = Angle::from_degrees(180.0);
-        let delta = Angle::from_degrees(45.0);
-        let c = CelestialCoord::new(alpha, delta);
-        assert_eq!(c.alpha(), alpha);
-        assert_eq!(c.delta(), delta);
+    fn test_celestial_coord_keeps_degrees_exact() {
+        // 123.456° does not survive a trip through radians.
+        let c = CelestialCoord::new(123.456, -45.0);
+        assert_eq!(c.alpha_deg(), 123.456);
+        assert_eq!(c.delta_deg(), -45.0);
+        assert_eq!(c.alpha(), Angle::from_degrees(123.456));
+        assert_eq!(c.delta(), Angle::from_degrees(-45.0));
     }
 }

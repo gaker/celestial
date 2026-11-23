@@ -2,7 +2,7 @@ use thiserror::Error;
 
 pub type WcsResult<T> = Result<T, WcsError>;
 
-#[derive(Debug, Error)]
+#[derive(Debug, Clone, Error)]
 pub enum WcsError {
     #[error("Missing required WCS keyword: {keyword}")]
     MissingKeyword { keyword: String },
@@ -27,54 +27,51 @@ pub enum WcsError {
 
     #[error("Non-invertible matrix (determinant = {determinant})")]
     NonInvertibleMatrix { determinant: f64 },
-
-    #[error("Coordinate error: {0}")]
-    CoordinateError(#[from] celestial_coords::errors::CoordError),
 }
 
 impl WcsError {
-    pub fn missing_keyword(keyword: impl Into<String>) -> Self {
+    pub(crate) fn missing_keyword(keyword: impl Into<String>) -> Self {
         Self::MissingKeyword {
             keyword: keyword.into(),
         }
     }
 
-    pub fn invalid_keyword(keyword: impl Into<String>, message: impl Into<String>) -> Self {
+    pub(crate) fn invalid_keyword(keyword: impl Into<String>, message: impl Into<String>) -> Self {
         Self::InvalidKeyword {
             keyword: keyword.into(),
             message: message.into(),
         }
     }
 
-    pub fn unsupported_projection(code: impl Into<String>) -> Self {
+    pub(crate) fn unsupported_projection(code: impl Into<String>) -> Self {
         Self::UnsupportedProjection { code: code.into() }
     }
 
-    pub fn singularity(message: impl Into<String>) -> Self {
+    pub(crate) fn singularity(message: impl Into<String>) -> Self {
         Self::Singularity {
             message: message.into(),
         }
     }
 
-    pub fn out_of_bounds(message: impl Into<String>) -> Self {
+    pub(crate) fn out_of_bounds(message: impl Into<String>) -> Self {
         Self::OutOfBounds {
             message: message.into(),
         }
     }
 
-    pub fn invalid_parameter(message: impl Into<String>) -> Self {
+    pub(crate) fn invalid_parameter(message: impl Into<String>) -> Self {
         Self::InvalidParameter {
             message: message.into(),
         }
     }
 
-    pub fn convergence_failure(message: impl Into<String>) -> Self {
+    pub(crate) fn convergence_failure(message: impl Into<String>) -> Self {
         Self::ConvergenceFailure {
             message: message.into(),
         }
     }
 
-    pub fn non_invertible_matrix(determinant: f64) -> Self {
+    pub(crate) fn non_invertible_matrix(determinant: f64) -> Self {
         Self::NonInvertibleMatrix { determinant }
     }
 }

@@ -3,186 +3,133 @@ use std::collections::HashMap;
 use crate::error::{WcsError, WcsResult};
 use crate::header::KeywordProvider;
 use crate::spherical::Projection;
+use crate::trig::sincosd;
 
 use super::build::MatrixSpec;
+use super::units::{in_degrees, AngleUnit};
+use super::world_axes::LongitudeFirst;
 
-pub(super) fn create_projection_from_code(
-    code: &str,
-    pv_params: &HashMap<(u8, u8), f64>,
-) -> WcsResult<Projection> {
-    match code {
-        "TAN" => Ok(Projection::tan()),
-        "SIN" => {
-            let xi = pv_params.get(&(2, 1)).copied().unwrap_or(0.0);
-            let eta = pv_params.get(&(2, 2)).copied().unwrap_or(0.0);
-            if xi == 0.0 && eta == 0.0 {
-                Ok(Projection::sin())
-            } else {
-                Ok(Projection::sin_with_params(xi, eta))
-            }
-        }
-        "ARC" => Ok(Projection::arc()),
-        "STG" => Ok(Projection::stg()),
-        "ZEA" => Ok(Projection::zea()),
-        "AZP" => {
-            let mu = pv_params.get(&(2, 1)).copied().unwrap_or(0.0);
-            let gamma = pv_params.get(&(2, 2)).copied().unwrap_or(0.0);
-            Ok(Projection::azp(mu, gamma))
-        }
-        "SZP" => {
-            let mu = pv_params.get(&(2, 1)).copied().unwrap_or(0.0);
-            let phi_c = pv_params.get(&(2, 2)).copied().unwrap_or(0.0);
-            let theta_c = pv_params.get(&(2, 3)).copied().unwrap_or(90.0);
-            Ok(Projection::szp(mu, phi_c, theta_c))
-        }
-        "ZPN" => {
-            let mut coeffs = Vec::new();
-            for i in 0..=20 {
-                if let Some(&val) = pv_params.get(&(2, i)) {
-                    while coeffs.len() < i as usize {
-                        coeffs.push(0.0);
-                    }
-                    coeffs.push(val);
-                }
-            }
-            if coeffs.is_empty() {
-                coeffs.push(0.0);
-                coeffs.push(1.0);
-            }
-            Ok(Projection::zpn(coeffs))
-        }
-        "AIR" => {
-            let theta_b = pv_params.get(&(2, 1)).copied().unwrap_or(90.0);
-            Ok(Projection::air(theta_b))
-        }
-        "CAR" => Ok(Projection::car()),
-        "MER" => Ok(Projection::mer()),
-        "CEA" => {
-            let lambda = pv_params.get(&(2, 1)).copied().unwrap_or(1.0);
-            Ok(Projection::cea_with_lambda(lambda))
-        }
-        "CYP" => {
-            let mu = pv_params.get(&(2, 1)).copied().unwrap_or(0.0);
-            let lambda = pv_params.get(&(2, 2)).copied().unwrap_or(1.0);
-            Ok(Projection::cyp(mu, lambda))
-        }
-        "SFL" => Ok(Projection::sfl()),
-        "PAR" => Ok(Projection::par()),
-        "MOL" => Ok(Projection::mol()),
-        "AIT" => Ok(Projection::ait()),
-        "COP" => {
-            let theta_a = pv_params.get(&(2, 1)).copied().ok_or_else(|| {
-                WcsError::missing_keyword("COP projection requires PV2_1 (theta_a)")
-            })?;
-            let eta = pv_params.get(&(2, 2)).copied().unwrap_or(0.0);
-            Ok(Projection::cop(theta_a, eta))
-        }
-        "COE" => {
-            let theta_a = pv_params.get(&(2, 1)).copied().ok_or_else(|| {
-                WcsError::missing_keyword("COE projection requires PV2_1 (theta_a)")
-            })?;
-            let eta = pv_params.get(&(2, 2)).copied().unwrap_or(0.0);
-            Ok(Projection::coe(theta_a, eta))
-        }
-        "COD" => {
-            let theta_a = pv_params.get(&(2, 1)).copied().ok_or_else(|| {
-                WcsError::missing_keyword("COD projection requires PV2_1 (theta_a)")
-            })?;
-            let eta = pv_params.get(&(2, 2)).copied().unwrap_or(0.0);
-            Ok(Projection::cod(theta_a, eta))
-        }
-        "COO" => {
-            let theta_a = pv_params.get(&(2, 1)).copied().ok_or_else(|| {
-                WcsError::missing_keyword("COO projection requires PV2_1 (theta_a)")
-            })?;
-            let eta = pv_params.get(&(2, 2)).copied().unwrap_or(0.0);
-            Ok(Projection::coo(theta_a, eta))
-        }
-        "BON" => {
-            let theta_1 = pv_params.get(&(2, 1)).ok_or_else(|| {
-                WcsError::missing_keyword("BON projection requires PV2_1 (theta_1)")
-            })?;
-            Ok(Projection::bon(*theta_1))
-        }
-        "PCO" => Ok(Projection::pco()),
-        "TSC" => Ok(Projection::tsc()),
-        "CSC" => Ok(Projection::csc()),
-        "QSC" => Ok(Projection::qsc()),
-        _ => Err(WcsError::unsupported_projection(code)),
-    }
-}
-
-pub(super) fn parse_ctype(ctype: &str) -> WcsResult<(&str, &str)> {
+// Paper II §3: the coordinate type, padding dashes, then the projection code.
+// The SIP convention appends a further "-SIP".
+pub(super) fn parse_ctype(ctype: &str) -> WcsResult<(&str, &str, Option<&str>)> {
     let trimmed = ctype.trim();
+    let invalid = |why: &str| WcsError::invalid_keyword("CTYPE", format!("{why}: '{ctype}'"));
+    if trimmed.starts_with('-') {
+        return Err(invalid("Invalid CTYPE format"));
+    }
+    let Some((prefix, rest)) = trimmed.split_once('-') else {
+        return Err(invalid("Invalid CTYPE format (no dash separator)"));
+    };
+    let (code, suffix) = match rest.trim_start_matches('-').split_once('-') {
+        Some((code, suffix)) => (code, Some(suffix)),
+        None => (rest.trim_start_matches('-'), None),
+    };
+    if code.is_empty() {
+        return Err(invalid("Missing projection code in CTYPE"));
+    }
+    if suffix.is_some_and(|s| s.is_empty() || s.contains('-')) {
+        return Err(invalid("Malformed CTYPE suffix"));
+    }
+    Ok((prefix, code, suffix))
+}
 
-    if let Some(dash_pos) = trimmed.rfind('-') {
-        if dash_pos == 0 {
-            return Err(WcsError::invalid_keyword(
-                "CTYPE",
-                format!("Invalid CTYPE format: '{}'", ctype),
-            ));
-        }
+// Both axes must name the same projection and the same suffix.
+pub(super) fn parse_ctype_pair<'a>(
+    ctype1: &'a str,
+    ctype2: &'a str,
+) -> WcsResult<(&'a str, &'a str, Option<&'a str>)> {
+    let (prefix1, code1, suffix1) = parse_ctype(ctype1)?;
+    let (prefix2, code2, suffix2) = parse_ctype(ctype2)?;
+    let mismatch = |message: String| Err(WcsError::invalid_keyword("CTYPE1/CTYPE2", message));
+    if (code1, suffix1) != (code2, suffix2) {
+        return mismatch(format!(
+            "Mismatched projection codes: '{ctype1}' vs '{ctype2}'"
+        ));
+    }
+    if !is_celestial_pair(prefix1, prefix2) {
+        return mismatch(format!(
+            "'{ctype1}' and '{ctype2}' are not a celestial pair"
+        ));
+    }
+    Ok((prefix1, code1, suffix1))
+}
 
-        let prefix_part = &trimmed[..dash_pos];
-        let proj_part = &trimmed[dash_pos + 1..];
+// Paper II §3: RA/DEC, or xLON/xLAT and yzLN/yzLT with the same x or yz.
+pub(super) fn is_celestial_pair(lon: &str, lat: &str) -> bool {
+    let same = |lon_ending, lat_ending| {
+        celestial_system(lon, lon_ending)
+            .is_some_and(|system| celestial_system(lat, lat_ending) == Some(system))
+    };
+    (lon, lat) == ("RA", "DEC") || same("LON", "LAT") || same("LN", "LT")
+}
 
-        let prefix = prefix_part.trim_end_matches('-');
+// The left half of CTYPE is four characters.
+fn celestial_system<'a>(prefix: &'a str, ending: &str) -> Option<&'a str> {
+    prefix
+        .strip_suffix(ending)
+        .filter(|system| system.len() + ending.len() == 4)
+}
 
-        if proj_part.is_empty() {
-            return Err(WcsError::invalid_keyword(
-                "CTYPE",
-                format!("Missing projection code in CTYPE: '{}'", ctype),
-            ));
-        }
+// Paper I §2.4: an absent CRPIXj or CRVALi is 0, an absent CDELTi 1.
+pub(super) fn axis_pair(header: &impl KeywordProvider, key: &str, default: f64) -> [f64; 2] {
+    [1, 2].map(|i| header.get_float(&format!("{key}{i}")).unwrap_or(default))
+}
 
-        Ok((prefix, proj_part))
-    } else {
-        Err(WcsError::invalid_keyword(
-            "CTYPE",
-            format!("Invalid CTYPE format (no dash separator): '{}'", ctype),
-        ))
+// CDi_j and CDELTi are in the units of axis i; PC is a pure number.
+pub(super) fn parse_matrix(
+    header: &LongitudeFirst<'_, impl KeywordProvider>,
+    units: [AngleUnit; 2],
+) -> MatrixSpec {
+    if let Some(cd) = parse_square(header, "CD", [[0.0; 2]; 2]) {
+        return MatrixSpec::Cd([0, 1].map(|i| cd[i].map(|v| units[i].to_degrees(v))));
+    }
+    let cdelt = in_degrees(axis_pair(header, "CDELT", 1.0), units);
+    let pixel = header.paired_pixel_axes();
+    let unit = [0, 1].map(|i| [0, 1].map(|j| if pixel[i] == j { 1.0 } else { 0.0 }));
+
+    // Paper II §6.2 bars CROTA2 beside PC, so any PC keyword means the header
+    // uses the current formalism.
+    if let Some(pc) = parse_square(header, "PC", unit) {
+        return MatrixSpec::PcCdelt { pc, cdelt };
+    }
+    match header.get_float("CROTA2") {
+        Some(rho) => MatrixSpec::Cd(crota_cd(cdelt, rho, pixel)),
+        None => MatrixSpec::PcCdelt { pc: unit, cdelt },
     }
 }
 
-pub(super) fn parse_matrix(header: &impl KeywordProvider) -> WcsResult<MatrixSpec> {
-    let cd11 = header.get_float("CD1_1");
-    let cd12 = header.get_float("CD1_2");
-    let cd21 = header.get_float("CD2_1");
-    let cd22 = header.get_float("CD2_2");
-
-    if cd11.is_some() || cd12.is_some() || cd21.is_some() || cd22.is_some() {
-        let cd = [
-            [cd11.unwrap_or(0.0), cd12.unwrap_or(0.0)],
-            [cd21.unwrap_or(0.0), cd22.unwrap_or(0.0)],
-        ];
-        return Ok(MatrixSpec::Cd(cd));
+// None when the header has no element of the matrix; otherwise absent
+// elements take their defaults.
+fn parse_square(
+    header: &impl KeywordProvider,
+    prefix: &str,
+    default: [[f64; 2]; 2],
+) -> Option<[[f64; 2]; 2]> {
+    let element = |i: usize, j: usize| header.get_float(&format!("{prefix}{}_{}", i + 1, j + 1));
+    let found = [0, 1].map(|i| [0, 1].map(|j| element(i, j)));
+    if found.iter().flatten().all(Option::is_none) {
+        return None;
     }
+    Some([0, 1].map(|i| [0, 1].map(|j| found[i][j].unwrap_or(default[i][j]))))
+}
 
-    let cdelt1 = header.get_float("CDELT1");
-    let cdelt2 = header.get_float("CDELT2");
-
-    if let (Some(c1), Some(c2)) = (cdelt1, cdelt2) {
-        let pc11 = header.get_float("PC1_1").unwrap_or(1.0);
-        let pc12 = header.get_float("PC1_2").unwrap_or(0.0);
-        let pc21 = header.get_float("PC2_1").unwrap_or(0.0);
-        let pc22 = header.get_float("PC2_2").unwrap_or(1.0);
-
-        let pc = [[pc11, pc12], [pc21, pc22]];
-        let cdelt = [c1, c2];
-
-        return Ok(MatrixSpec::PcCdelt { pc, cdelt });
-    }
-
-    Err(WcsError::missing_keyword(
-        "CD1_1 or CDELT1 (no transformation matrix found)",
-    ))
+// Paper II eq. 189, the AIPS rotation of the CDELT-scaled axes. It equals
+// CDELT times the PC of eq. 187 without rounding the ratio λ of eq. 188.
+// Its columns are the pixel axes paired with longitude and latitude.
+fn crota_cd(cdelt: [f64; 2], rho_deg: f64, pixel: [usize; 2]) -> [[f64; 2]; 2] {
+    let (sin_rho, cos_rho) = sincosd(rho_deg);
+    let rotated = [
+        [cdelt[0] * cos_rho, -cdelt[1] * sin_rho],
+        [cdelt[0] * sin_rho, cdelt[1] * cos_rho],
+    ];
+    [0, 1].map(|i| [0, 1].map(|j| rotated[i][pixel[j]]))
 }
 
 pub(super) fn parse_pv_params(header: &impl KeywordProvider) -> HashMap<(u8, u8), f64> {
     let mut pv_params = HashMap::new();
 
     for axis in 1..=2u8 {
-        for index in 0..=20u8 {
+        for index in 0..=Projection::PV_LAST_INDEX {
             let key = format!("PV{}_{}", axis, index);
             if let Some(value) = header.get_float(&key) {
                 pv_params.insert((axis, index), value);
@@ -195,7 +142,6 @@ pub(super) fn parse_pv_params(header: &impl KeywordProvider) -> HashMap<(u8, u8)
 
 #[cfg(test)]
 mod tests {
-    use super::super::wcs::projection_to_code;
     use super::*;
 
     #[test]
@@ -213,10 +159,27 @@ mod tests {
             ("  RA---TAN  ", "RA", "TAN"),
         ];
         for &(input, expected_prefix, expected_proj) in cases {
-            let (prefix, proj) = parse_ctype(input)
+            let (prefix, proj, suffix) = parse_ctype(input)
                 .unwrap_or_else(|e| panic!("parse_ctype({:?}) failed: {}", input, e));
             assert_eq!(prefix, expected_prefix, "prefix for {:?}", input);
             assert_eq!(proj, expected_proj, "proj for {:?}", input);
+            assert_eq!(suffix, None, "suffix for {:?}", input);
+        }
+    }
+
+    #[test]
+    fn test_parse_ctype_separates_the_sip_suffix() {
+        assert_eq!(
+            parse_ctype("RA---TAN-SIP").unwrap(),
+            ("RA", "TAN", Some("SIP"))
+        );
+        assert_eq!(
+            parse_ctype("DEC--TAN-SIP").unwrap(),
+            ("DEC", "TAN", Some("SIP"))
+        );
+        for malformed in ["RA---TAN-", "RA---TAN-SIP-X"] {
+            let err = parse_ctype(malformed).unwrap_err().to_string();
+            assert!(err.contains("Malformed CTYPE suffix"), "{malformed}: {err}");
         }
     }
 
@@ -236,53 +199,10 @@ mod tests {
     }
 
     #[test]
-    fn test_create_projection_from_code_round_trips_all_codes() {
-        type PvEntry = ((u8, u8), f64);
-        let with_params: &[(&str, &[PvEntry])] = &[
-            ("SIN", &[]),
-            ("ARC", &[]),
-            ("STG", &[]),
-            ("ZEA", &[]),
-            ("AZP", &[((2, 1), 2.0), ((2, 2), 30.0)]),
-            ("AZP", &[]),
-            ("SZP", &[((2, 1), 2.0), ((2, 2), 45.0), ((2, 3), 60.0)]),
-            ("SZP", &[]),
-            ("ZPN", &[((2, 0), 0.0), ((2, 1), 1.0), ((2, 3), 0.1)]),
-            ("ZPN", &[]),
-            ("AIR", &[((2, 1), 45.0)]),
-            ("AIR", &[]),
-            ("CEA", &[((2, 1), 0.5)]),
-            ("CEA", &[]),
-            ("CYP", &[((2, 1), 1.0), ((2, 2), 2.0)]),
-            ("COE", &[((2, 1), 45.0)]),
-            ("COD", &[((2, 1), 30.0)]),
-            ("COO", &[((2, 1), 60.0)]),
-            ("BON", &[((2, 1), 45.0)]),
-        ];
-        for (code, params) in with_params {
-            let pv: HashMap<(u8, u8), f64> = params.iter().copied().collect();
-            let proj = create_projection_from_code(code, &pv)
-                .unwrap_or_else(|e| panic!("{} failed to create: {}", code, e));
-            assert_eq!(
-                projection_to_code(&proj),
-                *code,
-                "code mismatch for {}",
-                code
-            );
-        }
-    }
-
-    #[test]
-    fn test_create_projection_missing_required_pv_param_errors() {
-        for code in &["COE", "COD", "COO", "BON"] {
-            let pv: HashMap<(u8, u8), f64> = HashMap::new();
-            let err = create_projection_from_code(code, &pv).unwrap_err();
-            assert!(
-                err.to_string().contains("PV2_1"),
-                "{} should report missing PV2_1, got: {}",
-                code,
-                err,
-            );
-        }
+    fn test_parse_pv_params_reads_indices_up_to_29() {
+        let mut header = crate::header::KeywordMap::new();
+        header.set_float("PV2_29", 1e-9).set_float("PV2_30", 1.0);
+        let pv = parse_pv_params(&header);
+        assert_eq!(pv, HashMap::from([((2, 29), 1e-9)]));
     }
 }

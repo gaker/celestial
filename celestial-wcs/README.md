@@ -6,7 +6,7 @@ Pure Rust implementation of World Coordinate System (WCS) transformations.
 [![Documentation](https://docs.rs/celestial-wcs/badge.svg)](https://docs.rs/celestial-wcs)
 [![License: MIT OR Apache-2.0](https://img.shields.io/crates/l/celestial-wcs)](https://github.com/gaker/celestial)
 
-Convert between pixel coordinates and celestial coordinates (RA/Dec) for astronomical images. Supports all standard FITS WCS projections, distortion models (SIP, TPV, TNX), and the complete spherical rotation pipeline. No runtime FFI.
+Convert between pixel coordinates and celestial coordinates (RA/Dec) for astronomical images. Supports all standard FITS WCS projections, distortion models (SIP, TPV), and the complete spherical rotation pipeline. No runtime FFI.
 
 ## Installation
 
@@ -22,8 +22,8 @@ celestial-wcs = "0.1"
 | `builder`    | WcsBuilder for constructing WCS from FITS headers             |
 | `coordinate` | PixelCoord, IntermediateCoord, NativeCoord, CelestialCoord    |
 | `linear`     | CD matrix, CRPIX, PC+CDELT linear transformations             |
-| `spherical`  | 25 projection types (TAN, SIN, ARC, ZEA, etc.) and rotations  |
-| `distortion` | SIP, TPV, and TNX optical distortion corrections              |
+| `spherical`  | 26 projection types (TAN, SIN, ARC, ZEA, etc.) and rotations  |
+| `distortion` | SIP and TPV optical distortion corrections                    |
 | `header`     | KeywordProvider trait for FITS header integration             |
 
 ## Projections
@@ -40,23 +40,44 @@ celestial-wcs = "0.1"
 ## Example
 
 ```rust
-use celestial_wcs::{Wcs, WcsBuilder, PixelCoord};
+use celestial_wcs::builder::WcsBuilder;
+use celestial_wcs::coordinate::PixelCoord;
+use celestial_wcs::spherical::Projection;
 
-// Build WCS from FITS keywords
 let wcs = WcsBuilder::new()
-    .crpix([512.0, 512.0])
-    .crval([180.0, 45.0])
-    .cdelt([-0.001, 0.001])
-    .ctype(["RA---TAN", "DEC--TAN"])
+    .crpix(512.0, 512.0)
+    .crval(180.0, 45.0)
+    .cd_matrix([[-0.001, 0.0], [0.0, 0.001]])
+    .projection(Projection::tan())
     .build()?;
 
-// Convert pixel to sky coordinates
-let pixel = PixelCoord::new(256.0, 256.0);
-let sky = wcs.pixel_to_world(pixel)?;
-println!("RA: {:.4}°, Dec: {:.4}°", sky.alpha().degrees(), sky.delta().degrees());
+// Pixel to sky, in degrees
+let sky = wcs.pixel_to_celestial(PixelCoord::new(256.0, 256.0))?;
+println!("RA: {:.4}°, Dec: {:.4}°", sky.alpha_deg(), sky.delta_deg());
 
-// Round-trip back to pixels
-let recovered = wcs.world_to_pixel(sky)?;
+// Sky back to pixel
+let pixel = wcs.celestial_to_pixel(sky)?;
+```
+
+From FITS keywords, through any `KeywordProvider`:
+
+```rust
+use celestial_wcs::builder::WcsBuilder;
+use celestial_wcs::header::KeywordMap;
+
+let mut header = KeywordMap::new();
+header
+    .set_string("CTYPE1", "RA---TAN")
+    .set_string("CTYPE2", "DEC--TAN")
+    .set_float("CRPIX1", 512.0)
+    .set_float("CRPIX2", 512.0)
+    .set_float("CRVAL1", 180.0)
+    .set_float("CRVAL2", 45.0)
+    .set_float("CDELT1", -0.001)
+    .set_float("CDELT2", 0.001);
+
+let wcs = WcsBuilder::from_header(&header)?.build()?;
+let (ra, dec) = wcs.pix2world(256.0, 256.0)?;
 ```
 
 ## License

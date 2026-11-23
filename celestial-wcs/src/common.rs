@@ -1,62 +1,108 @@
-use celestial_coords::errors::CoordError;
-use celestial_core::angle::wrap_pm_pi;
-use celestial_core::angle::Angle;
 use celestial_core::constants::RAD_TO_DEG;
 
 use crate::coordinate::{IntermediateCoord, NativeCoord};
 use crate::error::{WcsError, WcsResult};
+use crate::newton::NewtonConfig;
+use crate::trig::{atan2d, sincosd};
 
 #[inline]
-pub fn asin_safe(sin_value: f64) -> f64 {
-    libm::asin(sin_value.clamp(-1.0, 1.0))
+pub(crate) fn pole_native_coord() -> NativeCoord {
+    NativeCoord::new(0.0, 90.0)
 }
 
+// Paper II eqs. 12 and 13, with Rθ and φ in degrees.
 #[inline]
-pub fn pole_native_coord() -> NativeCoord {
-    NativeCoord::new(Angle::from_degrees(0.0), Angle::from_degrees(90.0))
+pub(crate) fn radial_to_intermediate(r_theta: f64, phi: f64) -> IntermediateCoord {
+    let (sin_phi, cos_phi) = sincosd(phi);
+    IntermediateCoord::new(r_theta * sin_phi, -r_theta * cos_phi)
 }
 
-#[inline]
-pub fn radial_to_intermediate(r_theta: f64, phi_rad: f64) -> IntermediateCoord {
-    let r_deg = r_theta * RAD_TO_DEG;
-    let (ps, pc) = libm::sincos(phi_rad);
-    let x = r_deg * ps;
-    let y = -r_deg * pc;
-    IntermediateCoord::new(x, y)
+// Every deprojection ends here. A point beyond a projection's boundary, off
+// the end of a cylinder, past the edge of a bounded map or behind a cone's
+// apex, comes back with θ or φ off the native sphere (Paper II §5), and
+// wrapping φ would hide that. A point on the boundary can come back just past
+// it, so the check allows the tolerance the iterative deprojections converge
+// to. It is measured as an arc on the sphere: past the seam that is
+// (|φ| − 180°) cos θ, which lets any φ through at a pole, where all are one.
+pub(crate) fn native_coord(phi: f64, theta: f64) -> WcsResult<NativeCoord> {
+    const BOUNDARY_TOL: f64 = NewtonConfig::DEFAULT_TOL * RAD_TO_DEG;
+    if theta.is_nan() {
+        return Err(WcsError::invalid_parameter("latitude must be finite"));
+    }
+    let clamped = theta.clamp(-90.0, 90.0);
+    let past_pole = libm::fabs(theta) - 90.0;
+    let past_seam = (libm::fabs(phi) - 180.0) * sincosd(clamped).1;
+    if past_pole > BOUNDARY_TOL || past_seam > BOUNDARY_TOL {
+        return Err(WcsError::out_of_bounds(
+            "Point outside the projection boundary",
+        ));
+    }
+    Ok(NativeCoord::new(wrap_longitude(phi)?, clamped))
 }
 
-#[inline]
-pub fn native_coord_from_radians(phi_rad: f64, theta_rad: f64) -> WcsResult<NativeCoord> {
-    Ok(NativeCoord::new(
-        Angle::from_radians(wrap_longitude(phi_rad)?),
-        Angle::from_radians(theta_rad),
-    ))
+// No equation in Papers I or II has an image for a NaN or infinite value.
+pub(crate) fn require_finite(values: &[f64], what: &str) -> WcsResult<()> {
+    if values.iter().all(|v| v.is_finite()) {
+        return Ok(());
+    }
+    Err(WcsError::invalid_parameter(format!(
+        "{what} must be finite"
+    )))
 }
 
-#[inline]
-pub(crate) fn wrap_longitude(rad: f64) -> WcsResult<f64> {
-    wrap_pm_pi(rad).map_err(|e| CoordError::from(e).into())
+// Paper II §2.1 puts every latitude, native or celestial, on [−90°, 90°].
+pub(crate) fn require_on_sphere(lon: f64, lat: f64) -> WcsResult<()> {
+    require_finite(&[lon, lat], "coordinates")?;
+    if libm::fabs(lat) > 90.0 {
+        return Err(WcsError::out_of_bounds("latitude lies beyond a pole"));
+    }
+    Ok(())
 }
 
-// φ = ±π is one meridian. Longitude wrapping sends +π to −π and −π to +π, and a
-// deprojection can land an ulp past either edge, so roundtrip tests move the recovered φ
-// back to the original's edge before comparing.
+// Paper II §7.3.4 returns longitudes in the normal range [−180°, 180°], whose
+// ends are one meridian; +180° stands for it. The remainder is exact.
+pub(crate) fn wrap_longitude(deg: f64) -> WcsResult<f64> {
+    if !deg.is_finite() {
+        return Err(WcsError::invalid_parameter("longitude must be finite"));
+    }
+    let wrapped = libm::remainder(deg, 360.0);
+    Ok(if wrapped == -180.0 { 180.0 } else { wrapped })
+}
+
+// (φ, θ) → (x, y) → (φ, θ): the projection of the first pair and the
+// deprojection of the second, each pinned one way.
 #[cfg(test)]
-pub(crate) fn phi_on_same_edge(original: Angle, recovered: Angle) -> Angle {
-    use celestial_core::constants::{PI, TWOPI};
-    let (phi, phi_back) = (original.radians(), recovered.radians());
-    if phi_back - phi > PI {
-        Angle::from_radians(phi_back - TWOPI)
-    } else if phi - phi_back > PI {
-        Angle::from_radians(phi_back + TWOPI)
-    } else {
-        recovered
+pub(crate) type PinnedRow = ((f64, f64), (f64, f64), (f64, f64));
+
+#[cfg(test)]
+pub(crate) fn assert_pinned(proj: &crate::spherical::Projection, rows: &[PinnedRow]) {
+    for &(native, inter, back) in rows {
+        let got = proj.project(NativeCoord::new(native.0, native.1)).unwrap();
+        assert_eq!((got.x_deg(), got.y_deg()), inter, "project {native:?}");
+        let got = proj
+            .deproject(IntermediateCoord::new(inter.0, inter.1))
+            .unwrap();
+        assert_eq!(
+            (got.phi_deg(), got.theta_deg()),
+            back,
+            "deproject {inter:?}"
+        );
     }
 }
 
+// A dimensionless quantity of order 1 closer to 0 than this counts as 0 where
+// it is a divisor or decides a degenerate case. It is about 4.5 ε, the size of
+// the rounding such a quantity carries.
+pub(crate) const ZERO_LIMIT: f64 = 1e-15;
+
+// The smallest |θa| (conics) or |θ1| (BON), in degrees, that
+// check_nonzero_param accepts. It is not an accuracy bound: Y0 grows as
+// cot θa, and y = Y0 − Rθ cos Cφ loses ε Y0, about 0.007° at this limit.
+const MIN_PARALLEL_DEG: f64 = 1e-10;
+
 #[inline]
-pub fn check_nonzero_param(value: f64, context: &str) -> WcsResult<()> {
-    if value.abs() < 1e-10 {
+pub(crate) fn check_nonzero_param(value: f64, context: &str) -> WcsResult<()> {
+    if value.abs() < MIN_PARALLEL_DEG {
         return Err(WcsError::invalid_parameter(format!(
             "{}: parameter cannot be zero",
             context
@@ -65,183 +111,33 @@ pub fn check_nonzero_param(value: f64, context: &str) -> WcsResult<()> {
     Ok(())
 }
 
+// Paper II eqs. 14 and 15, in degrees. φ has no value at the origin; 0 stands
+// for it.
 #[inline]
-pub fn intermediate_to_polar(x_rad: f64, y_rad: f64) -> (f64, f64, bool) {
-    let r_theta = libm::sqrt(x_rad * x_rad + y_rad * y_rad);
+pub(crate) fn intermediate_to_polar(x: f64, y: f64) -> (f64, f64, bool) {
+    let r_theta = libm::sqrt(x * x + y * y);
     let is_pole = r_theta == 0.0;
-    let phi_rad = if is_pole {
-        0.0
-    } else {
-        libm::atan2(x_rad, -y_rad)
-    };
-    (phi_rad, r_theta, is_pole)
+    let phi = if is_pole { 0.0 } else { atan2d(x, -y) };
+    (phi, r_theta, is_pole)
 }
-
-pub fn project_conic_xy(r_theta: f64, y0: f64, c: f64, phi: f64) -> IntermediateCoord {
-    let (c_phi_s, c_phi_c) = libm::sincos(c * phi);
-    let x = r_theta * c_phi_s * RAD_TO_DEG;
-    let y = (y0 - r_theta * c_phi_c) * RAD_TO_DEG;
-    IntermediateCoord::new(x, y)
-}
-
-pub fn deproject_conic_polar(x_rad: f64, y_rad: f64, y0: f64, theta_a: f64, c: f64) -> (f64, f64) {
-    let y_offset = y0 - y_rad;
-    let r_unsigned = libm::sqrt(x_rad * x_rad + y_offset * y_offset);
-    let phi = libm::atan2(theta_a.signum() * x_rad, theta_a.signum() * y_offset) / c.abs();
-    (phi, r_unsigned)
-}
-
-/// Configuration for Newton-Raphson 1D solver
-pub struct NewtonConfig {
-    pub bounds: (f64, f64),
-    pub max_iter: usize,
-    pub tol: f64,
-    pub context: &'static str,
-}
-
-impl NewtonConfig {
-    pub const DEFAULT_MAX_ITER: usize = 50;
-    pub const DEFAULT_TOL: f64 = 1e-12;
-
-    pub const fn new(bounds: (f64, f64), context: &'static str) -> Self {
-        Self {
-            bounds,
-            max_iter: Self::DEFAULT_MAX_ITER,
-            tol: Self::DEFAULT_TOL,
-            context,
-        }
-    }
-}
-
-pub fn newton_raphson_1d<F, FP>(
-    initial: f64,
-    target: f64,
-    f: F,
-    f_prime: FP,
-    config: &NewtonConfig,
-) -> WcsResult<f64>
-where
-    F: Fn(f64) -> f64,
-    FP: Fn(f64) -> f64,
-{
-    let mut x = initial.clamp(config.bounds.0, config.bounds.1);
-
-    for _ in 0..config.max_iter {
-        let f_val = f(x) - target;
-        let f_prime_val = f_prime(x);
-
-        if f_prime_val.abs() < 1e-15 {
-            return Err(WcsError::convergence_failure(format!(
-                "{}: derivative too small",
-                config.context
-            )));
-        }
-
-        let delta = f_val / f_prime_val;
-        x -= delta;
-        x = x.clamp(config.bounds.0, config.bounds.1);
-
-        if delta.abs() < config.tol {
-            return Ok(x);
-        }
-    }
-
-    Err(WcsError::convergence_failure(format!(
-        "{}: Newton-Raphson did not converge",
-        config.context
-    )))
-}
-
-pub fn newton_raphson_2d<F>(
-    target: (f64, f64),
-    initial_guess: (f64, f64),
-    f: F,
-    max_iter: usize,
-    tol: f64,
-    context: &str,
-) -> WcsResult<(f64, f64)>
-where
-    F: Fn(f64, f64) -> (f64, f64),
-{
-    let (tx, ty) = target;
-    let (mut x, mut y) = initial_guess;
-
-    for _ in 0..max_iter {
-        let (fx, fy) = f(x, y);
-        let (dx, dy) = (fx - tx, fy - ty);
-
-        if dx.abs() < tol && dy.abs() < tol {
-            return Ok((x, y));
-        }
-
-        let (j11, j12, j21, j22) = jacobian_2d(&f, x, y);
-        let (delta_x, delta_y) = solve_2x2(j11, j12, j21, j22, dx, dy, context)?;
-
-        x -= delta_x;
-        y -= delta_y;
-    }
-
-    Err(WcsError::convergence_failure(format!(
-        "{}: Newton-Raphson did not converge",
-        context
-    )))
-}
-
-fn jacobian_2d<F>(f: &F, x: f64, y: f64) -> (f64, f64, f64, f64)
-where
-    F: Fn(f64, f64) -> (f64, f64),
-{
-    const H: f64 = 1e-8;
-    let (fx, fy) = f(x, y);
-    let (fx_px, fy_px) = f(x + H, y);
-    let (fx_py, fy_py) = f(x, y + H);
-
-    let j11 = (fx_px - fx) / H;
-    let j12 = (fx_py - fx) / H;
-    let j21 = (fy_px - fy) / H;
-    let j22 = (fy_py - fy) / H;
-
-    (j11, j12, j21, j22)
-}
-
-fn solve_2x2(
-    j11: f64,
-    j12: f64,
-    j21: f64,
-    j22: f64,
-    b1: f64,
-    b2: f64,
-    context: &str,
-) -> WcsResult<(f64, f64)> {
-    let det = j11 * j22 - j12 * j21;
-    if det.abs() < 1e-15 {
-        return Err(WcsError::convergence_failure(format!(
-            "{}: singular Jacobian matrix",
-            context
-        )));
-    }
-    let inv_det = 1.0 / det;
-    let x = inv_det * (j22 * b1 - j12 * b2);
-    let y = inv_det * (-j21 * b1 + j11 * b2);
-    Ok((x, y))
+// A 2×2 determinant is indistinguishable from zero once it is no larger than
+// the rounding error of ad − bc, about ε(|ad| + |bc|). An absolute threshold
+// would instead reject well-conditioned matrices whose entries are small.
+pub(crate) fn is_singular(m: [[f64; 2]; 2], det: f64) -> bool {
+    let scale = libm::fabs(m[0][0] * m[1][1]) + libm::fabs(m[0][1] * m[1][0]);
+    !det.is_finite() || libm::fabs(det) <= f64::EPSILON * scale
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use celestial_core::constants::{HALF_PI, PI, QUARTER_PI, SQRT2, TWOPI};
-
-    #[test]
-    fn test_asin_safe_clamps_above_and_below_unit() {
-        assert_eq!(asin_safe(1.0000000001), HALF_PI);
-        assert_eq!(asin_safe(-1.0000000001), -HALF_PI);
-    }
+    use celestial_core::constants::SQRT2;
 
     #[test]
     fn test_pole_native_coord() {
         let pole = pole_native_coord();
-        assert_eq!(pole.phi().degrees(), 0.0);
-        assert_eq!(pole.theta().degrees(), 90.0);
+        assert_eq!(pole.phi_deg(), 0.0);
+        assert_eq!(pole.theta_deg(), 90.0);
     }
 
     #[test]
@@ -251,33 +147,64 @@ mod tests {
         assert_eq!(zero.x_deg(), 0.0);
         assert_eq!(zero.y_deg(), 0.0);
 
-        // Off-origin: x = r * sin(phi) * RAD_TO_DEG, y = -r * cos(phi) * RAD_TO_DEG.
-        let inter = radial_to_intermediate(1.0, QUARTER_PI);
-        assert!((inter.x_deg() - libm::sin(QUARTER_PI) * RAD_TO_DEG).abs() < 1e-10);
-        assert!((inter.y_deg() + libm::cos(QUARTER_PI) * RAD_TO_DEG).abs() < 1e-10);
+        let inter = radial_to_intermediate(2.0, 30.0);
+        assert_eq!(inter.x_deg(), 1.0);
+        assert_eq!(inter.y_deg(), -2.0 * sincosd(30.0).1);
+    }
+
+    // φ = ±180° is one meridian, and +180° stands for it.
+    #[test]
+    fn test_native_coord_wraps_phi_at_the_seam() {
+        let phi_at = |phi: f64, theta: f64| native_coord(phi, theta).unwrap().phi_deg();
+        assert_eq!(phi_at(180.0, 0.0), 180.0);
+        assert_eq!(phi_at(-180.0, 0.0), 180.0);
+        assert_eq!(phi_at(270.0, 90.0), -90.0);
     }
 
     #[test]
-    fn test_native_coord_from_radians() {
-        let native = native_coord_from_radians(QUARTER_PI, QUARTER_PI).unwrap();
-        assert_eq!(native.phi().radians(), QUARTER_PI);
-        assert_eq!(native.theta().radians(), QUARTER_PI);
+    fn test_wrap_longitude_to_normal_range() {
+        let cases = [
+            (180.0, 180.0),
+            (-180.0, 180.0),
+            (540.0, 180.0),
+            (-179.5, -179.5),
+            (359.5, -0.5),
+            (-360.0, 0.0),
+            (123.456 + 360.0, 123.45600000000002),
+        ];
+        for (deg, expected) in cases {
+            assert_eq!(wrap_longitude(deg).unwrap(), expected, "{deg}");
+        }
+        for bad in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            assert!(wrap_longitude(bad).is_err(), "{bad}");
+        }
     }
 
-    // φ = ±π is one meridian. φ wraps the same way as every other longitude in the
-    // workspace (ERFA's anpm convention), which sends +π to −π and −π to +π.
     #[test]
-    fn test_native_coord_from_radians_wraps_phi_at_the_seam() {
-        let phi_at = |phi: f64| native_coord_from_radians(phi, 0.0).unwrap().phi().radians();
-        assert_eq!(phi_at(PI), -PI);
-        assert_eq!(phi_at(-PI), PI);
-        assert_eq!(phi_at(3.0 * HALF_PI), 3.0 * HALF_PI - TWOPI);
+    fn test_native_coord_rejects_points_off_the_sphere() {
+        let past = 1e-9;
+        for (phi, theta) in [(180.0 + past, 0.0), (0.0, 90.0 + past), (-185.0, -86.0)] {
+            let err = native_coord(phi, theta).unwrap_err();
+            let out = matches!(err, WcsError::OutOfBounds { .. });
+            assert!(out, "({phi}, {theta}): {err:?}");
+        }
     }
 
     #[test]
-    fn test_native_coord_from_radians_rejects_non_finite_phi() {
-        assert!(native_coord_from_radians(f64::NAN, 0.0).is_err());
-        assert!(native_coord_from_radians(f64::INFINITY, 0.0).is_err());
+    fn test_native_coord_keeps_points_on_the_boundary() {
+        let next = |x: f64| f64::from_bits(x.to_bits() + 1);
+        let native = native_coord(0.0, -next(90.0)).unwrap();
+        assert_eq!(native.theta_deg(), -90.0);
+        let native = native_coord(next(180.0), 0.0).unwrap();
+        assert_eq!(native.phi_deg(), -179.99999999999997);
+    }
+
+    #[test]
+    fn test_native_coord_rejects_non_finite_coordinates() {
+        assert!(native_coord(f64::NAN, 0.0).is_err());
+        assert!(native_coord(f64::INFINITY, 0.0).is_err());
+        assert!(native_coord(0.0, f64::NAN).is_err());
+        assert!(native_coord(0.0, f64::INFINITY).is_err());
     }
 
     #[test]
@@ -296,70 +223,8 @@ mod tests {
         assert_eq!(r, 0.0);
         assert!(is_pole);
 
-        // Off-origin: (x=1, y=-1) gives phi = atan2(1, 1) = pi/4 and r = sqrt(2).
         let (phi, r, is_pole) = intermediate_to_polar(1.0, -1.0);
-        assert!((phi - QUARTER_PI).abs() < 1e-10);
-        assert!((r - SQRT2).abs() < 1e-10);
+        assert_eq!((phi, r), (45.0, SQRT2));
         assert!(!is_pole);
-    }
-
-    #[test]
-    fn test_project_conic_xy() {
-        let inter = project_conic_xy(1.0, 0.5, 0.5, 0.0);
-        assert!(inter.x_deg().abs() < 1e-10);
-        assert!((inter.y_deg() - (-0.5 * RAD_TO_DEG)).abs() < 1e-10);
-    }
-
-    #[test]
-    fn test_newton_raphson_1d_converges() {
-        // Linear: f(x) = 2x; solving f(x) = 5 gives x = 2.5.
-        let config = NewtonConfig::new((-10.0, 10.0), "linear");
-        let x = newton_raphson_1d(0.0, 5.0, |x| 2.0 * x, |_| 2.0, &config).unwrap();
-        assert!((x - 2.5).abs() < 1e-10);
-
-        // Quadratic: f(x) = x^2 on [0, 10]; solving f(x) = 4 gives x = 2.
-        let config = NewtonConfig::new((0.0, 10.0), "quadratic");
-        let x = newton_raphson_1d(1.0, 4.0, |x| x * x, |x| 2.0 * x, &config).unwrap();
-        assert!((x - 2.0).abs() < 1e-10);
-    }
-
-    #[test]
-    fn test_newton_raphson_2d_recovers_distortion() {
-        // Two distortion shapes - separable quadratic and mixed cross-term -
-        // exercise both diagonal and off-diagonal Jacobian terms.
-        type Case = (fn(f64, f64) -> (f64, f64), f64, f64);
-        let cases: &[Case] = &[
-            (|x, y| (x + 0.001 * x * x, y + 0.001 * y * y), 100.0, 200.0),
-            (|x, y| (x + 0.0001 * x * y, y + 0.0002 * x * x), 50.0, 75.0),
-        ];
-
-        for &(distort, orig_x, orig_y) in cases {
-            let (dist_x, dist_y) = distort(orig_x, orig_y);
-            let (x, y) = newton_raphson_2d(
-                (dist_x, dist_y),
-                (dist_x, dist_y),
-                distort,
-                20,
-                1e-12,
-                "test",
-            )
-            .unwrap();
-            assert!((x - orig_x).abs() < 1e-10);
-            assert!((y - orig_y).abs() < 1e-10);
-        }
-    }
-
-    #[test]
-    fn test_newton_raphson_2d_singular_jacobian_errors() {
-        // A constant function has a zero Jacobian and must surface a
-        // ConvergenceFailure rather than divide by zero.
-        let constant = |_x: f64, _y: f64| (5.0, 5.0);
-        let err =
-            newton_raphson_2d((0.0, 0.0), (0.0, 0.0), constant, 20, 1e-12, "test").unwrap_err();
-        assert!(
-            matches!(err, WcsError::ConvergenceFailure { .. }),
-            "got: {:?}",
-            err
-        );
     }
 }

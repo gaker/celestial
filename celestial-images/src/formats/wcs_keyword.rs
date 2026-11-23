@@ -1,5 +1,5 @@
 use crate::fits::header::Keyword;
-use celestial_wcs::{WcsKeyword, WcsKeywordValue};
+use celestial_wcs::builder::{WcsKeyword, WcsKeywordValue};
 
 impl From<WcsKeyword> for Keyword {
     fn from(wk: WcsKeyword) -> Self {

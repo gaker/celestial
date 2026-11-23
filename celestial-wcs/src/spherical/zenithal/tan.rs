@@ -1,16 +1,14 @@
-use celestial_core::constants::{DEG_TO_RAD, HALF_PI};
-
 use crate::common::{
-    intermediate_to_polar, native_coord_from_radians, pole_native_coord, radial_to_intermediate,
+    intermediate_to_polar, native_coord, pole_native_coord, radial_to_intermediate,
 };
 use crate::coordinate::{IntermediateCoord, NativeCoord};
 use crate::error::{WcsError, WcsResult};
+use crate::trig::{atan2d, cotd, to_degrees, to_radians};
 
+// Paper II eq. 54, Rθ = (180°/π) cot θ.
 pub(crate) fn project_tan(native: NativeCoord) -> WcsResult<IntermediateCoord> {
-    let phi = native.phi().radians();
-    let theta = native.theta().radians();
-
-    if theta == HALF_PI {
+    let theta = native.theta_deg();
+    if theta == 90.0 {
         return Ok(IntermediateCoord::new(0.0, 0.0));
     }
     if theta <= 0.0 {
@@ -18,68 +16,68 @@ pub(crate) fn project_tan(native: NativeCoord) -> WcsResult<IntermediateCoord> {
             "TAN projection undefined at theta <= 0",
         ));
     }
-    let (rt_sin, rt_cos) = libm::sincos(theta);
-    let r_theta = rt_cos / rt_sin;
-    Ok(radial_to_intermediate(r_theta, phi))
+    let r_theta = to_degrees(cotd(theta));
+    Ok(radial_to_intermediate(r_theta, native.phi_deg()))
 }
 
+// Eq. 55, θ = tan⁻¹(180°/(π Rθ)).
 pub(crate) fn deproject_tan(inter: IntermediateCoord) -> WcsResult<NativeCoord> {
-    let x = inter.x_deg() * DEG_TO_RAD;
-    let y = inter.y_deg() * DEG_TO_RAD;
-    let (phi, r_theta, is_pole) = intermediate_to_polar(x, y);
-
+    let (phi, r_theta, is_pole) = intermediate_to_polar(inter.x_deg(), inter.y_deg());
     if is_pole {
         return Ok(pole_native_coord());
     }
-
-    let theta = libm::atan2(1.0_f64, r_theta);
-
-    native_coord_from_radians(phi, theta)
+    native_coord(phi, atan2d(1.0, to_radians(r_theta)))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::common::phi_on_same_edge;
-    use crate::Projection;
-    use celestial_core::angle::Angle;
-    use celestial_core::assert_ulp_le;
-    #[test]
-    fn test_tan_roundtrip() {
-        let proj = Projection::tan();
-        for phi_deg in [-180.0, -90.0, 0.0, 45.0, 135.0, 180.0] {
-            // TAN only valid for theta > 0; sweep up to near the pole.
-            for theta_deg in [5.0, 30.0, 45.0, 60.0, 80.0, 89.0] {
-                let original =
-                    NativeCoord::new(Angle::from_degrees(phi_deg), Angle::from_degrees(theta_deg));
-                let inter = proj.project(original).unwrap();
-                let recovered = proj.deproject(inter).unwrap();
+    use crate::common::assert_pinned;
+    use crate::spherical::Projection;
 
-                assert_ulp_le!(
-                    original.phi().degrees(),
-                    phi_on_same_edge(original.phi(), recovered.phi()).degrees(),
-                    4,
-                    "phi (phi={}, theta={})",
-                    phi_deg,
-                    theta_deg
-                );
-                assert_ulp_le!(
-                    original.theta().degrees(),
-                    recovered.theta().degrees(),
-                    4,
-                    "theta (phi={}, theta={})",
-                    phi_deg,
-                    theta_deg
-                );
-            }
-        }
+    // Against a 60-digit evaluation the projected values are within 1.92 ulp
+    // (y at (45°, 5°)) and the deprojected ones within 0.58 ulp.
+    #[test]
+    fn test_tan_pinned_both_ways() {
+        let rows = [
+            (
+                (-180.0, 30.0),
+                (0.0, 99.23920117592256),
+                (180.0, 30.000000000000004),
+            ),
+            (
+                (-90.0, 60.0),
+                (-33.07973372530753, -0.0),
+                (-90.0, 59.99999999999999),
+            ),
+            (
+                (45.0, 5.0),
+                (463.07981622173133, -463.0798162217314),
+                (45.0, 4.999999999999999),
+            ),
+            (
+                (135.0, 89.0),
+                (0.707178588950518, 0.7071785889505181),
+                (135.0, 89.0),
+            ),
+        ];
+        assert_pinned(&Projection::tan(), &rows);
+    }
+
+    // Eq. 54 at θ = 45° is Rθ = 180°/π, which rounds to 57.29577951308232.
+    #[test]
+    fn test_tan_known_value() {
+        let inter = Projection::tan()
+            .project(NativeCoord::new(0.0, 45.0))
+            .unwrap();
+        assert_eq!((inter.x_deg(), inter.y_deg()), (0.0, -57.29577951308232));
     }
 
     #[test]
     fn test_tan_singularity() {
         // TAN diverges as theta -> 0 (cot(theta) -> infinity).
         let proj = Projection::tan();
-        let native = NativeCoord::new(Angle::from_degrees(0.0), Angle::from_degrees(0.0));
+        let native = NativeCoord::new(0.0, 0.0);
         assert!(proj.project(native).is_err());
     }
 }

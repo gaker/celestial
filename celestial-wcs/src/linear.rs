@@ -1,7 +1,6 @@
+use crate::common::{is_singular, require_finite};
 use crate::coordinate::{IntermediateCoord, PixelCoord};
 use crate::error::{WcsError, WcsResult};
-
-const DETERMINANT_THRESHOLD: f64 = 1e-15;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct LinearTransform {
@@ -13,8 +12,10 @@ pub struct LinearTransform {
 
 impl LinearTransform {
     pub fn from_cd(crpix: [f64; 2], cd: [[f64; 2]; 2]) -> WcsResult<Self> {
+        require_finite(&crpix, "CRPIX")?;
+        require_finite(cd.as_flattened(), "CD matrix")?;
         let determinant = cd[0][0] * cd[1][1] - cd[0][1] * cd[1][0];
-        if determinant.abs() < DETERMINANT_THRESHOLD {
+        if is_singular(cd, determinant) {
             return Err(WcsError::non_invertible_matrix(determinant));
         }
         let cd_inverse = compute_inverse(cd, determinant);
@@ -36,7 +37,6 @@ impl LinearTransform {
 
     pub fn pixel_to_intermediate(&self, pixel: PixelCoord) -> IntermediateCoord {
         // Paper I Eq. 1: q[i] = sum over j of m[i][j] * (p[j] - r[j])
-        // Row-wise: complete each output before moving to next
         let d0 = pixel.x() - self.crpix[0];
         let d1 = pixel.y() - self.crpix[1];
         let x = self.cd[0][0] * d0 + self.cd[0][1] * d1;
@@ -45,7 +45,6 @@ impl LinearTransform {
     }
 
     pub fn intermediate_to_pixel(&self, inter: IntermediateCoord) -> PixelCoord {
-        // Row-wise: for each output, sum over input then add crpix
         let x = inter.x_deg();
         let y = inter.y_deg();
         let px = self.cd_inverse[0][0] * x + self.cd_inverse[0][1] * y + self.crpix[0];
@@ -83,7 +82,7 @@ mod tests {
 
     #[test]
     fn test_diagonal_cd_matrix_known_values_and_accessors() {
-        // Diagonal CD: a 1 milliradian-equivalent diagonal matrix at the centre
+        // Diagonal CD: 0.001° per pixel, reference pixel at the centre
         // of a 1024 detector.  This single fixture exercises pixel <-> intermediate
         // both ways and the crpix/pixel_scale accessors.
         let crpix = [512.0, 512.0];
@@ -109,12 +108,14 @@ mod tests {
     #[test]
     fn test_pc_cdelt_equivalence_to_cd() {
         // A non-diagonal matrix expressed two ways: CD directly vs PC * CDELT.
-        // Both should produce identical transforms.
+        // Both should produce identical transforms. The CDELTs differ, so
+        // scaling PC by column instead of by row (Paper I eq. 1) would give
+        // [[0.002, 0.002], [−0.001, 0.004]].
         let crpix = [100.0, 100.0];
-        let cd = [[0.002, 0.001], [-0.001, 0.002]];
+        let cd = [[0.002, 0.001], [-0.002, 0.004]];
         let transform_cd = LinearTransform::from_cd(crpix, cd).unwrap();
 
-        let cdelt = [0.002, 0.002];
+        let cdelt = [0.002, 0.004];
         let pc = [[1.0, 0.5], [-0.5, 1.0]];
         let transform_pc = LinearTransform::from_pc_cdelt(crpix, pc, cdelt).unwrap();
         assert_eq!(transform_cd.cd_matrix(), transform_pc.cd_matrix());
@@ -143,6 +144,35 @@ mod tests {
         let recovered = transform.intermediate_to_pixel(transform.pixel_to_intermediate(original));
         assert_eq!(original.x(), recovered.x());
         assert_eq!(original.y(), recovered.y());
+    }
+
+    #[test]
+    fn test_small_scale_matrix_is_invertible() {
+        // 0.1 mas pixels: the determinant is about 7.7e-16, yet the matrix is
+        // perfectly conditioned.
+        const S: f64 = 2.7777777777777777e-8;
+        let transform = LinearTransform::from_cd([256.0, 256.0], [[-S, 0.0], [0.0, S]]).unwrap();
+        let inter = transform.pixel_to_intermediate(PixelCoord::new(137.25, 811.75));
+        assert_eq!(
+            (inter.x_deg(), inter.y_deg()),
+            (3.298611111111111e-6, 1.54375e-5)
+        );
+    }
+
+    #[test]
+    fn test_non_finite_inputs_are_rejected() {
+        let identity = [[1.0, 0.0], [0.0, 1.0]];
+        for bad in [f64::NAN, f64::INFINITY] {
+            let cd = [[bad, 0.0], [0.0, 0.001]];
+            assert!(
+                LinearTransform::from_cd([0.0, 0.0], cd).is_err(),
+                "CD {bad}"
+            );
+            let crpix = LinearTransform::from_cd([bad, 0.0], identity);
+            assert!(crpix.is_err(), "CRPIX {bad}");
+            let cdelt = LinearTransform::from_pc_cdelt([0.0, 0.0], identity, [bad, 1e-3]);
+            assert!(cdelt.is_err(), "CDELT {bad}");
+        }
     }
 
     #[test]

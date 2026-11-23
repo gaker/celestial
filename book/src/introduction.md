@@ -26,21 +26,22 @@ Horizons.
 ```text
 celestial-core              (no internal deps)
     |
+    +-- celestial-wcs        (core)
+    |
 celestial-time              (core)
     |
     +-- celestial-ephemeris  (core, time)
     |
 celestial-coords            (core, time)
     |
-    +-- celestial-wcs        (core, coords)
     +-- celestial-pointing   (core, time, coords)
     +-- celestial-catalog    (core, time, coords)
     |
 celestial-images            (core, time, wcs)
 ```
 
-No circular dependencies. `core` depends on nothing internal. `time` depends
-only on `core`. `coords` and `ephemeris` depend on `core` and `time`.
+No circular dependencies. `core` depends on nothing internal. `time` and `wcs`
+depend only on `core`. `coords` and `ephemeris` depend on `core` and `time`.
 Everything else builds on `coords`.
 
 ## Example

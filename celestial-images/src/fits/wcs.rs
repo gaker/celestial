@@ -1,6 +1,7 @@
 use crate::fits::header::Header;
 use crate::fits::{FitsError, Result};
-use celestial_wcs::{KeywordProvider, Wcs, WcsBuilder};
+use celestial_wcs::builder::{Wcs, WcsBuilder};
+use celestial_wcs::header::KeywordProvider;
 
 struct FitsKeywordAdapter<'a> {
     header: &'a Header,

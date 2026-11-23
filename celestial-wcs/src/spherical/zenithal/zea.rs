@@ -1,79 +1,81 @@
-use celestial_core::constants::{DEG_TO_RAD, HALF_PI};
-
 use crate::common::{
-    intermediate_to_polar, native_coord_from_radians, pole_native_coord, radial_to_intermediate,
+    intermediate_to_polar, native_coord, pole_native_coord, radial_to_intermediate,
 };
 use crate::coordinate::{IntermediateCoord, NativeCoord};
 use crate::error::{WcsError, WcsResult};
+use crate::trig::{asind, sind, to_degrees, to_radians};
 
+// Paper II eq. 69, Rθ = (360°/π) sin((90° − θ)/2). In degrees 90° − θ is
+// exact near the pole, so the radius keeps full precision there.
 pub(crate) fn project_zea(native: NativeCoord) -> WcsResult<IntermediateCoord> {
-    let phi = native.phi().radians();
-    let theta = native.theta().radians();
-
-    let r_theta = libm::sqrt(2.0 * (1.0 - libm::sin(theta)));
-    Ok(radial_to_intermediate(r_theta, phi))
+    let r_theta = to_degrees(2.0 * sind((90.0 - native.theta_deg()) / 2.0));
+    Ok(radial_to_intermediate(r_theta, native.phi_deg()))
 }
 
+// Eq. 70, θ = 90° − 2 sin⁻¹(πRθ/360°).
 pub(crate) fn deproject_zea(inter: IntermediateCoord) -> WcsResult<NativeCoord> {
-    let x = inter.x_deg() * DEG_TO_RAD;
-    let y = inter.y_deg() * DEG_TO_RAD;
-    let (phi, r_theta, is_pole) = intermediate_to_polar(x, y);
-
+    let (phi, r_theta, is_pole) = intermediate_to_polar(inter.x_deg(), inter.y_deg());
     if is_pole {
         return Ok(pole_native_coord());
     }
-
-    let rho = r_theta / 2.0;
+    let rho = to_radians(r_theta) / 2.0;
     if rho > 1.0 {
         return Err(WcsError::out_of_bounds(
             "Point outside ZEA projection boundary",
         ));
     }
-
-    let theta = HALF_PI - 2.0 * libm::asin(rho);
-
-    native_coord_from_radians(phi, theta)
+    native_coord(phi, 90.0 - 2.0 * asind(rho))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::common::phi_on_same_edge;
-    use crate::Projection;
-    use celestial_core::angle::Angle;
-    use celestial_core::assert_ulp_le;
-    #[test]
-    fn test_zea_roundtrip() {
-        let proj = Projection::zea();
-        // ZEA is defined for the whole sphere including theta = -90 (antipode).
-        for phi_deg in [-180.0, -90.0, 0.0, 45.0, 135.0, 180.0] {
-            for theta_deg in [-89.0, -45.0, 30.0, 60.0, 89.0] {
-                let original =
-                    NativeCoord::new(Angle::from_degrees(phi_deg), Angle::from_degrees(theta_deg));
-                let inter = proj.project(original).unwrap();
-                let recovered = proj.deproject(inter).unwrap();
+    use crate::common::assert_pinned;
+    use crate::spherical::Projection;
 
-                // Near the antipode (theta -> -90), the asin in deproject
-                // loses precision; allow more ULP slack there.
-                let ulp_bar = if theta_deg <= -85.0 { 64 } else { 8 };
-                assert_ulp_le!(
-                    original.phi().degrees(),
-                    phi_on_same_edge(original.phi(), recovered.phi()).degrees(),
-                    ulp_bar,
-                    "phi (phi={}, theta={})",
-                    phi_deg,
-                    theta_deg
-                );
-                assert_ulp_le!(
-                    original.theta().degrees(),
-                    recovered.theta().degrees(),
-                    ulp_bar,
-                    "theta (phi={}, theta={})",
-                    phi_deg,
-                    theta_deg
-                );
-            }
-        }
+    // Against a 60-digit evaluation the projected values are within 1.41 ulp
+    // (y at (135°, 60°)) and the deprojected ones within 1.35 ulp, except θ at
+    // −89°, 50 and 80 ulp low. Near the antipode dθ/dR = −1/cos ξ, and R and θ
+    // share a binade, so one ulp of R moves θ by 1/cos ξ ≈ 115 ulps.
+    #[test]
+    fn test_zea_pinned_both_ways() {
+        let rows = [
+            (
+                (-180.0, -89.0),
+                (0.0, 114.5871957307251),
+                (180.0, -89.00000000000173),
+            ),
+            (
+                (45.0, -89.0),
+                (81.02538313834592, -81.02538313834593),
+                (44.99999999999999, -89.00000000000173),
+            ),
+            (
+                (-90.0, 30.0),
+                (-57.29577951308232, -0.0),
+                (-90.0, 29.999999999999993),
+            ),
+            (
+                (135.0, 60.0),
+                (20.971710831420125, 20.97171083142013),
+                (135.0, 60.0),
+            ),
+            ((0.0, 89.0), (0.0, -0.9999873076558378), (0.0, 89.0)),
+        ];
+        assert_pinned(&Projection::zea(), &rows);
+    }
+
+    #[test]
+    fn test_zea_near_pole_keeps_the_radius() {
+        // 1e-6° from the pole, 1 − sin θ is below the rounding of sin θ, so
+        // eq. 69 takes the sine of the half colatitude. Against a 60-digit
+        // evaluation x is 0.58 ulp high and y correctly rounded.
+        let native = NativeCoord::new(37.5, 89.999999);
+        let inter = Projection::zea().project(native).unwrap();
+        assert_eq!(
+            (inter.x_deg(), inter.y_deg()),
+            (6.087614274717458e-7, -7.933533382882105e-7)
+        );
     }
 
     #[test]

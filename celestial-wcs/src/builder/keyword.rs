@@ -33,3 +33,16 @@ impl WcsKeyword {
         }
     }
 }
+
+#[cfg(test)]
+pub(super) fn keyword_map(keywords: Vec<WcsKeyword>) -> crate::header::KeywordMap {
+    let mut header = crate::header::KeywordMap::new();
+    for keyword in keywords {
+        match keyword.value {
+            WcsKeywordValue::Real(v) => header.set_float(keyword.name, v),
+            WcsKeywordValue::Integer(v) => header.set_int(keyword.name, v),
+            WcsKeywordValue::String(v) => header.set_string(keyword.name, v),
+        };
+    }
+    header
+}

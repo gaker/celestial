@@ -1,11 +1,11 @@
-use celestial_core::angle::Angle;
-
 use crate::coordinate::{CelestialCoord, IntermediateCoord, PixelCoord};
 use crate::distortion::DistortionModel;
 use crate::error::WcsResult;
 use crate::linear::LinearTransform;
 use crate::spherical::{Projection, SphericalRotation};
 
+use super::distortion_keywords::{ctype_code, distortion_keywords};
+use super::fiducial::Fiducial;
 use super::keyword::WcsKeyword;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -20,14 +20,31 @@ pub enum CoordType {
 }
 
 impl CoordType {
-    pub fn from_ctype_prefix(prefix: &str) -> Self {
-        match prefix {
-            "RA" | "DEC" => Self::Equatorial,
-            "GLON" | "GLAT" => Self::Galactic,
-            "ELON" | "ELAT" => Self::Ecliptic,
-            "HLON" | "HLAT" => Self::Helioecliptic,
-            "SLON" | "SLAT" => Self::Supergalactic,
-            _ => Self::Generic,
+    pub(crate) fn from_ctype_prefix(prefix: &str) -> Self {
+        let named = [
+            Self::Equatorial,
+            Self::Galactic,
+            Self::Ecliptic,
+            Self::Helioecliptic,
+            Self::Supergalactic,
+        ];
+        named
+            .into_iter()
+            .find(|coord_type| {
+                let (lon, lat) = coord_type.ctype_prefixes();
+                prefix == lon || prefix == lat
+            })
+            .unwrap_or(Self::Generic)
+    }
+
+    fn ctype_prefixes(self) -> (&'static str, &'static str) {
+        match self {
+            Self::Equatorial => ("RA", "DEC"),
+            Self::Galactic => ("GLON", "GLAT"),
+            Self::Ecliptic => ("ELON", "ELAT"),
+            Self::Helioecliptic => ("HLON", "HLAT"),
+            Self::Supergalactic => ("SLON", "SLAT"),
+            Self::Generic => ("XLON", "XLAT"),
         }
     }
 }
@@ -38,75 +55,64 @@ pub struct Wcs {
     projection: Projection,
     rotation: SphericalRotation,
     coord_type: CoordType,
-    proj_code: String,
     crval_deg: (f64, f64),
     distortion: Option<DistortionModel>,
+    fiducial: Fiducial,
 }
 
 impl Wcs {
-    pub fn new(
+    pub(super) fn new(
         linear: LinearTransform,
         projection: Projection,
         rotation: SphericalRotation,
         coord_type: CoordType,
-        proj_code: String,
         crval_deg: (f64, f64),
         distortion: Option<DistortionModel>,
     ) -> Self {
         Self {
             linear,
+            fiducial: Fiducial::of(&projection),
             projection,
             rotation,
             coord_type,
-            proj_code,
             crval_deg,
             distortion,
         }
     }
 
+    pub(super) fn with_fiducial(self, fiducial: Fiducial) -> Self {
+        Self { fiducial, ..self }
+    }
+
     pub fn pixel_to_celestial(&self, pixel: PixelCoord) -> WcsResult<CelestialCoord> {
-        let pixel = match &self.distortion {
-            Some(DistortionModel::Sip(sip)) => {
-                let (x, y) = sip.apply(pixel.x(), pixel.y());
-                PixelCoord::new(x, y)
-            }
-            _ => pixel,
-        };
-        let intermediate = self.linear.pixel_to_intermediate(pixel);
-        let intermediate = match &self.distortion {
-            Some(DistortionModel::Tpv(tpv)) => {
-                let (x, y) = tpv
-                    .as_ref()
-                    .apply(intermediate.x_deg(), intermediate.y_deg());
-                IntermediateCoord::new(x, y)
-            }
-            Some(DistortionModel::Tnx(tnx)) => {
-                let (x, y) = tnx.apply(intermediate.x_deg(), intermediate.y_deg());
-                IntermediateCoord::new(x, y)
-            }
-            _ => intermediate,
-        };
-        let native = self.projection.deproject(intermediate)?;
+        let pixel = self.pixel_distortion(pixel);
+        let intermediate = self.plane_distortion(self.linear.pixel_to_intermediate(pixel));
+        let native = self
+            .projection
+            .deproject(self.fiducial.add_offset(intermediate))?;
         self.rotation.native_to_celestial(native)
     }
 
     pub fn celestial_to_pixel(&self, celestial: CelestialCoord) -> WcsResult<PixelCoord> {
         let native = self.rotation.celestial_to_native(celestial)?;
-        let intermediate = self.projection.project(native)?;
-        let intermediate = match &self.distortion {
-            Some(DistortionModel::Tpv(tpv)) => {
-                let (x, y) = tpv
-                    .as_ref()
-                    .apply_inverse(intermediate.x_deg(), intermediate.y_deg())?;
-                IntermediateCoord::new(x, y)
+        let plane = self.projection.project(native)?;
+        let intermediate = self.plane_distortion_inverse(self.fiducial.remove_offset(plane))?;
+        self.pixel_distortion_inverse(self.linear.intermediate_to_pixel(intermediate))
+    }
+
+    // SIP corrects pixel offsets ahead of the linear transform; TPV corrects
+    // intermediate coordinates after it.
+    fn pixel_distortion(&self, pixel: PixelCoord) -> PixelCoord {
+        match &self.distortion {
+            Some(DistortionModel::Sip(sip)) => {
+                let (x, y) = sip.apply(pixel.x(), pixel.y());
+                PixelCoord::new(x, y)
             }
-            Some(DistortionModel::Tnx(tnx)) => {
-                let (x, y) = tnx.apply_inverse(intermediate.x_deg(), intermediate.y_deg())?;
-                IntermediateCoord::new(x, y)
-            }
-            _ => intermediate,
-        };
-        let pixel = self.linear.intermediate_to_pixel(intermediate);
+            _ => pixel,
+        }
+    }
+
+    fn pixel_distortion_inverse(&self, pixel: PixelCoord) -> WcsResult<PixelCoord> {
         match &self.distortion {
             Some(DistortionModel::Sip(sip)) => {
                 let (x, y) = sip.apply_inverse(pixel.x(), pixel.y())?;
@@ -116,21 +122,39 @@ impl Wcs {
         }
     }
 
+    fn plane_distortion(&self, plane: IntermediateCoord) -> IntermediateCoord {
+        let (x, y) = (plane.x_deg(), plane.y_deg());
+        let (x, y) = match &self.distortion {
+            Some(DistortionModel::Tpv(tpv)) => tpv.apply(x, y),
+            _ => return plane,
+        };
+        IntermediateCoord::new(x, y)
+    }
+
+    fn plane_distortion_inverse(&self, plane: IntermediateCoord) -> WcsResult<IntermediateCoord> {
+        let (x, y) = (plane.x_deg(), plane.y_deg());
+        let (x, y) = match &self.distortion {
+            Some(DistortionModel::Tpv(tpv)) => tpv.apply_inverse(x, y)?,
+            _ => return Ok(plane),
+        };
+        Ok(IntermediateCoord::new(x, y))
+    }
+
     pub fn pix2world(&self, x: f64, y: f64) -> WcsResult<(f64, f64)> {
         let pixel = PixelCoord::new(x, y);
         let celestial = self.pixel_to_celestial(pixel)?;
-        Ok((celestial.alpha().degrees(), celestial.delta().degrees()))
+        Ok((celestial.alpha_deg(), celestial.delta_deg()))
     }
 
     pub fn world2pix(&self, lon: f64, lat: f64) -> WcsResult<(f64, f64)> {
-        let celestial = CelestialCoord::new(Angle::from_degrees(lon), Angle::from_degrees(lat));
+        let celestial = CelestialCoord::new(lon, lat);
         let pixel = self.celestial_to_pixel(celestial)?;
         Ok((pixel.x(), pixel.y()))
     }
 
     #[inline]
-    pub fn projection_code(&self) -> &str {
-        &self.proj_code
+    pub fn projection_code(&self) -> &'static str {
+        self.projection.code()
     }
 
     #[inline]
@@ -157,18 +181,22 @@ impl Wcs {
         let mut keywords = Vec::new();
 
         keywords.extend(self.ctype_keywords());
+        // Paper II §2 requires 'deg' for celestial axes, given explicitly or not.
+        keywords.push(WcsKeyword::string("CUNIT1", "deg"));
+        keywords.push(WcsKeyword::string("CUNIT2", "deg"));
         keywords.extend(self.crpix_keywords());
         keywords.extend(self.crval_keywords());
         keywords.extend(self.cd_keywords());
         keywords.extend(self.pole_keywords());
         keywords.extend(self.pv_keywords());
+        keywords.extend(distortion_keywords(self.distortion.as_ref()));
 
         keywords
     }
 
     fn ctype_keywords(&self) -> Vec<WcsKeyword> {
-        let (prefix1, prefix2) = ctype_prefixes(&self.coord_type);
-        let code = &self.proj_code;
+        let (prefix1, prefix2) = self.coord_type.ctype_prefixes();
+        let code = &ctype_code(self.projection_code(), self.distortion.as_ref());
 
         vec![
             WcsKeyword::string("CTYPE1", format_ctype(prefix1, code)),
@@ -206,7 +234,11 @@ impl Wcs {
         let phi_p = self.rotation.phi_p_degrees();
         let delta_p = self.rotation.delta_p_degrees();
 
-        let default_phi_p = default_lonpole(&self.coord_type, self.crval_deg.1, &self.projection);
+        let default_phi_p = SphericalRotation::default_lonpole(
+            self.crval_deg.1,
+            self.fiducial.phi_0(),
+            self.fiducial.theta_0(),
+        );
         if (phi_p - default_phi_p).abs() > 1e-10 {
             keywords.push(WcsKeyword::real("LONPOLE", phi_p));
         }
@@ -219,18 +251,10 @@ impl Wcs {
     }
 
     fn pv_keywords(&self) -> Vec<WcsKeyword> {
-        projection_pv_keywords(&self.projection)
-    }
-}
-
-pub(super) fn ctype_prefixes(coord_type: &CoordType) -> (&'static str, &'static str) {
-    match coord_type {
-        CoordType::Equatorial => ("RA", "DEC"),
-        CoordType::Galactic => ("GLON", "GLAT"),
-        CoordType::Ecliptic => ("ELON", "ELAT"),
-        CoordType::Helioecliptic => ("HLON", "HLAT"),
-        CoordType::Supergalactic => ("SLON", "SLAT"),
-        CoordType::Generic => ("XLON", "XLAT"),
+        let mut keywords = self.fiducial.keywords(&self.projection);
+        let pv = self.projection.pv_values().into_iter();
+        keywords.extend(pv.map(|(m, value)| WcsKeyword::real(format!("PV2_{m}"), value)));
+        keywords
     }
 }
 
@@ -240,176 +264,71 @@ pub(super) fn format_ctype(prefix: &str, proj_code: &str) -> String {
     format!("{}{}{}", prefix, dashes, proj_code)
 }
 
-pub(super) fn default_lonpole(
-    _coord_type: &CoordType,
-    crval_lat: f64,
-    projection: &Projection,
-) -> f64 {
-    let (_, theta_0) = projection.native_reference();
-    if crval_lat >= theta_0 {
-        0.0
-    } else {
-        180.0
-    }
-}
-
-pub(super) fn projection_pv_keywords(projection: &Projection) -> Vec<WcsKeyword> {
-    match projection {
-        Projection::Sin { xi, eta } if *xi != 0.0 || *eta != 0.0 => {
-            vec![
-                WcsKeyword::real("PV2_1", *xi),
-                WcsKeyword::real("PV2_2", *eta),
-            ]
-        }
-        Projection::Azp { mu, gamma } => {
-            vec![
-                WcsKeyword::real("PV2_1", *mu),
-                WcsKeyword::real("PV2_2", *gamma),
-            ]
-        }
-        Projection::Szp { mu, phi_c, theta_c } => {
-            vec![
-                WcsKeyword::real("PV2_1", *mu),
-                WcsKeyword::real("PV2_2", *phi_c),
-                WcsKeyword::real("PV2_3", *theta_c),
-            ]
-        }
-        Projection::Zpn { coeffs } => coeffs
-            .iter()
-            .enumerate()
-            .filter(|(_, &v)| v != 0.0)
-            .map(|(i, &v)| WcsKeyword::real(format!("PV2_{}", i), v))
-            .collect(),
-        Projection::Air { theta_b } => {
-            vec![WcsKeyword::real("PV2_1", *theta_b)]
-        }
-        Projection::Cea { lambda } if *lambda != 1.0 => {
-            vec![WcsKeyword::real("PV2_1", *lambda)]
-        }
-        Projection::Cyp { mu, lambda } => {
-            vec![
-                WcsKeyword::real("PV2_1", *mu),
-                WcsKeyword::real("PV2_2", *lambda),
-            ]
-        }
-        Projection::Cop { theta_a, eta }
-        | Projection::Coe { theta_a, eta }
-        | Projection::Cod { theta_a, eta }
-        | Projection::Coo { theta_a, eta } => {
-            vec![
-                WcsKeyword::real("PV2_1", *theta_a),
-                WcsKeyword::real("PV2_2", *eta),
-            ]
-        }
-        Projection::Bon { theta_1 } => {
-            vec![WcsKeyword::real("PV2_1", *theta_1)]
-        }
-        _ => Vec::new(),
-    }
-}
-
-pub(super) fn projection_to_code(proj: &Projection) -> String {
-    match proj {
-        Projection::Tan => "TAN",
-        Projection::Sin { .. } => "SIN",
-        Projection::Arc => "ARC",
-        Projection::Stg => "STG",
-        Projection::Zea => "ZEA",
-        Projection::Azp { .. } => "AZP",
-        Projection::Szp { .. } => "SZP",
-        Projection::Zpn { .. } => "ZPN",
-        Projection::Air { .. } => "AIR",
-        Projection::Car => "CAR",
-        Projection::Mer => "MER",
-        Projection::Cea { .. } => "CEA",
-        Projection::Cyp { .. } => "CYP",
-        Projection::Sfl => "SFL",
-        Projection::Par => "PAR",
-        Projection::Mol => "MOL",
-        Projection::Ait => "AIT",
-        Projection::Cop { .. } => "COP",
-        Projection::Coe { .. } => "COE",
-        Projection::Cod { .. } => "COD",
-        Projection::Coo { .. } => "COO",
-        Projection::Bon { .. } => "BON",
-        Projection::Pco => "PCO",
-        Projection::Tsc => "TSC",
-        Projection::Csc => "CSC",
-        Projection::Qsc => "QSC",
-    }
-    .to_string()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::builder::WcsBuilder;
+    use crate::distortion::{SipDistortion, TpvDistortion};
+
+    fn tan_builder() -> WcsBuilder {
+        WcsBuilder::new()
+            .crpix(512.0, 512.0)
+            .crval(180.0, 45.0)
+            .cd_matrix([[0.001, 0.0], [0.0, 0.001]])
+            .projection(Projection::tan())
+    }
 
     fn create_simple_tan_wcs() -> crate::error::WcsResult<Wcs> {
-        let crpix = [512.0, 512.0];
-        let cd = [[0.001, 0.0], [0.0, 0.001]];
-        let linear = LinearTransform::from_cd(crpix, cd)?;
+        tan_builder().build()
+    }
 
-        let projection = Projection::tan();
-        let (_, theta_0) = projection.native_reference();
-        let crval_lon = 180.0;
-        let crval_lat = 45.0;
+    type PixelRow = ((f64, f64), (f64, f64), (f64, f64));
 
-        let rotation = SphericalRotation::from_crval(
-            Angle::from_degrees(crval_lon),
-            Angle::from_degrees(crval_lat),
-            Angle::from_degrees(theta_0),
-            None,
-            None,
-        )?;
+    // (pixel, sky, pixel): pix2world of the first pair and world2pix of the
+    // second, each pinned one way.
+    fn assert_pixel_pins(wcs: &Wcs, rows: &[PixelRow]) {
+        for &(pixel, sky, back) in rows {
+            let got = wcs.pix2world(pixel.0, pixel.1).unwrap();
+            assert_eq!(got, sky, "pix2world {pixel:?}");
+            assert_eq!(
+                wcs.world2pix(sky.0, sky.1).unwrap(),
+                back,
+                "world2pix {sky:?}"
+            );
+        }
+    }
 
-        Ok(Wcs::new(
-            linear,
-            projection,
-            rotation,
-            CoordType::Equatorial,
-            "TAN".to_string(),
-            (crval_lon, crval_lat),
-            None,
-        ))
+    // CRPIX maps to CRVAL and back exactly. Against 60 digits the other rows
+    // are within 2.08 ulp on the sky and 102 ulp in pixels, at most 0.57 of
+    // the summed half-ulp rounding of the steps. The pixel carries the
+    // rounding of θ near 90°: half an ulp of θ, 7.1e-15°, is 7.1e-12 px at
+    // 0.001°/px.
+    #[test]
+    fn test_wcs_simple_tan_pipeline() {
+        let wcs = create_simple_tan_wcs().unwrap();
+        let rows = [
+            ((512.0, 512.0), (180.0, 45.0), (512.0, 512.0)),
+            (
+                (256.0, 768.0),
+                (179.63634134715633, 45.25542127650822),
+                (256.00000000000557, 767.9999999999987),
+            ),
+            (
+                (300.0, 700.0),
+                (179.69920249673768, 45.187604542264104),
+                (300.0000000000147, 699.9999999999836),
+            ),
+        ];
+        assert_pixel_pins(&wcs, &rows);
     }
 
     #[test]
-    fn test_wcs_simple_tan_pipeline() {
-        use crate::PixelCoord;
-        use celestial_core::assert_ulp_le;
-
+    fn test_world2pix_rejects_latitude_beyond_a_pole() {
         let wcs = create_simple_tan_wcs().unwrap();
-
-        // CRPIX maps to CRVAL by definition.
-        let celestial = wcs
-            .pixel_to_celestial(PixelCoord::new(512.0, 512.0))
-            .unwrap();
-        assert_ulp_le!(celestial.alpha().degrees(), 180.0, 10);
-        assert_ulp_le!(celestial.delta().degrees(), 45.0, 10);
-
-        // Round trip via the typed API (PixelCoord <-> CelestialCoord), with a
-        // tight ULP bound at CRPIX and an absolute floor off-centre.
-        let at_crpix = PixelCoord::new(512.0, 512.0);
-        let recovered = wcs
-            .celestial_to_pixel(wcs.pixel_to_celestial(at_crpix).unwrap())
-            .unwrap();
-        assert_ulp_le!(at_crpix.x(), recovered.x(), 10);
-        assert_ulp_le!(at_crpix.y(), recovered.y(), 10);
-
-        let off_center = PixelCoord::new(256.0, 768.0);
-        let recovered = wcs
-            .celestial_to_pixel(wcs.pixel_to_celestial(off_center).unwrap())
-            .unwrap();
-        assert!((off_center.x() - recovered.x()).abs() < 1e-9);
-        assert!((off_center.y() - recovered.y()).abs() < 1e-9);
-
-        // The f64 convenience API (pix2world/world2pix) round-trips as well.
-        let (x, y) = (300.0, 700.0);
-        let (ra, dec) = wcs.pix2world(x, y).unwrap();
-        let (xr, yr) = wcs.world2pix(ra, dec).unwrap();
-        // Tolerance accounts for ARM vs x86 FPU differences in trig functions.
-        assert!((x - xr).abs() < 1e-8);
-        assert!((y - yr).abs() < 1e-8);
+        for lat in [100.0, -100.0] {
+            let result = wcs.world2pix(180.0, lat);
+            assert!(result.is_err(), "{lat}: {result:?}");
+        }
     }
 
     #[test]
@@ -449,131 +368,65 @@ mod tests {
         assert_eq!(CoordType::from_ctype_prefix("UNKNOWN"), CoordType::Generic);
     }
 
+    // A rotated CD matrix with TAN at southern declination, then ARC and STG
+    // nearer the pole. Against 60 digits, sky to pixel is within 182 ulp, at
+    // most 0.71 of the summed half-ulp rounding of the steps, and carries the
+    // rounding of θ near 90° as above. Pixel to sky is within 1.51 ulp except
+    // α at δ = 85°, 116 ulp of a small longitude and 0.36 of the budget: θ's
+    // half ulp moves it 302 ulp. On the sky that offset is 2.2e-15°.
     #[test]
-    fn test_wcs_roundtrip_across_projections_and_cds() {
-        use crate::PixelCoord;
-
-        // Three independent configurations cover:
-        //   - rotated CD matrix with TAN at southern declination,
-        //   - diagonal CD with ARC near the pole,
-        //   - diagonal CD with STG very close to the pole (where rotation
-        //     conditioning is most fragile).
-        let scale = 0.0005;
-        let (sin_th, cos_th) = libm::sincos(celestial_core::constants::PI / 6.0);
-
-        struct Case {
-            crpix: [f64; 2],
-            cd: [[f64; 2]; 2],
-            projection: Projection,
-            code: &'static str,
-            crval: (f64, f64),
-            pixel: (f64, f64),
-        }
+    fn test_wcs_pinned_across_projections_and_cds() {
+        let rotated = [
+            [4.330127018922194e-4, -2.5e-4],
+            [2.5e-4, 4.330127018922194e-4],
+        ];
+        let diagonal = |scale| [[scale, 0.0], [0.0, scale]];
         let cases = [
-            Case {
-                crpix: [512.0, 512.0],
-                cd: [
-                    [scale * cos_th, -scale * sin_th],
-                    [scale * sin_th, scale * cos_th],
-                ],
-                projection: Projection::tan(),
-                code: "TAN",
-                crval: (120.0, -30.0),
-                pixel: (400.0, 600.0),
-            },
-            Case {
-                crpix: [256.0, 256.0],
-                cd: [[0.002, 0.0], [0.0, 0.002]],
-                projection: Projection::arc(),
-                code: "ARC",
-                crval: (90.0, 60.0),
-                pixel: (200.0, 300.0),
-            },
-            Case {
-                crpix: [128.0, 128.0],
-                cd: [[0.005, 0.0], [0.0, 0.005]],
-                projection: Projection::stg(),
-                code: "STG",
-                crval: (0.0, 85.0),
-                pixel: (100.0, 150.0),
-            },
+            (
+                Projection::tan(),
+                (120.0, -30.0),
+                512.0,
+                rotated,
+                (400.0, 600.0),
+            ),
+            (
+                Projection::arc(),
+                (90.0, 60.0),
+                256.0,
+                diagonal(0.002),
+                (200.0, 300.0),
+            ),
+            (
+                Projection::stg(),
+                (0.0, 85.0),
+                128.0,
+                diagonal(0.005),
+                (100.0, 150.0),
+            ),
         ];
-
-        for case in cases {
-            let linear = LinearTransform::from_cd(case.crpix, case.cd).unwrap();
-            let (_, theta_0) = case.projection.native_reference();
-            let rotation = SphericalRotation::from_crval(
-                Angle::from_degrees(case.crval.0),
-                Angle::from_degrees(case.crval.1),
-                Angle::from_degrees(theta_0),
-                None,
-                None,
-            )
-            .unwrap();
-            let wcs = Wcs::new(
-                linear,
-                case.projection,
-                rotation,
-                CoordType::Equatorial,
-                case.code.to_string(),
-                case.crval,
-                None,
-            );
-
-            let original = PixelCoord::new(case.pixel.0, case.pixel.1);
-            let recovered = wcs
-                .celestial_to_pixel(wcs.pixel_to_celestial(original).unwrap())
+        let pinned = [
+            (
+                (119.9186049310403, -29.989869852631916),
+                (399.99999999999505, 599.9999999999868),
+            ),
+            (
+                (89.77540320348389, 60.087809836039675),
+                (200.000000000004, 299.9999999999946),
+            ),
+            (
+                (-1.6419144601457878, 85.10800132287785),
+                (100.00000000000097, 150.00000000000034),
+            ),
+        ];
+        for ((projection, crval, crpix, cd, pixel), (sky, back)) in cases.into_iter().zip(pinned) {
+            let wcs = WcsBuilder::new()
+                .crpix(crpix, crpix)
+                .crval(crval.0, crval.1)
+                .cd_matrix(cd)
+                .projection(projection)
+                .build()
                 .unwrap();
-            assert!(
-                (original.x() - recovered.x()).abs() < 1e-8,
-                "{} x: {} vs {}",
-                case.code,
-                original.x(),
-                recovered.x(),
-            );
-            assert!(
-                (original.y() - recovered.y()).abs() < 1e-8,
-                "{} y: {} vs {}",
-                case.code,
-                original.y(),
-                recovered.y(),
-            );
-        }
-    }
-
-    #[test]
-    fn test_projection_to_code_all() {
-        let cases: &[(Projection, &str)] = &[
-            (Projection::tan(), "TAN"),
-            (Projection::sin(), "SIN"),
-            (Projection::sin_with_params(0.1, 0.2), "SIN"),
-            (Projection::arc(), "ARC"),
-            (Projection::stg(), "STG"),
-            (Projection::zea(), "ZEA"),
-            (Projection::azp(2.0, 30.0), "AZP"),
-            (Projection::szp(2.0, 45.0, 60.0), "SZP"),
-            (Projection::zpn(vec![0.0, 1.0]), "ZPN"),
-            (Projection::air(45.0), "AIR"),
-            (Projection::car(), "CAR"),
-            (Projection::mer(), "MER"),
-            (Projection::cea_with_lambda(0.5), "CEA"),
-            (Projection::cyp(1.0, 2.0), "CYP"),
-            (Projection::sfl(), "SFL"),
-            (Projection::par(), "PAR"),
-            (Projection::mol(), "MOL"),
-            (Projection::ait(), "AIT"),
-            (Projection::cop(45.0, 0.0), "COP"),
-            (Projection::coe(45.0, 0.0), "COE"),
-            (Projection::cod(45.0, 0.0), "COD"),
-            (Projection::coo(45.0, 0.0), "COO"),
-            (Projection::bon(45.0), "BON"),
-            (Projection::pco(), "PCO"),
-            (Projection::tsc(), "TSC"),
-            (Projection::csc(), "CSC"),
-            (Projection::qsc(), "QSC"),
-        ];
-        for (proj, expected) in cases {
-            assert_eq!(projection_to_code(proj), *expected);
+            assert_pixel_pins(&wcs, &[(pixel, sky, back)]);
         }
     }
 
@@ -595,154 +448,48 @@ mod tests {
     }
 
     fn tan_wcs_with(distortion: DistortionModel) -> Wcs {
-        let linear =
-            LinearTransform::from_cd([512.0, 512.0], [[0.001, 0.0], [0.0, 0.001]]).unwrap();
-        let projection = Projection::tan();
-        let (_, theta_0) = projection.native_reference();
-        let rotation = SphericalRotation::from_crval(
-            Angle::from_degrees(180.0),
-            Angle::from_degrees(45.0),
-            Angle::from_degrees(theta_0),
-            None,
-            None,
-        )
-        .unwrap();
-        Wcs::new(
-            linear,
-            projection,
-            rotation,
-            CoordType::Equatorial,
-            "TAN".to_string(),
-            (180.0, 45.0),
-            Some(distortion),
-        )
+        tan_builder().distortion(distortion).build().unwrap()
     }
 
+    // In each of the three tests below, against 60 digits, pixel to sky is
+    // within 1.53 ulp and sky to pixel within 64 ulp, at most 0.24 of the
+    // summed half-ulp rounding of the steps, most of it θ's near 90°.
     #[test]
-    fn test_pipeline_roundtrips_through_each_distortion_kind() {
-        use crate::distortion::{
-            CrossTerms, SipDistortion, SurfaceType, TnxDistortion, TnxSurface, TpvDistortion,
-        };
-
-        // SIP — pixel-space distortion. A nonzero higher-order coefficient
-        // exercises the apply / apply_inverse branches; identity-on-pixels would
-        // hide both paths because the iterative inverse starts at the right answer.
+    fn test_pipeline_pinned_through_sip() {
+        // SIP corrects pixels. Without a higher-order term the iterative
+        // inverse would start at its answer.
         let mut sip = SipDistortion::new([512.0, 512.0], 2, 2);
-        sip.set_a(2, 0, 1e-6);
-        sip.set_b(0, 2, 1e-6);
-        let sip_wcs = tan_wcs_with(DistortionModel::Sip(sip));
-        let (ra, dec) = sip_wcs.pix2world(500.0, 500.0).unwrap();
-        let (x, y) = sip_wcs.world2pix(ra, dec).unwrap();
-        assert!((x - 500.0).abs() < 1e-6, "SIP roundtrip x: got {}", x);
-        assert!((y - 500.0).abs() < 1e-6, "SIP roundtrip y: got {}", y);
-
-        // TPV — intermediate-space distortion. PV1_1 = PV2_1 = 1.0 is the
-        // linear identity; add small higher-order term to drive the iterative inverse.
-        let mut tpv = TpvDistortion::identity();
-        tpv.set_pv1(4, 1e-4);
-        tpv.set_pv2(6, 1e-4);
-        let tpv_wcs = tan_wcs_with(DistortionModel::Tpv(Box::new(tpv)));
-        let (ra, dec) = tpv_wcs.pix2world(500.0, 500.0).unwrap();
-        let (x, y) = tpv_wcs.world2pix(ra, dec).unwrap();
-        assert!((x - 500.0).abs() < 1e-6, "TPV roundtrip x: got {}", x);
-        assert!((y - 500.0).abs() < 1e-6, "TPV roundtrip y: got {}", y);
-
-        // TNX — intermediate-space distortion. Identity-by-coefficients (only the
-        // x^1 and y^1 terms set to 1.0 with no_cross) exercises the dispatch.
-        let lng = TnxSurface::new(
-            SurfaceType::Polynomial,
-            2,
-            2,
-            CrossTerms::None,
-            (-1.0, 1.0),
-            (-1.0, 1.0),
-            vec![0.0, 1.0, 0.0, 1.0],
-        )
-        .unwrap();
-        let lat = TnxSurface::new(
-            SurfaceType::Polynomial,
-            2,
-            2,
-            CrossTerms::None,
-            (-1.0, 1.0),
-            (-1.0, 1.0),
-            vec![0.0, 1.0, 0.0, 1.0],
-        )
-        .unwrap();
-        let tnx_wcs = tan_wcs_with(DistortionModel::Tnx(TnxDistortion::new(lng, lat)));
-        let (ra, dec) = tnx_wcs.pix2world(500.0, 500.0).unwrap();
-        let (x, y) = tnx_wcs.world2pix(ra, dec).unwrap();
-        assert!((x - 500.0).abs() < 1e-6, "TNX roundtrip x: got {}", x);
-        assert!((y - 500.0).abs() < 1e-6, "TNX roundtrip y: got {}", y);
+        sip.set_a(2, 0, 1e-6).unwrap();
+        sip.set_b(0, 2, 1e-6).unwrap();
+        let wcs = tan_wcs_with(DistortionModel::Sip(sip));
+        let sky = (179.98303319487104, 44.9879988880949);
+        let back = (500.0000000000002, 499.99999999998664);
+        assert_pixel_pins(&wcs, &[((500.0, 500.0), sky, back)]);
     }
 
     #[test]
-    fn test_projection_pv_keywords_smoke() {
-        // Each match arm in projection_pv_keywords gets exercised. Doesn't
-        // verify FITS values exhaustively — just that the right keyword names
-        // are produced for each parameterized projection.
-        let names = |kws: Vec<WcsKeyword>| kws.iter().map(|k| k.name.clone()).collect::<Vec<_>>();
+    fn test_pipeline_pinned_through_tpv() {
+        // TPV corrects intermediate coordinates, here ξ = x + 1e-4 x² and
+        // η = y + 1e-4 y².
+        let mut tpv = TpvDistortion::identity();
+        tpv.set_pv1(4, 1e-4).unwrap();
+        tpv.set_pv2(4, 1e-4).unwrap();
+        let wcs = tan_wcs_with(DistortionModel::Tpv(Box::new(tpv)));
+        let sky = (179.98303301166573, 44.98799875846779);
+        let back = (499.99999999999784, 499.99999999999915);
+        assert_pixel_pins(&wcs, &[((500.0, 500.0), sky, back)]);
+    }
 
-        assert_eq!(
-            names(projection_pv_keywords(&Projection::tan())),
-            Vec::<String>::new()
-        );
-
-        assert_eq!(
-            names(projection_pv_keywords(&Projection::sin_with_params(
-                0.1, -0.2
-            ))),
-            vec!["PV2_1", "PV2_2"],
-        );
-        // SIN with both params zero takes the default arm (no keywords).
-        assert_eq!(
-            names(projection_pv_keywords(&Projection::sin_with_params(
-                0.0, 0.0
-            ))),
-            Vec::<String>::new(),
-        );
-
-        assert_eq!(
-            names(projection_pv_keywords(&Projection::azp(2.0, 30.0))),
-            vec!["PV2_1", "PV2_2"],
-        );
-        assert_eq!(
-            names(projection_pv_keywords(&Projection::szp(2.0, 0.0, 90.0))),
-            vec!["PV2_1", "PV2_2", "PV2_3"],
-        );
-
-        // ZPN: only nonzero coefficients are emitted, named PV2_<index>.
-        let zpn_kws = projection_pv_keywords(&Projection::zpn(vec![0.0, 1.0, 0.0, 0.01]));
-        assert_eq!(names(zpn_kws), vec!["PV2_1", "PV2_3"]);
-
-        assert_eq!(
-            names(projection_pv_keywords(&Projection::air(45.0))),
-            vec!["PV2_1"],
-        );
-        // CEA with lambda = 1.0 (the spec default) emits nothing.
-        assert_eq!(
-            names(projection_pv_keywords(&Projection::cea_with_lambda(1.0))),
-            Vec::<String>::new(),
-        );
-        // CEA with non-default lambda emits PV2_1.
-        assert_eq!(
-            names(projection_pv_keywords(&Projection::cea_with_lambda(0.5))),
-            vec!["PV2_1"],
-        );
-        assert_eq!(
-            names(projection_pv_keywords(&Projection::cyp(1.0, 0.5))),
-            vec!["PV2_1", "PV2_2"],
-        );
-
-        // The four conics share a single match arm — checking one is enough.
-        assert_eq!(
-            names(projection_pv_keywords(&Projection::cop(45.0, 15.0))),
-            vec!["PV2_1", "PV2_2"],
-        );
-
-        assert_eq!(
-            names(projection_pv_keywords(&Projection::bon(30.0))),
-            vec!["PV2_1"],
-        );
+    // The projection's parameters go out as PV2_m, and one at its default
+    // does not go out at all.
+    #[test]
+    fn test_to_keywords_writes_the_projection_parameters() {
+        let wcs = tan_builder()
+            .projection(Projection::cyp(1.0, 0.5))
+            .build()
+            .unwrap();
+        let keywords = wcs.to_keywords().into_iter();
+        let pv: Vec<_> = keywords.filter(|k| k.name.starts_with("PV")).collect();
+        assert_eq!(pv, [WcsKeyword::real("PV2_2", 0.5)]);
     }
 }

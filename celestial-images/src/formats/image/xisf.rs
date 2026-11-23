@@ -2,7 +2,7 @@ use super::Image;
 use crate::core::{ImageError, Result};
 use crate::formats::pixel_data::PixelData;
 use crate::xisf::writer::{wcs_to_xisf_properties, XisfWriter};
-use celestial_wcs::{WcsKeyword, WcsKeywordValue};
+use celestial_wcs::builder::{WcsKeyword, WcsKeywordValue};
 use std::path::Path;
 
 impl Image {

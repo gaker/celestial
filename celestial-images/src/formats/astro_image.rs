@@ -6,7 +6,7 @@ use crate::fits::data::DataArray;
 use crate::fits::header::Keyword;
 use crate::fits::io::writer::FitsWriter;
 use crate::xisf::writer::{XisfDataType, XisfWriter};
-use celestial_wcs::Wcs;
+use celestial_wcs::builder::Wcs;
 use std::path::Path;
 
 const DEFAULT_TILE_SIZE: usize = 32;
@@ -196,7 +196,8 @@ impl<'a, T> AstroImage<'a, T> {
 mod tests {
     use super::*;
     use crate::fits::header::KeywordValue;
-    use celestial_wcs::{Projection, WcsBuilder};
+    use celestial_wcs::builder::WcsBuilder;
+    use celestial_wcs::spherical::Projection;
 
     fn tmp_fits() -> tempfile::NamedTempFile {
         tempfile::Builder::new().suffix(".fits").tempfile().unwrap()

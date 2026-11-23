@@ -1,6 +1,8 @@
 use crate::xisf::header::XisfProperty;
 
-pub fn wcs_to_xisf_properties(wcs_keywords: &[celestial_wcs::WcsKeyword]) -> Vec<XisfProperty> {
+pub fn wcs_to_xisf_properties(
+    wcs_keywords: &[celestial_wcs::builder::WcsKeyword],
+) -> Vec<XisfProperty> {
     let mut properties = Vec::new();
     let mut crval1: Option<f64> = None;
     let mut crval2: Option<f64> = None;
@@ -17,57 +19,57 @@ pub fn wcs_to_xisf_properties(wcs_keywords: &[celestial_wcs::WcsKeyword]) -> Vec
     for kw in wcs_keywords {
         match kw.name.as_str() {
             "CTYPE1" => {
-                if let celestial_wcs::WcsKeywordValue::String(s) = &kw.value {
+                if let celestial_wcs::builder::WcsKeywordValue::String(s) = &kw.value {
                     proj_code = extract_projection_code(s);
                 }
             }
             "CRVAL1" => {
-                if let celestial_wcs::WcsKeywordValue::Real(v) = &kw.value {
+                if let celestial_wcs::builder::WcsKeywordValue::Real(v) = &kw.value {
                     crval1 = Some(*v);
                 }
             }
             "CRVAL2" => {
-                if let celestial_wcs::WcsKeywordValue::Real(v) = &kw.value {
+                if let celestial_wcs::builder::WcsKeywordValue::Real(v) = &kw.value {
                     crval2 = Some(*v);
                 }
             }
             "CRPIX1" => {
-                if let celestial_wcs::WcsKeywordValue::Real(v) = &kw.value {
+                if let celestial_wcs::builder::WcsKeywordValue::Real(v) = &kw.value {
                     crpix1 = Some(*v);
                 }
             }
             "CRPIX2" => {
-                if let celestial_wcs::WcsKeywordValue::Real(v) = &kw.value {
+                if let celestial_wcs::builder::WcsKeywordValue::Real(v) = &kw.value {
                     crpix2 = Some(*v);
                 }
             }
             "CD1_1" => {
-                if let celestial_wcs::WcsKeywordValue::Real(v) = &kw.value {
+                if let celestial_wcs::builder::WcsKeywordValue::Real(v) = &kw.value {
                     cd1_1 = Some(*v);
                 }
             }
             "CD1_2" => {
-                if let celestial_wcs::WcsKeywordValue::Real(v) = &kw.value {
+                if let celestial_wcs::builder::WcsKeywordValue::Real(v) = &kw.value {
                     cd1_2 = Some(*v);
                 }
             }
             "CD2_1" => {
-                if let celestial_wcs::WcsKeywordValue::Real(v) = &kw.value {
+                if let celestial_wcs::builder::WcsKeywordValue::Real(v) = &kw.value {
                     cd2_1 = Some(*v);
                 }
             }
             "CD2_2" => {
-                if let celestial_wcs::WcsKeywordValue::Real(v) = &kw.value {
+                if let celestial_wcs::builder::WcsKeywordValue::Real(v) = &kw.value {
                     cd2_2 = Some(*v);
                 }
             }
             "LONPOLE" => {
-                if let celestial_wcs::WcsKeywordValue::Real(v) = &kw.value {
+                if let celestial_wcs::builder::WcsKeywordValue::Real(v) = &kw.value {
                     lonpole = Some(*v);
                 }
             }
             "LATPOLE" => {
-                if let celestial_wcs::WcsKeywordValue::Real(v) = &kw.value {
+                if let celestial_wcs::builder::WcsKeywordValue::Real(v) = &kw.value {
                     latpole = Some(*v);
                 }
             }
@@ -134,15 +136,20 @@ fn extract_projection_code(ctype: &str) -> Option<String> {
     let dashes_pos = trimmed.find('-')?;
     let after_dashes = &trimmed[dashes_pos..];
     let code_start = after_dashes.trim_start_matches('-');
-    if code_start.is_empty() {
+    // A "-SIP" suffix follows the code; these properties carry no distortion.
+    let code = code_start
+        .split_once('-')
+        .map_or(code_start, |(code, _)| code);
+    if code.is_empty() {
         return None;
     }
-    Some(projection_system_name(code_start))
+    Some(projection_system_name(code))
 }
 
 fn projection_system_name(code: &str) -> String {
     match code {
-        "TAN" => "Gnomonic",
+        // TPV is TAN whose PV terms are a distortion polynomial.
+        "TAN" | "TPV" => "Gnomonic",
         "SIN" => "Orthographic",
         "STG" => "Stereographic",
         "ARC" => "ZenithalEquidistant",
@@ -172,7 +179,7 @@ fn projection_system_name(code: &str) -> String {
 mod tests {
     use super::*;
     use crate::xisf::header::XisfPropertyValue;
-    use celestial_wcs::{WcsKeyword, WcsKeywordValue};
+    use celestial_wcs::builder::{WcsKeyword, WcsKeywordValue};
 
     fn find_prop<'a>(props: &'a [XisfProperty], id: &str) -> Option<&'a XisfProperty> {
         props.iter().find(|p| p.id == id)
@@ -213,6 +220,18 @@ mod tests {
         assert_eq!(
             extract_projection_code("FOO---XYZ"),
             Some("XYZ".to_string())
+        );
+    }
+
+    #[test]
+    fn extract_projection_code_names_the_projection_under_a_distortion() {
+        assert_eq!(
+            extract_projection_code("RA---TAN-SIP"),
+            Some("Gnomonic".to_string())
+        );
+        assert_eq!(
+            extract_projection_code("DEC--TPV"),
+            Some("Gnomonic".to_string())
         );
     }
 

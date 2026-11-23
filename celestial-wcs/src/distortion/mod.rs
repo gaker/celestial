@@ -1,10 +1,8 @@
-pub mod polynomial;
+mod polynomial;
 pub mod sip;
-pub mod tnx;
 pub mod tpv;
 
 pub use sip::SipDistortion;
-pub use tnx::{CrossTerms, SurfaceType, TnxDistortion, TnxSurface};
 pub use tpv::TpvDistortion;
 
 use crate::error::WcsResult;
@@ -19,7 +17,6 @@ pub trait Distortion {
 pub enum DistortionModel {
     Sip(SipDistortion),
     Tpv(Box<TpvDistortion>),
-    Tnx(TnxDistortion),
 }
 
 impl Distortion for DistortionModel {
@@ -27,7 +24,6 @@ impl Distortion for DistortionModel {
         match self {
             Self::Sip(d) => d.apply(x, y),
             Self::Tpv(d) => d.as_ref().apply(x, y),
-            Self::Tnx(d) => d.apply(x, y),
         }
     }
 
@@ -35,7 +31,6 @@ impl Distortion for DistortionModel {
         match self {
             Self::Sip(d) => d.apply_inverse(x, y),
             Self::Tpv(d) => d.as_ref().apply_inverse(x, y),
-            Self::Tnx(d) => d.apply_inverse(x, y),
         }
     }
 
@@ -43,7 +38,6 @@ impl Distortion for DistortionModel {
         match self {
             Self::Sip(_) => true,
             Self::Tpv(_) => false,
-            Self::Tnx(_) => false,
         }
     }
 }
@@ -63,20 +57,6 @@ impl Distortion for SipDistortion {
 }
 
 impl Distortion for TpvDistortion {
-    fn apply(&self, x: f64, y: f64) -> (f64, f64) {
-        Self::apply(self, x, y)
-    }
-
-    fn apply_inverse(&self, x: f64, y: f64) -> WcsResult<(f64, f64)> {
-        Self::apply_inverse(self, x, y)
-    }
-
-    fn operates_on_pixels(&self) -> bool {
-        false
-    }
-}
-
-impl Distortion for TnxDistortion {
     fn apply(&self, x: f64, y: f64) -> (f64, f64) {
         Self::apply(self, x, y)
     }
