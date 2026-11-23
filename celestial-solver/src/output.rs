@@ -7,10 +7,10 @@ use std::path::Path;
 
 use celestial_catalog::query::tan_project_star;
 use celestial_core::constants::RAD_TO_DEG;
-use celestial_images::fits::header::Keyword;
-use celestial_images::formats::Image;
-use celestial_images::xisf::{XisfProperty, XisfPropertyValue};
-use celestial_images::Result as ImageResult;
+use celestial_images::core::errors::Result as ImageResult;
+use celestial_images::fits::header::keywords::Keyword;
+use celestial_images::formats::image::Image;
+use celestial_images::xisf::header::property::{XisfProperty, XisfPropertyValue};
 
 use crate::fit_wcs::{SipSolution, WcsSolution};
 use crate::match_field::StarPair;
@@ -28,7 +28,7 @@ impl SolveResult {
     /// # Examples
     ///
     /// ```rust,ignore
-    /// # let img = celestial_images::formats::Image::open("f.fits")?;
+    /// # let img = celestial_images::formats::image::Image::open("f.fits")?;
     /// # let catalog = celestial_catalog::query::Catalog::open("cat.bin")?;
     /// let result = celestial_solver::solve(&img, &catalog).run()?;
     /// for kw in result.to_fits_keywords() {
@@ -54,7 +54,7 @@ impl SolveResult {
     /// # Examples
     ///
     /// ```rust,ignore
-    /// # let img = celestial_images::formats::Image::open("f.fits")?;
+    /// # let img = celestial_images::formats::image::Image::open("f.fits")?;
     /// # let catalog = celestial_catalog::query::Catalog::open("cat.bin")?;
     /// let result = celestial_solver::solve(&img, &catalog).run()?;
     /// let props = result.to_xisf_properties();
@@ -77,7 +77,7 @@ impl SolveResult {
     /// # Examples
     ///
     /// ```rust,ignore
-    /// # let img = celestial_images::formats::Image::open("f.fits")?;
+    /// # let img = celestial_images::formats::image::Image::open("f.fits")?;
     /// # let catalog = celestial_catalog::query::Catalog::open("cat.bin")?;
     /// let result = celestial_solver::solve(&img, &catalog).run()?;
     ///
@@ -101,13 +101,13 @@ impl SolveResult {
     ///
     /// # Errors
     ///
-    /// Returns [`celestial_images::ImageError`] for filesystem errors, unsupported
+    /// Returns [`celestial_images::core::errors::ImageError`] for filesystem errors, unsupported
     /// path extensions, or write failures.
     ///
     /// # Examples
     ///
     /// ```rust,ignore
-    /// # let img = celestial_images::formats::Image::open("f.fits")?;
+    /// # let img = celestial_images::formats::image::Image::open("f.fits")?;
     /// # let catalog = celestial_catalog::query::Catalog::open("cat.bin")?;
     /// let result = celestial_solver::solve(&img, &catalog).run()?;
     /// result.save_with(&img, "out/solved.fits")?;
@@ -221,7 +221,7 @@ mod tests {
     use super::*;
     use crate::detect::DetectedStar;
     use crate::match_field::FieldMatch;
-    use celestial_images::fits::header::KeywordValue;
+    use celestial_images::fits::header::keywords::KeywordValue;
     use std::collections::HashMap;
 
     fn sample_wcs() -> WcsSolution {
@@ -531,7 +531,7 @@ mod tests {
     }
 
     fn blank_image() -> Image {
-        use celestial_images::formats::PixelData;
+        use celestial_images::formats::pixel_data::PixelData;
         Image::new(PixelData::F32(vec![0.0; 16]), [4, 4])
     }
 

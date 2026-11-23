@@ -9,7 +9,8 @@ use celestial_coords::frames::icrs::ICRSPosition;
 use celestial_core::{angle::Angle, math::angular_separation};
 use celestial_time::julian::JulianDate;
 
-use celestial_images::formats::{Image, PixelData};
+use celestial_images::formats::image::Image;
+use celestial_images::formats::pixel_data::PixelData;
 
 use crate::detect::{find_bright_stars, DetectedStar, DetectionParams};
 use crate::fit_wcs::{fit_sip, fit_wcs, refine_wcs, RefineParams, SipSolution, WcsSolution};
@@ -96,7 +97,7 @@ impl Default for SolveParams {
 /// # Examples
 ///
 /// ```rust,ignore
-/// # let img = celestial_images::formats::Image::open("m31.fits")?;
+/// # let img = celestial_images::formats::image::Image::open("m31.fits")?;
 /// # let catalog = celestial_catalog::query::Catalog::open("cat.bin")?;
 /// let result = celestial_solver::solve(&img, &catalog).run()?;
 ///
@@ -140,7 +141,7 @@ pub struct SolveResult {
 /// # Examples
 ///
 /// ```rust,ignore
-/// use celestial_images::formats::Image;
+/// use celestial_images::formats::image::Image;
 /// use celestial_catalog::query::Catalog;
 ///
 /// let img = Image::open("m31.fits")?;
@@ -187,7 +188,7 @@ impl<'a> Solver<'a> {
     /// ```rust,ignore
     /// use celestial_coords::frames::icrs::ICRSPosition;
     ///
-    /// # let img = celestial_images::formats::Image::open("f.fits")?;
+    /// # let img = celestial_images::formats::image::Image::open("f.fits")?;
     /// # let catalog = celestial_catalog::query::Catalog::open("cat.bin")?;
     /// let result = celestial_solver::solve(&img, &catalog)
     ///     .hint(ICRSPosition::from_degrees(83.633, 22.014)?)
@@ -209,7 +210,7 @@ impl<'a> Solver<'a> {
     /// ```rust,ignore
     /// use celestial_time::scales::utc::utc_from_calendar;
     ///
-    /// # let img = celestial_images::formats::Image::open("f.fits")?;
+    /// # let img = celestial_images::formats::image::Image::open("f.fits")?;
     /// # let catalog = celestial_catalog::query::Catalog::open("cat.bin")?;
     /// let jd = utc_from_calendar(2026, 4, 21, 20, 0, 0.0)?.to_julian_date();
     /// let result = celestial_solver::solve(&img, &catalog).epoch(jd).run()?;
@@ -229,7 +230,7 @@ impl<'a> Solver<'a> {
     /// # Examples
     ///
     /// ```rust,ignore
-    /// # let img = celestial_images::formats::Image::open("f.fits")?;
+    /// # let img = celestial_images::formats::image::Image::open("f.fits")?;
     /// # let catalog = celestial_catalog::query::Catalog::open("cat.bin")?;
     /// let result = celestial_solver::solve(&img, &catalog)
     ///     .focal_length_mm(500)    // integer literal auto-converts to f64
@@ -250,7 +251,7 @@ impl<'a> Solver<'a> {
     /// # Examples
     ///
     /// ```rust,ignore
-    /// # let img = celestial_images::formats::Image::open("f.fits")?;
+    /// # let img = celestial_images::formats::image::Image::open("f.fits")?;
     /// # let catalog = celestial_catalog::query::Catalog::open("cat.bin")?;
     /// let result = celestial_solver::solve(&img, &catalog)
     ///     .pixel_size_um(3.76)
@@ -271,7 +272,7 @@ impl<'a> Solver<'a> {
     /// # Examples
     ///
     /// ```rust,ignore
-    /// # let img = celestial_images::formats::Image::open("f.fits")?;
+    /// # let img = celestial_images::formats::image::Image::open("f.fits")?;
     /// # let catalog = celestial_catalog::query::Catalog::open("cat.bin")?;
     /// let result = celestial_solver::solve(&img, &catalog)
     ///     .plate_scale_arcsec(1.55)
@@ -296,7 +297,7 @@ impl<'a> Solver<'a> {
     /// use celestial_coords::frames::icrs::ICRSPosition;
     /// use celestial_time::scales::utc::utc_from_calendar;
     ///
-    /// # let img = celestial_images::formats::Image::open("frame.png")?;
+    /// # let img = celestial_images::formats::image::Image::open("frame.png")?;
     /// # let catalog = celestial_catalog::query::Catalog::open("cat.bin")?;
     /// let meta = ImageMetadata {
     ///     hint: ICRSPosition::from_degrees(83.633, 22.014)?,
@@ -324,7 +325,7 @@ impl<'a> Solver<'a> {
     /// ```rust,ignore
     /// use celestial_solver::SolveParams;
     ///
-    /// # let img = celestial_images::formats::Image::open("f.fits")?;
+    /// # let img = celestial_images::formats::image::Image::open("f.fits")?;
     /// # let catalog = celestial_catalog::query::Catalog::open("cat.bin")?;
     /// let params = SolveParams { sip_order: None, ..SolveParams::default() };
     /// let result = celestial_solver::solve(&img, &catalog).params(params).run()?;
@@ -348,7 +349,7 @@ impl<'a> Solver<'a> {
     /// # Examples
     ///
     /// ```rust,ignore
-    /// # let img = celestial_images::formats::Image::open("f.fits")?;
+    /// # let img = celestial_images::formats::image::Image::open("f.fits")?;
     /// # let catalog = celestial_catalog::query::Catalog::open("cat.bin")?;
     /// let result = celestial_solver::solve(&img, &catalog).run()?;
     /// # Ok::<(), Box<dyn std::error::Error>>(())
@@ -417,9 +418,13 @@ pub(crate) fn detect_stars(image: &Image, params: &DetectionParams) -> Result<Ve
     let h = image.height();
     let stars = match &image.pixels {
         PixelData::U8(v) => find_bright_stars(v, w, h, params),
+        PixelData::I8(v) => find_bright_stars(v, w, h, params),
         PixelData::U16(v) => find_bright_stars(v, w, h, params),
         PixelData::I16(v) => find_bright_stars(v, w, h, params),
+        PixelData::U32(v) => find_bright_stars(v, w, h, params),
         PixelData::I32(v) => find_bright_stars(v, w, h, params),
+        PixelData::U64(v) => find_bright_stars(v, w, h, params),
+        PixelData::I64(v) => find_bright_stars(v, w, h, params),
         PixelData::F32(v) => find_bright_stars(v, w, h, params),
         PixelData::F64(v) => find_bright_stars(v, w, h, params),
     };
@@ -545,7 +550,7 @@ fn fov_diagonal_deg(wcs: &WcsSolution, width: usize, height: usize) -> f64 {
 mod tests {
     use super::*;
 
-    use celestial_images::formats::PixelData;
+    use celestial_images::formats::pixel_data::PixelData;
 
     use crate::fit_wcs::solution::StarResidual;
 

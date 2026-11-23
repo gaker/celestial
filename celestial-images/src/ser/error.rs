@@ -1,3 +1,4 @@
+use celestial_time::TimeError;
 use std::io;
 use thiserror::Error;
 
@@ -24,11 +25,36 @@ pub enum SerError {
     #[error("Timestamp format error: {0}")]
     TimestampError(String),
 
+    #[error("Time conversion failed: {0}")]
+    Time(#[from] TimeError),
+
     #[error("Buffer size mismatch: expected {expected}, got {actual}")]
     BufferSizeMismatch { expected: usize, actual: usize },
 
+    #[error("Write buffer of {megabytes} MiB is larger than the 1024 MiB limit")]
+    BufferTooLarge { megabytes: usize },
+
     #[error("File truncated: expected {expected} bytes, got {actual}")]
     FileTruncated { expected: u64, actual: u64 },
+
+    #[error(
+        "Frame {frame} {}, but frame 0 {}",
+        if *frame0_has_timestamp { "has no timestamp" } else { "has a timestamp" },
+        if *frame0_has_timestamp { "has one" } else { "does not" }
+    )]
+    TimestampPresence {
+        frame: u32,
+        frame0_has_timestamp: bool,
+    },
+
+    #[error("A SER file holds at most {} frames", u32::MAX)]
+    TooManyFrames,
+
+    #[error("Pixel depth {depth} is stored in 8-bit samples, not 16-bit")]
+    NotSixteenBit { depth: u32 },
+
+    #[error("SER writer stopped after an earlier I/O error: {0}")]
+    WriterFailed(String),
 
     #[error("I/O error: {0}")]
     Io(#[from] io::Error),
@@ -99,6 +125,49 @@ mod tests {
         let err = SerError::TimestampError("invalid format".to_string());
         let display = format!("{}", err);
         assert_eq!(display, "Timestamp format error: invalid format");
+    }
+
+    #[test]
+    fn new_variant_displays() {
+        let cases = [
+            (
+                SerError::BufferTooLarge { megabytes: 7 },
+                "Write buffer of 7 MiB is larger than the 1024 MiB limit",
+            ),
+            (
+                SerError::WriterFailed("disk full".to_string()),
+                "SER writer stopped after an earlier I/O error: disk full",
+            ),
+            (
+                SerError::TimestampPresence {
+                    frame: 2,
+                    frame0_has_timestamp: true,
+                },
+                "Frame 2 has no timestamp, but frame 0 has one",
+            ),
+            (
+                SerError::TimestampPresence {
+                    frame: 1,
+                    frame0_has_timestamp: false,
+                },
+                "Frame 1 has a timestamp, but frame 0 does not",
+            ),
+            (
+                SerError::TooManyFrames,
+                "A SER file holds at most 4294967295 frames",
+            ),
+            (
+                SerError::NotSixteenBit { depth: 8 },
+                "Pixel depth 8 is stored in 8-bit samples, not 16-bit",
+            ),
+            (
+                SerError::Time(TimeError::ConversionError("x".to_string())),
+                "Time conversion failed: Conversion error: x",
+            ),
+        ];
+        for (err, shown) in cases {
+            assert_eq!(err.to_string(), shown);
+        }
     }
 
     #[test]

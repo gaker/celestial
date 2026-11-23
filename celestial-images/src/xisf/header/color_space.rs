@@ -6,7 +6,7 @@ pub enum ColorSpace {
 }
 
 impl ColorSpace {
-    pub fn parse(s: &str) -> Self {
+    pub(crate) fn parse(s: &str) -> Self {
         match s {
             "Gray" => Self::Gray,
             "RGB" => Self::Rgb,
@@ -14,7 +14,7 @@ impl ColorSpace {
         }
     }
 
-    pub fn as_str(&self) -> &str {
+    pub(crate) fn as_str(&self) -> &str {
         match self {
             Self::Gray => "Gray",
             Self::Rgb => "RGB",

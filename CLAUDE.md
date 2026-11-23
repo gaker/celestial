@@ -28,7 +28,7 @@ cargo llvm-cov --features serde -p celestial-core  # coverage
 rustfmt --edition 2021 path/to/file.rs             # format one file
 ```
 
-The toolchain is pinned in `rust-toolchain.toml`. Optional features: `serde` (most crates), `test-support` (core), `cli` (catalog, ephemeris), `parallel`/`simd`/`standard-formats` (images).
+The toolchain is pinned in `rust-toolchain.toml`. Optional features: `serde` (most crates), `test-support` (core), `cli` (catalog, ephemeris), `parallel`/`standard-formats` (images).
 
 ## Reference material
 

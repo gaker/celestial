@@ -1,7 +1,7 @@
 use celestial_coords::frames::icrs::ICRSPosition;
 use celestial_core::angle::{parse_dms, parse_hms};
-use celestial_images::fits::header::Field;
-use celestial_images::formats::Image;
+use celestial_images::fits::header::parser::Field;
+use celestial_images::formats::image::Image;
 
 use super::error::MetadataError;
 
@@ -24,7 +24,7 @@ use super::error::MetadataError;
 /// ```rust,ignore
 /// use celestial_solver::metadata::hint_from_image;
 ///
-/// # let img = celestial_images::formats::Image::open("f.fits")?;
+/// # let img = celestial_images::formats::image::Image::open("f.fits")?;
 /// let pos = hint_from_image(&img)?;
 /// println!("{:.4}° {:.4}°", pos.ra().degrees(), pos.dec().degrees());
 /// # Ok::<(), Box<dyn std::error::Error>>(())
@@ -114,8 +114,8 @@ fn parse_ra_dec_keywords(ra_kw: Field<'_>, dec_kw: Field<'_>) -> Result<(f64, f6
 #[cfg(test)]
 mod tests {
     use super::*;
-    use celestial_images::fits::header::Keyword;
-    use celestial_images::formats::PixelData;
+    use celestial_images::fits::header::keywords::Keyword;
+    use celestial_images::formats::pixel_data::PixelData;
 
     fn stub_image() -> Image {
         Image::new(PixelData::F32(vec![0.0; 4]), [2, 2])

@@ -6,9 +6,9 @@
 //!
 //! Used by the `image-solver` binary's `--debug` flag.
 
-use celestial_images::formats::Image;
+use celestial_images::formats::image::Image;
+use celestial_images::formats::pixel_data::PixelData;
 use celestial_images::stretch::{StfParams, Stretch};
-use celestial_images::PixelData;
 
 use crate::detect::DetectedStar;
 use crate::fit_wcs::WcsSolution;
@@ -34,7 +34,7 @@ pub const COLOR_RESIDUAL: [u8; 3] = [255, 0, 255];
 /// ```rust,ignore
 /// use celestial_solver::annotate::Annotation;
 ///
-/// # let img = celestial_images::formats::Image::open("f.fits")?;
+/// # let img = celestial_images::formats::image::Image::open("f.fits")?;
 /// # let catalog = celestial_catalog::query::Catalog::open("cat.bin")?;
 /// let result = celestial_solver::solve(&img, &catalog).run()?;
 ///
@@ -64,7 +64,7 @@ impl Annotation {
     /// ```rust,ignore
     /// use celestial_solver::annotate::Annotation;
     ///
-    /// # let img = celestial_images::formats::Image::open("f.fits")?;
+    /// # let img = celestial_images::formats::image::Image::open("f.fits")?;
     /// let ann = Annotation::from_image(&img).unwrap();
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
@@ -96,7 +96,7 @@ impl Annotation {
     /// # Examples
     ///
     /// ```rust,ignore
-    /// # let img = celestial_images::formats::Image::open("f.fits")?;
+    /// # let img = celestial_images::formats::image::Image::open("f.fits")?;
     /// let ann = celestial_solver::annotate::Annotation::from_image(&img).unwrap();
     /// let out = ann.to_image();
     /// out.save("annotated.png")?;
@@ -119,7 +119,7 @@ impl Annotation {
     /// # Examples
     ///
     /// ```rust,ignore
-    /// # let img = celestial_images::formats::Image::open("f.fits")?;
+    /// # let img = celestial_images::formats::image::Image::open("f.fits")?;
     /// # let catalog = celestial_catalog::query::Catalog::open("cat.bin")?;
     /// let result = celestial_solver::solve(&img, &catalog).run()?;
     /// let mut ann = celestial_solver::annotate::Annotation::from_image(&img).unwrap();
@@ -162,7 +162,7 @@ impl Annotation {
     /// # Examples
     ///
     /// ```rust,ignore
-    /// # let img = celestial_images::formats::Image::open("f.fits")?;
+    /// # let img = celestial_images::formats::image::Image::open("f.fits")?;
     /// # let catalog = celestial_catalog::query::Catalog::open("cat.bin")?;
     /// let result = celestial_solver::solve(&img, &catalog).run()?;
     /// let mut ann = celestial_solver::annotate::Annotation::from_image(&img).unwrap();
@@ -280,7 +280,7 @@ fn draw_line(rgb: &mut [u8], w: usize, h: usize, p0: (i32, i32), p1: (i32, i32),
 mod tests {
     use super::*;
     use crate::fit_wcs::solution::StarResidual;
-    use celestial_images::formats::PixelData;
+    use celestial_images::formats::pixel_data::PixelData;
 
     fn blank_annotation(w: usize, h: usize) -> Annotation {
         Annotation {

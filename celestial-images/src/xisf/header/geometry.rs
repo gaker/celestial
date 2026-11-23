@@ -1,49 +1,40 @@
-use crate::xisf::{Result, XisfError};
+use crate::xisf::errors::{Result, XisfError};
 
+// XISF 1.0 section 11.5.1: geometry is dim1:...:dimN:channel-count. One or
+// two image dimensions are supported. A one-dimensional image reads as [n]
+// when it has one channel and as [n, 1, channels] otherwise, so the channel
+// count is always the third dimension.
 pub(crate) fn parse_geometry(geometry_str: &str) -> Result<Vec<usize>> {
     let parts: Vec<&str> = geometry_str.split(':').collect();
-    if parts.len() < 2 || parts.len() > 3 {
+    let Some((channels, axes)) = parts.split_last().filter(|(_, axes)| !axes.is_empty()) else {
         return Err(XisfError::InvalidGeometry(geometry_str.to_string()));
+    };
+    if axes.len() > 2 {
+        return Err(XisfError::InvalidGeometry(format!(
+            "{geometry_str} has {} dimensions; images with more than two are not supported",
+            axes.len()
+        )));
     }
-
-    let mut dimensions = Vec::new();
-
-    let width = parts[0]
-        .parse::<usize>()
-        .map_err(|_| XisfError::InvalidGeometry(format!("Invalid width: {}", parts[0])))?;
-    let height = parts[1]
-        .parse::<usize>()
-        .map_err(|_| XisfError::InvalidGeometry(format!("Invalid height: {}", parts[1])))?;
-
-    if width == 0 {
-        return Err(XisfError::InvalidGeometry(
-            "Width cannot be zero".to_string(),
-        ));
+    let mut dimensions = Vec::with_capacity(3);
+    for (part, name) in axes.iter().zip(["Width", "Height"]) {
+        dimensions.push(parse_dimension(part, name)?);
     }
-    if height == 0 {
-        return Err(XisfError::InvalidGeometry(
-            "Height cannot be zero".to_string(),
-        ));
+    let channels = parse_dimension(channels, "Channels")?;
+    if channels > 1 {
+        dimensions.resize(2, 1);
+        dimensions.push(channels);
     }
-
-    dimensions.push(width);
-    dimensions.push(height);
-
-    if parts.len() == 3 {
-        let channels = parts[2]
-            .parse::<usize>()
-            .map_err(|_| XisfError::InvalidGeometry(format!("Invalid channels: {}", parts[2])))?;
-        if channels == 0 {
-            return Err(XisfError::InvalidGeometry(
-                "Channels cannot be zero".to_string(),
-            ));
-        }
-        if channels > 1 {
-            dimensions.push(channels);
-        }
-    }
-
     Ok(dimensions)
+}
+
+fn parse_dimension(text: &str, name: &str) -> Result<usize> {
+    let value = text.parse::<usize>().map_err(|_| {
+        XisfError::InvalidGeometry(format!("Invalid {}: {text}", name.to_lowercase()))
+    })?;
+    if value == 0 {
+        return Err(XisfError::InvalidGeometry(format!("{name} cannot be zero")));
+    }
+    Ok(value)
 }
 
 pub(crate) fn format_geometry(geometry: &[usize]) -> String {
@@ -54,6 +45,8 @@ pub(crate) fn format_geometry(geometry: &[usize]) -> String {
         .join(":")
 }
 
+// [w, h] is written with an explicit channel count of 1, since without it
+// the height would read as the channel count of a one-dimensional image.
 pub(crate) fn format_geometry_with_channels(geometry: &[usize]) -> String {
     if geometry.len() == 2 {
         format!("{}:{}:1", geometry[0], geometry[1])
@@ -67,9 +60,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parse_two_dim_geometry() {
-        assert_eq!(parse_geometry("1920:1080").unwrap(), vec![1920, 1080]);
-        assert_eq!(parse_geometry("1:1").unwrap(), vec![1, 1]);
+    fn parse_two_field_geometry_as_one_dimensional() {
+        assert_eq!(parse_geometry("1920:1080").unwrap(), vec![1920, 1, 1080]);
+        assert_eq!(parse_geometry("1:1").unwrap(), vec![1]);
     }
 
     #[test]
@@ -101,7 +94,7 @@ mod tests {
         assert!(err.to_string().to_lowercase().contains("width"));
 
         let err = parse_geometry("1920:0").unwrap_err();
-        assert!(err.to_string().to_lowercase().contains("height"));
+        assert!(err.to_string().to_lowercase().contains("channels"));
 
         let err = parse_geometry("1920:1080:0").unwrap_err();
         assert!(err.to_string().to_lowercase().contains("channels"));
@@ -173,7 +166,7 @@ mod tests {
     #[test]
     fn parse_format_roundtrip_two_dim() {
         let original = vec![1920, 1080];
-        let reparsed = parse_geometry(&format_geometry(&original)).unwrap();
+        let reparsed = parse_geometry(&format_geometry_with_channels(&original)).unwrap();
         assert_eq!(reparsed, original);
     }
 

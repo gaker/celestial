@@ -1,6 +1,4 @@
-mod array;
+pub mod array;
 mod impls;
-mod value;
-
-pub use array::DataArray;
-pub use value::{DataValue, TableValue};
+pub(crate) mod scaling;
+pub mod value;

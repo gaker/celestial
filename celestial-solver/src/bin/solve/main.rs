@@ -6,8 +6,8 @@ use std::fs::create_dir_all;
 use std::path::{Path, PathBuf};
 
 use celestial_catalog::query::Catalog;
-use celestial_images::formats::Image;
-use celestial_images::ImageFormat;
+use celestial_images::formats::format::ImageFormat;
+use celestial_images::formats::image::Image;
 use celestial_solver::annotate::Annotation;
 use celestial_solver::fit_wcs::SolveDisplay;
 use celestial_solver::match_field::MatchParams;

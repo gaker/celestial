@@ -1,11 +1,8 @@
-use crate::ser::ColorId;
+use crate::core::errors::{ImageError, Result};
+use crate::ser::types::ColorId;
 
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
-
-#[cfg(feature = "simd")]
-#[allow(unused_imports)]
-use wide::u16x8;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BayerPattern {
@@ -13,6 +10,23 @@ pub enum BayerPattern {
     Grbg,
     Gbrg,
     Bggr,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Cfa {
+    Red,
+    Green,
+    Blue,
+}
+
+// A CFA sample position, with a green site split by the colour of its left
+// and right neighbours.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Site {
+    Red,
+    Blue,
+    GreenInRedRow,
+    GreenInBlueRow,
 }
 
 impl BayerPattern {
@@ -26,13 +40,27 @@ impl BayerPattern {
         }
     }
 
-    fn offsets(&self) -> (usize, usize, usize, usize) {
-        match self {
-            Self::Rggb => (0, 1, 2, 3), // R at (0,0), G at (1,0) and (0,1), B at (1,1)
-            Self::Grbg => (1, 0, 3, 2), // G at (0,0), R at (1,0), B at (0,1), G at (1,1)
-            Self::Gbrg => (2, 3, 0, 1), // G at (0,0), B at (1,0), R at (0,1), G at (1,1)
-            Self::Bggr => (3, 2, 1, 0), // B at (0,0), G at (1,0) and (0,1), R at (1,1)
-        }
+    // The pattern names the 2x2 tile in row-major order: (0,0), (1,0), (0,1), (1,1).
+    fn colour_at(self, x: usize, y: usize) -> Cfa {
+        use Cfa::{Blue, Green, Red};
+        let tile = match self {
+            Self::Rggb => [Red, Green, Green, Blue],
+            Self::Grbg => [Green, Red, Blue, Green],
+            Self::Gbrg => [Green, Blue, Red, Green],
+            Self::Bggr => [Blue, Green, Green, Red],
+        };
+        tile[(y % 2) * 2 + x % 2]
+    }
+
+    // The sites at even and odd x on row y.
+    fn row_sites(self, y: usize) -> [Site; 2] {
+        let site = |x: usize| match self.colour_at(x, y) {
+            Cfa::Red => Site::Red,
+            Cfa::Blue => Site::Blue,
+            Cfa::Green if self.colour_at(x + 1, y) == Cfa::Red => Site::GreenInRedRow,
+            Cfa::Green => Site::GreenInBlueRow,
+        };
+        [site(0), site(1)]
     }
 }
 
@@ -41,15 +69,8 @@ pub fn debayer_bilinear_u8(
     width: usize,
     height: usize,
     pattern: BayerPattern,
-) -> Vec<u8> {
-    #[cfg(feature = "simd")]
-    {
-        debayer_bilinear_u8_simd(raw, width, height, pattern)
-    }
-    #[cfg(not(feature = "simd"))]
-    {
-        debayer_bilinear(raw, width, height, pattern, 255u8)
-    }
+) -> Result<Vec<u8>> {
+    debayer_bilinear(raw, width, height, pattern)
 }
 
 pub fn debayer_bilinear_u16(
@@ -57,539 +78,154 @@ pub fn debayer_bilinear_u16(
     width: usize,
     height: usize,
     pattern: BayerPattern,
-) -> Vec<u16> {
-    #[cfg(feature = "simd")]
-    {
-        debayer_bilinear_u16_simd(raw, width, height, pattern)
-    }
-    #[cfg(not(feature = "simd"))]
-    {
-        debayer_bilinear(raw, width, height, pattern, 65535u16)
+) -> Result<Vec<u16>> {
+    debayer_bilinear(raw, width, height, pattern)
+}
+
+// Mosaic samples are summed in u32: four u16 values cannot overflow it.
+trait MosaicSample: Copy + Default + Send + Sync + Into<u32> {
+    fn from_mean(mean: u32) -> Self;
+}
+
+// A mean of samples of one type never exceeds that type's maximum, so the
+// casts below do not truncate.
+impl MosaicSample for u8 {
+    fn from_mean(mean: u32) -> Self {
+        mean as u8
     }
 }
 
-/// SIMD-accelerated debayering for u8 data
-#[cfg(feature = "simd")]
-fn debayer_bilinear_u8_simd(
-    raw: &[u8],
+impl MosaicSample for u16 {
+    fn from_mean(mean: u32) -> Self {
+        mean as u16
+    }
+}
+
+struct Mosaic<'a, T> {
+    raw: &'a [T],
     width: usize,
     height: usize,
     pattern: BayerPattern,
-) -> Vec<u8> {
-    #[cfg(feature = "parallel")]
-    {
-        debayer_u8_simd_parallel(raw, width, height, pattern)
-    }
-    #[cfg(not(feature = "parallel"))]
-    {
-        debayer_u8_simd_sequential(raw, width, height, pattern)
-    }
 }
 
-#[cfg(all(feature = "simd", feature = "parallel"))]
-fn debayer_u8_simd_parallel(
-    raw: &[u8],
+fn debayer_bilinear<T: MosaicSample>(
+    raw: &[T],
     width: usize,
     height: usize,
     pattern: BayerPattern,
-) -> Vec<u8> {
-    let offsets = pattern.offsets();
-    let dims = [width, height];
-
-    let rows: Vec<Vec<u8>> = (0..height)
-        .into_par_iter()
-        .map(|y| debayer_row_u8_simd(raw, &dims, y, &offsets))
-        .collect();
-
-    rows.into_iter().flatten().collect()
-}
-
-#[cfg(all(feature = "simd", not(feature = "parallel")))]
-fn debayer_u8_simd_sequential(
-    raw: &[u8],
-    width: usize,
-    height: usize,
-    pattern: BayerPattern,
-) -> Vec<u8> {
-    let offsets = pattern.offsets();
-    let dims = [width, height];
-
-    let rows: Vec<Vec<u8>> = (0..height)
-        .map(|y| debayer_row_u8_simd(raw, &dims, y, &offsets))
-        .collect();
-
-    rows.into_iter().flatten().collect()
-}
-
-#[cfg(feature = "simd")]
-fn debayer_row_u8_simd(
-    raw: &[u8],
-    dims: &[usize; 2],
-    y: usize,
-    offsets: &(usize, usize, usize, usize),
-) -> Vec<u8> {
-    let width = dims[0];
-    let height = dims[1];
-    let mut row = vec![0u8; width * 3];
-
-    for x in 0..width {
-        let out_idx = x * 3;
-        let (r, g, b) = interpolate_pixel_u8(raw, width, height, x, y, offsets);
-        row[out_idx] = r;
-        row[out_idx + 1] = g;
-        row[out_idx + 2] = b;
-    }
-
-    row
-}
-
-#[cfg(feature = "simd")]
-fn interpolate_pixel_u8(
-    raw: &[u8],
-    width: usize,
-    height: usize,
-    x: usize,
-    y: usize,
-    offsets: &(usize, usize, usize, usize),
-) -> (u8, u8, u8) {
-    let (r_off, g1_off, g2_off, b_off) = *offsets;
-
-    let phase_x = x % 2;
-    let phase_y = y % 2;
-    let phase = phase_y * 2 + phase_x;
-
-    let get = |dx: isize, dy: isize| -> u16 {
-        let nx = (x as isize + dx).clamp(0, width as isize - 1) as usize;
-        let ny = (y as isize + dy).clamp(0, height as isize - 1) as usize;
-        raw[ny * width + nx] as u16
+) -> Result<Vec<T>> {
+    let row_len = checked_rgb_row_len(raw.len(), width, height)?;
+    let mosaic = Mosaic {
+        raw,
+        width,
+        height,
+        pattern,
     };
+    let mut rgb = vec![T::default(); raw.len() * 3];
+    #[cfg(feature = "parallel")]
+    let rows = rgb.par_chunks_mut(row_len).enumerate();
+    #[cfg(not(feature = "parallel"))]
+    let rows = rgb.chunks_mut(row_len).enumerate();
+    rows.for_each(|(y, row)| mosaic.fill_row(y, row));
+    Ok(rgb)
+}
 
-    let center = get(0, 0);
-
-    let (r, g, b) = if phase == r_off {
-        let g = (get(-1, 0) + get(1, 0) + get(0, -1) + get(0, 1)) / 4;
-        let b = (get(-1, -1) + get(1, -1) + get(-1, 1) + get(1, 1)) / 4;
-        (center, g, b)
-    } else if phase == b_off {
-        let g = (get(-1, 0) + get(1, 0) + get(0, -1) + get(0, 1)) / 4;
-        let r = (get(-1, -1) + get(1, -1) + get(-1, 1) + get(1, 1)) / 4;
-        (r, g, center)
-    } else if phase == g1_off {
-        let r = (get(-1, 0) + get(1, 0)) / 2;
-        let b = (get(0, -1) + get(0, 1)) / 2;
-        (r, center, b)
-    } else if phase == g2_off {
-        let b = (get(-1, 0) + get(1, 0)) / 2;
-        let r = (get(0, -1) + get(0, 1)) / 2;
-        (r, center, b)
-    } else {
-        (center, center, center)
+// Returns the length of one RGB output row after checking that the mosaic
+// holds exactly width x height samples.
+fn checked_rgb_row_len(len: usize, width: usize, height: usize) -> Result<usize> {
+    let invalid = |reason: &str| {
+        ImageError::InvalidDimensions(format!("Bayer mosaic {width}x{height}: {reason}"))
     };
-
-    (r as u8, g as u8, b as u8)
+    if width == 0 || height == 0 {
+        return Err(invalid("width and height must be nonzero"));
+    }
+    let samples = width
+        .checked_mul(height)
+        .ok_or_else(|| invalid("sample count overflows usize"))?;
+    if len != samples {
+        return Err(invalid(&format!("expected {samples} samples, got {len}")));
+    }
+    samples
+        .checked_mul(3)
+        .map(|_| width * 3)
+        .ok_or_else(|| invalid("RGB sample count overflows usize"))
 }
 
-/// SIMD-accelerated debayering for u16 data
-/// Processes 8 pixels at a time using wide SIMD vectors
-#[cfg(feature = "simd")]
-fn debayer_bilinear_u16_simd(
-    raw: &[u16],
-    width: usize,
-    height: usize,
-    pattern: BayerPattern,
-) -> Vec<u16> {
-    #[cfg(feature = "parallel")]
-    {
-        debayer_u16_simd_parallel(raw, width, height, pattern)
-    }
-    #[cfg(not(feature = "parallel"))]
-    {
-        debayer_u16_simd_sequential(raw, width, height, pattern)
-    }
+// The 3x3 neighbourhood of one sample: rows above, at and below it, and
+// columns left of, at and right of it. Neighbours outside the mosaic take the
+// nearest edge sample.
+struct Neighbours<'a, T> {
+    rows: [&'a [T]; 3],
+    cols: [usize; 3],
 }
 
-#[cfg(all(feature = "simd", feature = "parallel"))]
-fn debayer_u16_simd_parallel(
-    raw: &[u16],
-    width: usize,
-    height: usize,
-    pattern: BayerPattern,
-) -> Vec<u16> {
-    let offsets = pattern.offsets();
-    let dims = [width, height];
-
-    #[cfg(feature = "parallel")]
-    let rows: Vec<Vec<u16>> = (0..height)
-        .into_par_iter()
-        .map(|y| debayer_row_u16_simd(raw, &dims, y, &offsets))
-        .collect();
-
-    #[cfg(not(feature = "parallel"))]
-    let rows: Vec<Vec<u16>> = (0..height)
-        .map(|y| debayer_row_u16_simd(raw, &dims, y, &offsets))
-        .collect();
-
-    rows.into_iter().flatten().collect()
-}
-
-#[cfg(all(feature = "simd", not(feature = "parallel")))]
-fn debayer_u16_simd_sequential(
-    raw: &[u16],
-    width: usize,
-    height: usize,
-    pattern: BayerPattern,
-) -> Vec<u16> {
-    let offsets = pattern.offsets();
-    let dims = [width, height];
-
-    let rows: Vec<Vec<u16>> = (0..height)
-        .map(|y| debayer_row_u16_simd(raw, &dims, y, &offsets))
-        .collect();
-
-    rows.into_iter().flatten().collect()
-}
-
-#[cfg(feature = "simd")]
-fn debayer_row_u16_simd(
-    raw: &[u16],
-    dims: &[usize; 2],
-    y: usize,
-    offsets: &(usize, usize, usize, usize),
-) -> Vec<u16> {
-    let width = dims[0];
-    let mut row = vec![0u16; width * 3];
-
-    // Process in chunks of 8 pixels where possible (interior only)
-    // Edge pixels (x=0, x=width-1) use scalar path
-    let mut x = 0;
-
-    // First pixel - scalar
-    if x < width {
-        let (r, g, b) = interpolate_pixel_u16(raw, dims, x, y, offsets);
-        row[0] = r;
-        row[1] = g;
-        row[2] = b;
-        x = 1;
+impl<T: MosaicSample> Neighbours<'_, T> {
+    fn at(&self, row: usize, col: usize) -> u32 {
+        self.rows[row][self.cols[col]].into()
     }
 
-    // Interior pixels - SIMD where we can do chunks of 8
-    while x + 8 < width {
-        debayer_8_pixels_simd(raw, dims, x, y, offsets, &mut row[x * 3..]);
-        x += 8;
+    fn horizontal(&self) -> u32 {
+        (self.at(1, 0) + self.at(1, 2)) / 2
     }
 
-    // Remaining interior pixels - scalar
-    while x < width - 1 {
-        let out_idx = x * 3;
-        let (r, g, b) = interpolate_pixel_u16(raw, dims, x, y, offsets);
-        row[out_idx] = r;
-        row[out_idx + 1] = g;
-        row[out_idx + 2] = b;
-        x += 1;
+    fn vertical(&self) -> u32 {
+        (self.at(0, 1) + self.at(2, 1)) / 2
     }
 
-    // Last pixel - scalar
-    if x < width {
-        let out_idx = x * 3;
-        let (r, g, b) = interpolate_pixel_u16(raw, dims, x, y, offsets);
-        row[out_idx] = r;
-        row[out_idx + 1] = g;
-        row[out_idx + 2] = b;
+    fn cross(&self) -> u32 {
+        (self.at(1, 0) + self.at(1, 2) + self.at(0, 1) + self.at(2, 1)) / 4
     }
 
-    row
-}
+    fn diagonal(&self) -> u32 {
+        (self.at(0, 0) + self.at(0, 2) + self.at(2, 0) + self.at(2, 2)) / 4
+    }
 
-#[cfg(feature = "simd")]
-fn debayer_8_pixels_simd(
-    raw: &[u16],
-    dims: &[usize; 2],
-    x_start: usize,
-    y: usize,
-    offsets: &(usize, usize, usize, usize),
-    out: &mut [u16],
-) {
-    let width = dims[0];
-    let (r_off, g1_off, _g2_off, b_off) = *offsets;
-
-    // For each of 8 pixels, determine phase and compute RGB
-    // We process pixel-by-pixel but use SIMD for the averaging where beneficial
-    for i in 0..8 {
-        let x = x_start + i;
-        let phase_x = x % 2;
-        let phase_y = y % 2;
-        let phase = phase_y * 2 + phase_x;
-
-        let idx = y * width + x;
-        let center = raw[idx];
-
-        let (r, g, b) = if phase == r_off {
-            // Red pixel - average 4 greens, average 4 blues
-            let g = avg4_u16(
-                raw[idx.saturating_sub(1)],
-                raw[(idx + 1).min(raw.len() - 1)],
-                raw[idx.saturating_sub(width)],
-                raw[(idx + width).min(raw.len() - 1)],
-            );
-            let b = avg4_u16(
-                raw[idx.saturating_sub(width + 1)],
-                raw[idx
-                    .saturating_sub(width)
-                    .saturating_add(1)
-                    .min(raw.len() - 1)],
-                raw[(idx + width).saturating_sub(1).min(raw.len() - 1)],
-                raw[(idx + width + 1).min(raw.len() - 1)],
-            );
-            (center, g, b)
-        } else if phase == b_off {
-            // Blue pixel
-            let g = avg4_u16(
-                raw[idx.saturating_sub(1)],
-                raw[(idx + 1).min(raw.len() - 1)],
-                raw[idx.saturating_sub(width)],
-                raw[(idx + width).min(raw.len() - 1)],
-            );
-            let r = avg4_u16(
-                raw[idx.saturating_sub(width + 1)],
-                raw[idx
-                    .saturating_sub(width)
-                    .saturating_add(1)
-                    .min(raw.len() - 1)],
-                raw[(idx + width).saturating_sub(1).min(raw.len() - 1)],
-                raw[(idx + width + 1).min(raw.len() - 1)],
-            );
-            (r, g, center)
-        } else if phase == g1_off {
-            // Green1 pixel (R neighbors horizontal, B neighbors vertical)
-            let r = avg2_u16(
-                raw[idx.saturating_sub(1)],
-                raw[(idx + 1).min(raw.len() - 1)],
-            );
-            let b = avg2_u16(
-                raw[idx.saturating_sub(width)],
-                raw[(idx + width).min(raw.len() - 1)],
-            );
-            (r, center, b)
-        } else {
-            // Green2 pixel (B neighbors horizontal, R neighbors vertical)
-            let b = avg2_u16(
-                raw[idx.saturating_sub(1)],
-                raw[(idx + 1).min(raw.len() - 1)],
-            );
-            let r = avg2_u16(
-                raw[idx.saturating_sub(width)],
-                raw[(idx + width).min(raw.len() - 1)],
-            );
-            (r, center, b)
+    // Each site computes only the means its missing colours need.
+    fn interpolate(&self, site: Site) -> [T; 3] {
+        let centre = self.at(1, 1);
+        let [r, g, b] = match site {
+            Site::Red => [centre, self.cross(), self.diagonal()],
+            Site::Blue => [self.diagonal(), self.cross(), centre],
+            Site::GreenInRedRow => [self.horizontal(), centre, self.vertical()],
+            Site::GreenInBlueRow => [self.vertical(), centre, self.horizontal()],
         };
-
-        out[i * 3] = r;
-        out[i * 3 + 1] = g;
-        out[i * 3 + 2] = b;
+        [T::from_mean(r), T::from_mean(g), T::from_mean(b)]
     }
 }
 
-#[cfg(feature = "simd")]
-#[inline(always)]
-fn avg2_u16(a: u16, b: u16) -> u16 {
-    ((a as u32 + b as u32) / 2) as u16
-}
-
-#[cfg(feature = "simd")]
-#[inline(always)]
-fn avg4_u16(a: u16, b: u16, c: u16, d: u16) -> u16 {
-    ((a as u32 + b as u32 + c as u32 + d as u32) / 4) as u16
-}
-
-#[cfg(feature = "simd")]
-fn interpolate_pixel_u16(
-    raw: &[u16],
-    dims: &[usize; 2],
-    x: usize,
-    y: usize,
-    offsets: &(usize, usize, usize, usize),
-) -> (u16, u16, u16) {
-    let (width, height) = (dims[0], dims[1]);
-    let (r_off, g1_off, g2_off, b_off) = *offsets;
-
-    let phase_x = x % 2;
-    let phase_y = y % 2;
-    let phase = phase_y * 2 + phase_x;
-
-    let get = |dx: isize, dy: isize| -> u32 {
-        let nx = (x as isize + dx).clamp(0, width as isize - 1) as usize;
-        let ny = (y as isize + dy).clamp(0, height as isize - 1) as usize;
-        raw[ny * width + nx] as u32
-    };
-
-    let center = get(0, 0);
-
-    let (r, g, b) = if phase == r_off {
-        let g = (get(-1, 0) + get(1, 0) + get(0, -1) + get(0, 1)) / 4;
-        let b = (get(-1, -1) + get(1, -1) + get(-1, 1) + get(1, 1)) / 4;
-        (center, g, b)
-    } else if phase == b_off {
-        let g = (get(-1, 0) + get(1, 0) + get(0, -1) + get(0, 1)) / 4;
-        let r = (get(-1, -1) + get(1, -1) + get(-1, 1) + get(1, 1)) / 4;
-        (r, g, center)
-    } else if phase == g1_off {
-        let r = (get(-1, 0) + get(1, 0)) / 2;
-        let b = (get(0, -1) + get(0, 1)) / 2;
-        (r, center, b)
-    } else if phase == g2_off {
-        let b = (get(-1, 0) + get(1, 0)) / 2;
-        let r = (get(0, -1) + get(0, 1)) / 2;
-        (r, center, b)
-    } else {
-        (center, center, center)
-    };
-
-    (r as u16, g as u16, b as u16)
-}
-
-#[cfg(not(feature = "simd"))]
-fn debayer_bilinear<T>(
-    raw: &[T],
-    width: usize,
-    height: usize,
-    pattern: BayerPattern,
-    _max: T,
-) -> Vec<T>
-where
-    T: Copy + Default + Into<u32> + TryFrom<u32> + Send + Sync,
-{
-    #[cfg(feature = "parallel")]
-    {
-        debayer_bilinear_parallel(raw, width, height, pattern)
+impl<T: MosaicSample> Mosaic<'_, T> {
+    fn row(&self, y: usize) -> &[T] {
+        &self.raw[y * self.width..(y + 1) * self.width]
     }
-    #[cfg(not(feature = "parallel"))]
-    {
-        debayer_bilinear_sequential(raw, width, height, pattern)
-    }
-}
 
-#[cfg(all(feature = "parallel", not(feature = "simd")))]
-fn debayer_bilinear_parallel<T>(
-    raw: &[T],
-    width: usize,
-    height: usize,
-    pattern: BayerPattern,
-) -> Vec<T>
-where
-    T: Copy + Default + Into<u32> + TryFrom<u32> + Send + Sync,
-{
-    let offsets = pattern.offsets();
-    let dims = [width, height];
-
-    // Process rows in parallel, each row produces width*3 output values
-    let rows: Vec<Vec<T>> = (0..height)
-        .into_par_iter()
-        .map(|y| {
-            let mut row = vec![T::default(); width * 3];
-            for x in 0..width {
-                let out_idx = x * 3;
-                let (r, g, b) = interpolate_pixel(raw, &dims, x, y, &offsets);
-                row[out_idx] = u32_to_t(r);
-                row[out_idx + 1] = u32_to_t(g);
-                row[out_idx + 2] = u32_to_t(b);
-            }
-            row
-        })
-        .collect();
-
-    // Flatten rows into single vec
-    rows.into_iter().flatten().collect()
-}
-
-#[cfg(not(any(feature = "parallel", feature = "simd")))]
-fn debayer_bilinear_sequential<T>(
-    raw: &[T],
-    width: usize,
-    height: usize,
-    pattern: BayerPattern,
-) -> Vec<T>
-where
-    T: Copy + Default + Into<u32> + TryFrom<u32>,
-{
-    let mut rgb = vec![T::default(); width * height * 3];
-    let offsets = pattern.offsets();
-    let dims = [width, height];
-
-    for y in 0..height {
-        for x in 0..width {
-            let idx = y * width + x;
-            let out_idx = idx * 3;
-
-            let (r, g, b) = interpolate_pixel(raw, &dims, x, y, &offsets);
-
-            rgb[out_idx] = u32_to_t(r);
-            rgb[out_idx + 1] = u32_to_t(g);
-            rgb[out_idx + 2] = u32_to_t(b);
+    fn fill_row(&self, y: usize, out: &mut [T]) {
+        let rows = [
+            self.row(y.saturating_sub(1)),
+            self.row(y),
+            self.row((y + 1).min(self.height - 1)),
+        ];
+        let sites = self.pattern.row_sites(y);
+        for (x, pixel) in out.as_chunks_mut::<3>().0.iter_mut().enumerate() {
+            let cols = [x.saturating_sub(1), x, (x + 1).min(self.width - 1)];
+            *pixel = Neighbours { rows, cols }.interpolate(sites[x % 2]);
         }
-    }
-
-    rgb
-}
-
-#[cfg(not(feature = "simd"))]
-fn u32_to_t<T: TryFrom<u32> + Default>(v: u32) -> T {
-    T::try_from(v).unwrap_or_default()
-}
-
-#[cfg(not(feature = "simd"))]
-fn interpolate_pixel<T>(
-    raw: &[T],
-    dims: &[usize; 2],
-    x: usize,
-    y: usize,
-    offsets: &(usize, usize, usize, usize),
-) -> (u32, u32, u32)
-where
-    T: Copy + Into<u32>,
-{
-    let (width, height) = (dims[0], dims[1]);
-    let (r_off, g1_off, g2_off, b_off) = *offsets;
-
-    let phase_x = x % 2;
-    let phase_y = y % 2;
-    let phase = phase_y * 2 + phase_x;
-
-    let get = |dx: isize, dy: isize| -> u32 {
-        let nx = (x as isize + dx).clamp(0, width as isize - 1) as usize;
-        let ny = (y as isize + dy).clamp(0, height as isize - 1) as usize;
-        raw[ny * width + nx].into()
-    };
-
-    let center = get(0, 0);
-
-    if phase == r_off {
-        let r = center;
-        let g = (get(-1, 0) + get(1, 0) + get(0, -1) + get(0, 1)) / 4;
-        let b = (get(-1, -1) + get(1, -1) + get(-1, 1) + get(1, 1)) / 4;
-        (r, g, b)
-    } else if phase == b_off {
-        let b = center;
-        let g = (get(-1, 0) + get(1, 0) + get(0, -1) + get(0, 1)) / 4;
-        let r = (get(-1, -1) + get(1, -1) + get(-1, 1) + get(1, 1)) / 4;
-        (r, g, b)
-    } else if phase == g1_off {
-        let g = center;
-        let r = (get(-1, 0) + get(1, 0)) / 2;
-        let b = (get(0, -1) + get(0, 1)) / 2;
-        (r, g, b)
-    } else if phase == g2_off {
-        let g = center;
-        let b = (get(-1, 0) + get(1, 0)) / 2;
-        let r = (get(0, -1) + get(0, 1)) / 2;
-        (r, g, b)
-    } else {
-        (center, center, center)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const PATTERNS: [BayerPattern; 4] = [
+        BayerPattern::Rggb,
+        BayerPattern::Bggr,
+        BayerPattern::Grbg,
+        BayerPattern::Gbrg,
+    ];
+
+    fn mosaic_u8(n: usize) -> Vec<u8> {
+        (0..n).map(|i| ((i * 37 + 11) % 251) as u8).collect()
+    }
 
     #[test]
     fn bayer_pattern_from_color_id() {
@@ -620,7 +256,7 @@ mod tests {
             60, 200, // G, B
         ];
 
-        let rgb = debayer_bilinear_u8(&raw, 2, 2, BayerPattern::Rggb);
+        let rgb = debayer_bilinear_u8(&raw, 2, 2, BayerPattern::Rggb).unwrap();
 
         assert_eq!(rgb.len(), 12);
         // Index layout: [R0,G0,B0, R1,G1,B1, R2,G2,B2, R3,G3,B3] for pixels (0,0), (1,0), (0,1), (1,1)
@@ -631,7 +267,7 @@ mod tests {
     #[test]
     fn debayer_4x4_output_size() {
         let raw: Vec<u8> = vec![0u8; 16];
-        let rgb = debayer_bilinear_u8(&raw, 4, 4, BayerPattern::Rggb);
+        let rgb = debayer_bilinear_u8(&raw, 4, 4, BayerPattern::Rggb).unwrap();
         assert_eq!(rgb.len(), 48); // 4*4*3
     }
 
@@ -639,7 +275,7 @@ mod tests {
     fn debayer_u16() {
         let raw: Vec<u16> = vec![1000, 500, 600, 2000];
 
-        let rgb = debayer_bilinear_u16(&raw, 2, 2, BayerPattern::Rggb);
+        let rgb = debayer_bilinear_u16(&raw, 2, 2, BayerPattern::Rggb).unwrap();
 
         assert_eq!(rgb.len(), 12);
         assert_eq!(rgb[0], 1000); // R at (0,0)
@@ -647,15 +283,45 @@ mod tests {
     }
 
     #[test]
-    fn debayer_preserves_green_pattern() {
-        let raw: Vec<u8> = vec![0, 100, 100, 0];
+    fn debayer_2x2_rggb_exact_output() {
+        let rgb = debayer_bilinear_u8(&[0, 100, 100, 0], 2, 2, BayerPattern::Rggb).unwrap();
+        assert_eq!(rgb, [0, 50, 50, 50, 100, 50, 50, 100, 50, 50, 50, 0]);
+    }
 
-        let rgb = debayer_bilinear_u8(&raw, 2, 2, BayerPattern::Rggb);
+    #[test]
+    fn debayer_3x3_every_pattern_exact_output() {
+        let expected: [[u8; 27]; 4] = [
+            [
+                11, 48, 85, 48, 48, 103, 85, 103, 122, 122, 122, 140, 96, 96, 159, 70, 196, 177,
+                233, 151, 133, 144, 19, 89, 56, 81, 107,
+            ],
+            [
+                85, 48, 11, 103, 48, 48, 122, 103, 85, 140, 122, 122, 159, 96, 96, 177, 196, 70,
+                133, 151, 233, 89, 19, 144, 107, 81, 56,
+            ],
+            [
+                29, 11, 66, 48, 75, 103, 66, 85, 140, 77, 131, 122, 33, 159, 159, 52, 124, 196,
+                126, 233, 177, 19, 116, 151, 37, 56, 126,
+            ],
+            [
+                66, 11, 29, 103, 75, 48, 140, 85, 66, 122, 131, 77, 159, 159, 33, 196, 124, 52,
+                177, 233, 126, 151, 116, 19, 126, 56, 37,
+            ],
+        ];
+        for (pattern, want) in PATTERNS.into_iter().zip(expected) {
+            let rgb = debayer_bilinear_u8(&mosaic_u8(9), 3, 3, pattern).unwrap();
+            assert_eq!(rgb, want, "{pattern:?}");
+        }
+    }
 
-        assert_eq!(rgb[1], 50); // G at (0,0) averaged from neighbors
-        assert_eq!(rgb[4], 100); // G at (1,0) - original G1
-        assert_eq!(rgb[7], 100); // G at (0,1) - original G2
-        assert_eq!(rgb[10], 50); // G at (1,1) averaged from neighbors
+    #[test]
+    fn debayer_one_pixel_wide_and_tall() {
+        let column = debayer_bilinear_u8(&mosaic_u8(3), 1, 3, BayerPattern::Rggb).unwrap();
+        assert_eq!(column, [11, 20, 29, 48, 48, 48, 85, 75, 66]);
+        let row = debayer_bilinear_u8(&mosaic_u8(3), 3, 1, BayerPattern::Gbrg).unwrap();
+        assert_eq!(row, [11, 11, 29, 48, 48, 48, 85, 85, 66]);
+        let single = debayer_bilinear_u16(&[0], 1, 1, BayerPattern::Bggr).unwrap();
+        assert_eq!(single, [0, 0, 0]);
     }
 
     #[test]
@@ -665,24 +331,80 @@ mod tests {
             50, 100, // G, R
         ];
 
-        let rgb = debayer_bilinear_u8(&raw, 2, 2, BayerPattern::Bggr);
+        let rgb = debayer_bilinear_u8(&raw, 2, 2, BayerPattern::Bggr).unwrap();
 
         assert_eq!(rgb[2], 200); // B at (0,0) - original B
         assert_eq!(rgb[9], 100); // R at (1,1) - original R
     }
 
     #[test]
-    fn pattern_offsets() {
-        assert_eq!(BayerPattern::Rggb.offsets(), (0, 1, 2, 3));
-        assert_eq!(BayerPattern::Grbg.offsets(), (1, 0, 3, 2));
-        assert_eq!(BayerPattern::Gbrg.offsets(), (2, 3, 0, 1));
-        assert_eq!(BayerPattern::Bggr.offsets(), (3, 2, 1, 0));
+    fn debayer_u16_edge_rows_match_the_bilinear_reference() {
+        let raw: Vec<u16> = (0..80).map(|i| ((i * 7919) % 65521) as u16).collect();
+        let rgb = debayer_bilinear_u16(&raw, 20, 4, BayerPattern::Rggb).unwrap();
+        assert_eq!(
+            &rgb[0..12],
+            &[0, 8814, 17628, 7919, 7919, 21588, 15838, 22672, 29507, 23757, 23757, 37426]
+        );
+        assert_eq!(
+            &rgb[180..192],
+            &[35584, 16493, 20452, 27123, 33957, 24412, 18662, 32331, 32331, 26581, 33415, 40250]
+        );
+    }
+
+    #[test]
+    fn debayer_short_buffer_is_rejected() {
+        let result = debayer_bilinear_u8(&[1, 2, 3], 4, 4, BayerPattern::Rggb);
+        assert!(matches!(result, Err(ImageError::InvalidDimensions(_))));
+        let result = debayer_bilinear_u8(&[0; 17], 4, 4, BayerPattern::Rggb);
+        assert!(matches!(result, Err(ImageError::InvalidDimensions(_))));
+    }
+
+    #[test]
+    fn debayer_zero_width_is_rejected() {
+        let result = debayer_bilinear_u16(&[], 0, 3, BayerPattern::Rggb);
+        assert!(matches!(result, Err(ImageError::InvalidDimensions(_))));
+        let result = debayer_bilinear_u16(&[], 3, 0, BayerPattern::Rggb);
+        assert!(matches!(result, Err(ImageError::InvalidDimensions(_))));
+    }
+
+    #[test]
+    fn debayer_overflowing_dimensions_are_rejected() {
+        let result = debayer_bilinear_u8(&[0; 4], usize::MAX, 2, BayerPattern::Rggb);
+        assert!(matches!(result, Err(ImageError::InvalidDimensions(_))));
+    }
+
+    #[test]
+    fn colour_at_follows_the_pattern_name() {
+        use Cfa::{Blue, Green, Red};
+        let tile = |p: BayerPattern| {
+            [
+                p.colour_at(0, 0),
+                p.colour_at(1, 0),
+                p.colour_at(0, 1),
+                p.colour_at(1, 1),
+            ]
+        };
+        assert_eq!(tile(BayerPattern::Rggb), [Red, Green, Green, Blue]);
+        assert_eq!(tile(BayerPattern::Grbg), [Green, Red, Blue, Green]);
+        assert_eq!(tile(BayerPattern::Gbrg), [Green, Blue, Red, Green]);
+        assert_eq!(tile(BayerPattern::Bggr), [Blue, Green, Green, Red]);
+        assert_eq!(BayerPattern::Rggb.colour_at(3, 5), Blue);
+    }
+
+    #[test]
+    fn row_sites_split_green_by_its_row() {
+        use Site::{Blue, GreenInBlueRow, GreenInRedRow, Red};
+        assert_eq!(BayerPattern::Rggb.row_sites(0), [Red, GreenInRedRow]);
+        assert_eq!(BayerPattern::Rggb.row_sites(1), [GreenInBlueRow, Blue]);
+        assert_eq!(BayerPattern::Grbg.row_sites(2), [GreenInRedRow, Red]);
+        assert_eq!(BayerPattern::Gbrg.row_sites(3), [Red, GreenInRedRow]);
+        assert_eq!(BayerPattern::Bggr.row_sites(0), [Blue, GreenInBlueRow]);
     }
 
     #[test]
     fn debayer_larger_image() {
         let raw: Vec<u8> = (0..64).collect();
-        let rgb = debayer_bilinear_u8(&raw, 8, 8, BayerPattern::Rggb);
+        let rgb = debayer_bilinear_u8(&raw, 8, 8, BayerPattern::Rggb).unwrap();
         assert_eq!(rgb.len(), 192); // 8*8*3
     }
 }

@@ -1,546 +1,201 @@
-use crate::core::ByteOrder;
-use crate::fits::compression::{compress_tile, CompressionAlgorithm, CompressionParams};
-use crate::fits::data::DataArray;
-use crate::fits::header::{Header, Keyword, KeywordValue};
+use super::card;
+use crate::core::types::{BitPix, ByteOrder};
+use crate::fits::block::{pad_to_block, CARD_SIZE};
+use crate::fits::compression::encode::encode_image;
+use crate::fits::compression::CompressionAlgorithm;
+use crate::fits::data::array::DataArray;
+use crate::fits::errors::{FitsError, Result};
+use crate::fits::header::builder::{primary_cards, primary_header_cards};
+use crate::fits::header::keywords::Keyword;
+use crate::fits::header::parser::Header;
 use crate::fits::util::checksum;
-use crate::fits::Result;
-use std::fs::File;
-use std::io::{BufWriter, Write};
-use std::path::Path;
+use crate::fits::util::image::shape_text;
 
-const FITS_BLOCK_SIZE: usize = 2880;
+const CHECKSUM_PLACEHOLDER: &str = "0000000000000000";
 
-struct TileExtractionParams {
-    width: usize,
-    col: usize,
-    row: usize,
-    tile_width: usize,
-    tile_height: usize,
-    bytes_per_pixel: usize,
+// The bytes of a FITS file whose primary HDU holds `data`.
+pub(crate) fn primary_image_bytes<T: DataArray>(
+    data: &[T],
+    dimensions: &[usize],
+    keywords: &[Keyword],
+    with_checksum: bool,
+) -> Result<Vec<u8>> {
+    check_data_length(data.len(), dimensions)?;
+    let mut header = build_primary_header(T::BITPIX, dimensions, keywords);
+    let mut padded_data = if data.is_empty() {
+        Vec::new()
+    } else {
+        T::to_bytes(data, ByteOrder::BigEndian)?
+    };
+    pad_to_block(&mut padded_data, 0);
+
+    let mut bytes = if with_checksum {
+        checksummed_header_bytes(&mut header, &padded_data)?
+    } else {
+        header.add_keyword(Keyword::new("END".to_string()));
+        header_bytes(&header)?
+    };
+    bytes.extend(padded_data);
+    Ok(bytes)
 }
 
-struct CompressedHeaderParams {
-    nrows: usize,
-    row_size: usize,
-    heap_size: usize,
+// The bytes of a FITS file with an empty primary HDU and the image
+// tile-compressed in the first extension.
+pub(crate) fn compressed_image_bytes<T: DataArray>(
+    data: &[T],
+    dimensions: &[usize],
+    tile_size: Option<(usize, usize)>,
+    algorithm: CompressionAlgorithm,
+    keywords: &[Keyword],
+) -> Result<Vec<u8>> {
+    check_data_length(data.len(), dimensions)?;
+    let pixels = T::to_bytes(data, ByteOrder::BigEndian)?;
+    let image = encode_image(
+        &pixels,
+        T::BITPIX,
+        dimensions,
+        tile_size,
+        algorithm,
+        keywords,
+    )?;
+    let mut header = image.header;
+    header.add_keyword(Keyword::new("END".to_string()));
+    let mut bytes = header_bytes(&minimal_primary_header())?;
+    bytes.extend(header_bytes(&header)?);
+    bytes.extend(image.data);
+    Ok(bytes)
 }
 
-pub struct FitsWriter {
-    writer: BufWriter<File>,
+fn build_primary_header(bitpix: BitPix, dimensions: &[usize], keywords: &[Keyword]) -> Header {
+    let mut header = Header::new();
+    for card in primary_header_cards(bitpix, dimensions, keywords) {
+        header.add_keyword(card);
+    }
+    add_keywords(&mut header, keywords);
+    header
 }
 
-impl FitsWriter {
-    pub fn create<P: AsRef<Path>>(path: P) -> Result<Self> {
-        let file = File::create(path)?;
-        Ok(Self {
-            writer: BufWriter::new(file),
-        })
-    }
+// Adds DATASUM, CHECKSUM and END to `header` and returns its bytes with the
+// CHECKSUM value that makes the HDU sum to zero.
+fn checksummed_header_bytes(header: &mut Header, data_bytes: &[u8]) -> Result<Vec<u8>> {
+    let data_sum = checksum::calculate_datasum(data_bytes);
+    header.add_keyword(Keyword::string(
+        "DATASUM",
+        &checksum::format_datasum(data_sum),
+    ));
+    header.add_keyword(Keyword::string("CHECKSUM", CHECKSUM_PLACEHOLDER));
+    header.add_keyword(Keyword::new("END".to_string()));
 
-    pub fn write_primary_image<T>(
-        &mut self,
-        data: &[T],
-        dimensions: &[usize],
-        keywords: &[Keyword],
-    ) -> Result<()>
-    where
-        T: DataArray + Clone,
-    {
-        self.write_primary_image_internal(data, dimensions, keywords, false)
-    }
+    let with_placeholder = header_bytes_with_checksum(header, CHECKSUM_PLACEHOLDER)?;
+    let checksum_value = checksum::create_checksum_card_value(&with_placeholder, data_sum);
+    header_bytes_with_checksum(header, &checksum_value)
+}
 
-    pub fn write_primary_image_with_checksum<T>(
-        &mut self,
-        data: &[T],
-        dimensions: &[usize],
-        keywords: &[Keyword],
-    ) -> Result<()>
-    where
-        T: DataArray + Clone,
-    {
-        self.write_primary_image_internal(data, dimensions, keywords, true)
-    }
-
-    fn write_primary_image_internal<T>(
-        &mut self,
-        data: &[T],
-        dimensions: &[usize],
-        keywords: &[Keyword],
-        with_checksum: bool,
-    ) -> Result<()>
-    where
-        T: DataArray + Clone,
-    {
-        let mut header = self.build_primary_header::<T>(dimensions, keywords);
-
-        let data_bytes = if !data.is_empty() {
-            T::to_bytes(data, ByteOrder::BigEndian)?
+fn header_bytes_with_checksum(header: &Header, checksum_value: &str) -> Result<Vec<u8>> {
+    let mut bytes = Vec::new();
+    for keyword in header.keywords() {
+        if keyword.name == "CHECKSUM" {
+            bytes.extend_from_slice(&format_checksum_card(checksum_value));
         } else {
-            Vec::new()
-        };
-
-        let padded_data = checksum::pad_to_block(&data_bytes);
-
-        if with_checksum {
-            self.write_with_checksums(&mut header, &padded_data)?;
-        } else {
-            self.write_header_and_data(&header, &padded_data)?;
-        }
-
-        self.writer.flush()?;
-        Ok(())
-    }
-
-    fn build_primary_header<T: DataArray>(
-        &self,
-        dimensions: &[usize],
-        keywords: &[Keyword],
-    ) -> Header {
-        let mut header = Header::new();
-
-        header.add_keyword(
-            Keyword::logical("SIMPLE", true).with_comment("file does conform to FITS standard"),
-        );
-        header.add_keyword(
-            Keyword::integer("BITPIX", T::BITPIX.value() as i64)
-                .with_comment("number of bits per data pixel"),
-        );
-        header.add_keyword(
-            Keyword::integer("NAXIS", dimensions.len() as i64).with_comment("number of data axes"),
-        );
-
-        for (i, &dim) in dimensions.iter().enumerate() {
-            let axis_keyword = format!("NAXIS{}", i + 1);
-            let comment = format!("length of data axis {}", i + 1);
-            header.add_keyword(Keyword::integer(axis_keyword, dim as i64).with_comment(&comment));
-        }
-
-        header.add_keyword(
-            Keyword::logical("EXTEND", true).with_comment("FITS dataset may contain extensions"),
-        );
-        header.add_keyword(Keyword::comment(
-            "FITS (Flexible Image Transport System) format is defined in 'Astronomy",
-        ));
-        header.add_keyword(Keyword::comment(
-            "and Astrophysics', volume 376, page 359; bibcode: 2001A&A...376..359H",
-        ));
-        self.add_keywords(&mut header, keywords);
-
-        header
-    }
-
-    fn write_with_checksums(&mut self, header: &mut Header, data_bytes: &[u8]) -> Result<()> {
-        let data_sum = checksum::calculate_datasum(data_bytes);
-        header.add_keyword(Keyword::string(
-            "DATASUM",
-            &checksum::format_datasum(data_sum),
-        ));
-        header.add_keyword(Keyword::string("CHECKSUM", "0000000000000000"));
-        header.add_keyword(Keyword::new("END".to_string()));
-
-        let header_bytes_with_placeholder =
-            self.serialize_header_with_checksum(header, "0000000000000000")?;
-        let checksum_value =
-            checksum::create_checksum_card_value(&header_bytes_with_placeholder, data_sum);
-
-        self.write_header_with_checksum(header, &checksum_value)?;
-        self.writer.write_all(data_bytes)?;
-        Ok(())
-    }
-
-    fn serialize_header_with_checksum(
-        &self,
-        header: &Header,
-        checksum_value: &str,
-    ) -> Result<Vec<u8>> {
-        let mut header_bytes = Vec::new();
-        for keyword in header.keywords() {
-            let card = if keyword.name == "CHECKSUM" {
-                self.format_checksum_card(checksum_value)?
-            } else {
-                self.format_card(keyword)?
-            };
-            header_bytes.extend_from_slice(&card);
-        }
-        self.pad_header_bytes_ref(&mut header_bytes);
-        Ok(header_bytes)
-    }
-
-    fn write_header_with_checksum(&mut self, header: &Header, checksum_value: &str) -> Result<()> {
-        let mut header_bytes = Vec::new();
-
-        for keyword in header.keywords() {
-            let card = if keyword.name == "CHECKSUM" {
-                self.format_checksum_card(checksum_value)?
-            } else {
-                self.format_card(keyword)?
-            };
-            header_bytes.extend_from_slice(&card);
-        }
-
-        self.pad_header_bytes(&mut header_bytes);
-        self.writer.write_all(&header_bytes)?;
-        Ok(())
-    }
-
-    fn format_checksum_card(&self, checksum_value: &str) -> Result<[u8; 80]> {
-        let mut card = [b' '; 80];
-        card[0..8].copy_from_slice(b"CHECKSUM");
-        card[8] = b'=';
-        card[9] = b' ';
-        let value_str = format!("'{}'", checksum_value);
-        let value_bytes = value_str.as_bytes();
-        card[10..10 + value_bytes.len()].copy_from_slice(value_bytes);
-        Ok(card)
-    }
-
-    fn write_header_and_data(&mut self, header: &Header, data_bytes: &[u8]) -> Result<()> {
-        let mut header_copy = header.clone();
-        header_copy.add_keyword(Keyword::new("END".to_string()));
-        self.write_header(&header_copy)?;
-        if !data_bytes.is_empty() {
-            self.writer.write_all(data_bytes)?;
-        }
-        Ok(())
-    }
-
-    fn pad_header_bytes(&self, header_bytes: &mut Vec<u8>) {
-        let padding_needed = FITS_BLOCK_SIZE - (header_bytes.len() % FITS_BLOCK_SIZE);
-        if padding_needed < FITS_BLOCK_SIZE {
-            header_bytes.resize(header_bytes.len() + padding_needed, b' ');
+            bytes.extend(format_card(keyword)?);
         }
     }
+    pad_to_block(&mut bytes, b' ');
+    Ok(bytes)
+}
 
-    fn pad_header_bytes_ref(&self, header_bytes: &mut Vec<u8>) {
-        self.pad_header_bytes(header_bytes);
+fn format_checksum_card(checksum_value: &str) -> [u8; CARD_SIZE] {
+    let mut card = [b' '; CARD_SIZE];
+    card[0..8].copy_from_slice(b"CHECKSUM");
+    card[8] = b'=';
+    card[9] = b' ';
+    let value_str = format!("'{}'", checksum_value);
+    let value_bytes = value_str.as_bytes();
+    card[10..10 + value_bytes.len()].copy_from_slice(value_bytes);
+    card
+}
+
+fn header_bytes(header: &Header) -> Result<Vec<u8>> {
+    let mut bytes = Vec::new();
+    for keyword in header.keywords() {
+        bytes.extend(format_card(keyword)?);
     }
+    pad_to_block(&mut bytes, b' ');
+    Ok(bytes)
+}
 
-    fn write_header(&mut self, header: &Header) -> Result<()> {
-        let mut header_bytes = Vec::new();
+fn format_card(keyword: &Keyword) -> Result<Vec<u8>> {
+    card::format_keyword(keyword)
+}
 
-        for keyword in header.keywords() {
-            let card = self.format_card(keyword)?;
-            header_bytes.extend_from_slice(&card);
-        }
-
-        let padding_needed = FITS_BLOCK_SIZE - (header_bytes.len() % FITS_BLOCK_SIZE);
-        if padding_needed < FITS_BLOCK_SIZE {
-            header_bytes.resize(header_bytes.len() + padding_needed, b' ');
-        }
-
-        self.writer.write_all(&header_bytes)?;
-        Ok(())
-    }
-
-    fn format_card(&self, keyword: &Keyword) -> Result<[u8; 80]> {
-        let mut card = [b' '; 80];
-
-        if keyword.name == "END" {
-            card[0..3].copy_from_slice(b"END");
-            return Ok(card);
-        }
-
-        let name_bytes = keyword.name.as_bytes();
-        let name_len = name_bytes.len().min(8);
-        card[0..name_len].copy_from_slice(&name_bytes[0..name_len]);
-
-        // Handle HISTORY and COMMENT keywords (no value, text goes after keyword)
-        if keyword.name == "HISTORY" || keyword.name == "COMMENT" {
-            if let Some(comment) = &keyword.comment {
-                let comment_bytes = comment.as_bytes();
-                let comment_len = comment_bytes.len().min(72);
-                card[8..8 + comment_len].copy_from_slice(&comment_bytes[0..comment_len]);
-            }
-            return Ok(card);
-        }
-
-        if let Some(value) = &keyword.value {
-            card[8] = b'=';
-            card[9] = b' ';
-
-            let value_str = match value {
-                KeywordValue::Logical(b) => {
-                    format!("{:>20}", if *b { "T" } else { "F" })
-                }
-                KeywordValue::Integer(i) => {
-                    format!("{:>20}", i)
-                }
-                KeywordValue::Real(f) => {
-                    format!("{:>20}", f)
-                }
-                KeywordValue::String(s) => {
-                    let truncated = if s.len() > 18 { &s[..18] } else { s };
-                    format!("'{:<18}'", truncated)
-                }
-                KeywordValue::Complex(r, i) => {
-                    format!("({}, {})", r, i)
-                }
-            };
-
-            let value_bytes = value_str.as_bytes();
-            let value_len = value_bytes.len().min(20);
-            card[10..10 + value_len].copy_from_slice(&value_bytes[0..value_len]);
-
-            if let Some(comment) = &keyword.comment {
-                card[30] = b' ';
-                card[31] = b'/';
-                card[32] = b' ';
-
-                let comment_bytes = comment.as_bytes();
-                let comment_len = comment_bytes.len().min(47);
-                card[33..33 + comment_len].copy_from_slice(&comment_bytes[0..comment_len]);
-            }
-        }
-
-        Ok(card)
-    }
-
-    pub fn write_compressed_image<T>(
-        &mut self,
-        data: &[T],
-        dimensions: &[usize],
-        tile_size: (usize, usize),
-        algorithm: CompressionAlgorithm,
-        keywords: &[Keyword],
-    ) -> Result<()>
-    where
-        T: DataArray,
-    {
-        self.write_minimal_primary_header()?;
-
-        let data_bytes = T::to_bytes(data, ByteOrder::BigEndian)?;
-        let compressed_tiles =
-            self.compress_tiles(&data_bytes, dimensions, tile_size, T::BITPIX.value())?;
-
-        self.write_compressed_extension(
-            &compressed_tiles,
-            dimensions,
-            tile_size,
-            T::BITPIX.value(),
-            algorithm,
-            keywords,
-        )?;
-
-        self.writer.flush()?;
-        Ok(())
-    }
-
-    fn write_minimal_primary_header(&mut self) -> Result<()> {
-        let mut header = Header::new();
-        header.add_keyword(Keyword::logical("SIMPLE", true));
-        header.add_keyword(Keyword::integer("BITPIX", 8));
-        header.add_keyword(Keyword::integer("NAXIS", 0));
-        header.add_keyword(Keyword::logical("EXTEND", true));
-        header.add_keyword(Keyword::new("END".to_string()));
-        self.write_header(&header)
-    }
-
-    fn compress_tiles(
-        &self,
-        data: &[u8],
-        dimensions: &[usize],
-        tile_size: (usize, usize),
-        bitpix: i32,
-    ) -> Result<Vec<Vec<u8>>> {
-        let width = dimensions.first().copied().unwrap_or(1);
-        let height = dimensions.get(1).copied().unwrap_or(1);
-        let bytes_per_pixel = (bitpix.abs() / 8) as usize;
-
-        let mut tiles = Vec::new();
-        let mut row = 0;
-
-        while row < height {
-            let tile_height = (height - row).min(tile_size.1);
-            let mut col = 0;
-
-            while col < width {
-                let tile_width = (width - col).min(tile_size.0);
-                let tile_params = TileExtractionParams {
-                    width,
-                    col,
-                    row,
-                    tile_width,
-                    tile_height,
-                    bytes_per_pixel,
-                };
-                let tile_data = self.extract_tile(data, &tile_params);
-
-                let params = CompressionParams::rice(tile_width, tile_height, bitpix);
-                let compressed = compress_tile(&tile_data, &params)?;
-                tiles.push(compressed);
-
-                col += tile_size.0;
-            }
-            row += tile_size.1;
-        }
-
-        Ok(tiles)
-    }
-
-    fn extract_tile(&self, data: &[u8], params: &TileExtractionParams) -> Vec<u8> {
-        let row_bytes = params.width * params.bytes_per_pixel;
-        let mut tile_data =
-            Vec::with_capacity(params.tile_width * params.tile_height * params.bytes_per_pixel);
-
-        for tile_row in 0..params.tile_height {
-            let src_row = params.row + tile_row;
-            let start = src_row * row_bytes + params.col * params.bytes_per_pixel;
-            let end = start + params.tile_width * params.bytes_per_pixel;
-            if end <= data.len() {
-                tile_data.extend_from_slice(&data[start..end]);
-            }
-        }
-
-        tile_data
-    }
-
-    fn write_compressed_extension(
-        &mut self,
-        compressed_tiles: &[Vec<u8>],
-        dimensions: &[usize],
-        tile_size: (usize, usize),
-        bitpix: i32,
-        algorithm: CompressionAlgorithm,
-        keywords: &[Keyword],
-    ) -> Result<()> {
-        let heap_data = self.build_heap(compressed_tiles);
-        let row_size = 8;
-        let nrows = compressed_tiles.len();
-
-        let header_params = CompressedHeaderParams {
-            nrows,
-            row_size,
-            heap_size: heap_data.len(),
-        };
-        let header = self.build_compressed_header(
-            dimensions,
-            tile_size,
-            bitpix,
-            algorithm,
-            &header_params,
-            keywords,
-        );
-
-        self.write_header(&header)?;
-        self.write_binary_table_data(compressed_tiles, &heap_data, row_size)?;
-
-        Ok(())
-    }
-
-    fn build_heap(&self, compressed_tiles: &[Vec<u8>]) -> Vec<u8> {
-        let mut heap = Vec::new();
-        for tile in compressed_tiles {
-            heap.extend_from_slice(tile);
-        }
-        heap
-    }
-
-    fn build_compressed_header(
-        &self,
-        dimensions: &[usize],
-        tile_size: (usize, usize),
-        bitpix: i32,
-        algorithm: CompressionAlgorithm,
-        params: &CompressedHeaderParams,
-        keywords: &[Keyword],
-    ) -> Header {
-        let mut header = Header::new();
-
-        self.add_extension_keywords(&mut header, params.nrows, params.row_size, params.heap_size);
-        self.add_column_keywords(&mut header);
-        self.add_compression_keywords(&mut header, dimensions, tile_size, bitpix, algorithm);
-        self.add_keywords(&mut header, keywords);
-
-        header.add_keyword(Keyword::new("END".to_string()));
-        header
-    }
-
-    fn add_extension_keywords(
-        &self,
-        header: &mut Header,
-        nrows: usize,
-        row_size: usize,
-        heap_size: usize,
-    ) {
-        header.add_keyword(Keyword::string("XTENSION", "BINTABLE"));
-        header.add_keyword(Keyword::integer("BITPIX", 8));
-        header.add_keyword(Keyword::integer("NAXIS", 2));
-        header.add_keyword(Keyword::integer("NAXIS1", row_size as i64));
-        header.add_keyword(Keyword::integer("NAXIS2", nrows as i64));
-        header.add_keyword(Keyword::integer("PCOUNT", heap_size as i64));
-        header.add_keyword(Keyword::integer("GCOUNT", 1));
-        header.add_keyword(Keyword::integer("TFIELDS", 1));
-    }
-
-    fn add_column_keywords(&self, header: &mut Header) {
-        header.add_keyword(Keyword::string("TTYPE1", "COMPRESSED_DATA"));
-        header.add_keyword(Keyword::string("TFORM1", "1PB"));
-    }
-
-    fn add_compression_keywords(
-        &self,
-        header: &mut Header,
-        dimensions: &[usize],
-        tile_size: (usize, usize),
-        bitpix: i32,
-        algorithm: CompressionAlgorithm,
-    ) {
-        header.add_keyword(Keyword::logical("ZIMAGE", true));
-        header.add_keyword(Keyword::string("ZCMPTYPE", algorithm.fits_name()));
-        header.add_keyword(Keyword::integer("ZBITPIX", bitpix as i64));
-        header.add_keyword(Keyword::integer("ZNAXIS", dimensions.len() as i64));
-
-        for (i, &dim) in dimensions.iter().enumerate() {
-            header.add_keyword(Keyword::integer(format!("ZNAXIS{}", i + 1), dim as i64));
-        }
-
-        header.add_keyword(Keyword::integer("ZTILE1", tile_size.0 as i64));
-        header.add_keyword(Keyword::integer("ZTILE2", tile_size.1 as i64));
-    }
-
-    fn add_keywords(&self, header: &mut Header, keywords: &[Keyword]) {
-        for keyword in keywords {
-            // Skip mandatory keywords - they're already added by build_primary_header
-            if !keyword.is_mandatory() {
-                header.add_keyword(keyword.clone());
-            }
+fn add_keywords(header: &mut Header, keywords: &[Keyword]) {
+    for keyword in keywords {
+        // Mandatory keywords come from the data being written. An incoming
+        // checksum describes the old header and data, so it is dropped and
+        // recomputed when a checksum is requested.
+        if !keyword.is_mandatory() && !is_checksum_keyword(&keyword.name) {
+            header.add_keyword(keyword.clone());
         }
     }
+}
 
-    fn write_binary_table_data(
-        &mut self,
-        compressed_tiles: &[Vec<u8>],
-        heap_data: &[u8],
-        row_size: usize,
-    ) -> Result<()> {
-        let mut heap_offset: u32 = 0;
+// The empty primary HDU before a tile-compressed image extension.
+fn minimal_primary_header() -> Header {
+    let mut header = Header::new();
+    for card in primary_cards(BitPix::U8, &[]) {
+        header.add_keyword(card);
+    }
+    header.add_keyword(Keyword::new("END".to_string()));
+    header
+}
 
-        for tile in compressed_tiles {
-            let count = tile.len() as u32;
-            self.writer.write_all(&count.to_be_bytes())?;
-            self.writer.write_all(&heap_offset.to_be_bytes())?;
-            heap_offset += count;
-        }
+pub(crate) fn is_checksum_keyword(name: &str) -> bool {
+    matches!(
+        name.trim().to_ascii_uppercase().as_str(),
+        "CHECKSUM" | "DATASUM" | "ZHECKSUM" | "ZDATASUM"
+    )
+}
 
-        let table_size = compressed_tiles.len() * row_size;
-        let total_size = table_size + heap_data.len();
-
-        self.writer.write_all(heap_data)?;
-
-        let padding_needed = (FITS_BLOCK_SIZE - (total_size % FITS_BLOCK_SIZE)) % FITS_BLOCK_SIZE;
-        if padding_needed > 0 {
-            let padding = vec![0u8; padding_needed];
-            self.writer.write_all(&padding)?;
-        }
-
-        Ok(())
+// NAXIS = 0 declares no data array, so an empty `dimensions` expects no data.
+// NAXISn is written as an i64, so a larger axis cannot be represented.
+fn check_data_length(len: usize, dimensions: &[usize]) -> Result<()> {
+    if let Some(axis) = dimensions.iter().find(|&&d| i64::try_from(d).is_err()) {
+        return Err(FitsError::InvalidFormat(format!(
+            "axis length {} exceeds the largest NAXISn value",
+            axis
+        )));
+    }
+    let expected = if dimensions.is_empty() {
+        Some(0)
+    } else {
+        dimensions.iter().try_fold(1usize, |n, &d| n.checked_mul(d))
+    };
+    match expected {
+        Some(expected) if expected == len => Ok(()),
+        Some(_) if dimensions.is_empty() => Err(FitsError::InvalidFormat(format!(
+            "data has {} values but NAXIS = 0 declares no data",
+            len
+        ))),
+        Some(expected) => Err(FitsError::InvalidFormat(format!(
+            "data has {} values but dimensions {} need {}",
+            len,
+            shape_text(dimensions),
+            expected
+        ))),
+        None => Err(FitsError::InvalidFormat(format!(
+            "dimensions {} overflow the pixel count",
+            shape_text(dimensions)
+        ))),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::fits::header::{Keyword, KeywordValue};
+    use crate::fits::block::FITS_BLOCK_SIZE;
+    use crate::fits::errors::FitsError;
+    use crate::fits::header::keywords::{Keyword, KeywordValue};
+    use crate::fits::io::test_support::FitsWriter;
     use tempfile::NamedTempFile;
 
     #[test]
@@ -600,20 +255,18 @@ mod tests {
 
     #[test]
     fn format_card_end_keyword() {
-        let writer = FitsWriter::create(NamedTempFile::new().unwrap().path()).unwrap();
         let end_keyword = Keyword::new("END".to_string());
 
-        let card = writer.format_card(&end_keyword).unwrap();
+        let card = format_card(&end_keyword).unwrap();
         assert_eq!(&card[0..3], b"END");
         assert_eq!(card[3], b' ');
     }
 
     #[test]
     fn format_card_logical_value() {
-        let writer = FitsWriter::create(NamedTempFile::new().unwrap().path()).unwrap();
         let keyword = Keyword::logical("SIMPLE", true);
 
-        let card = writer.format_card(&keyword).unwrap();
+        let card = format_card(&keyword).unwrap();
         assert_eq!(&card[0..6], b"SIMPLE");
         assert_eq!(card[8], b'=');
         assert_eq!(card[9], b' ');
@@ -622,10 +275,9 @@ mod tests {
 
     #[test]
     fn format_card_integer_value() {
-        let writer = FitsWriter::create(NamedTempFile::new().unwrap().path()).unwrap();
         let keyword = Keyword::integer("NAXIS", 2);
 
-        let card = writer.format_card(&keyword).unwrap();
+        let card = format_card(&keyword).unwrap();
         assert_eq!(&card[0..5], b"NAXIS");
         assert_eq!(card[8], b'=');
         assert!(String::from_utf8_lossy(&card[10..30]).contains('2'));
@@ -633,10 +285,9 @@ mod tests {
 
     #[test]
     fn format_card_real_value() {
-        let writer = FitsWriter::create(NamedTempFile::new().unwrap().path()).unwrap();
         let keyword = Keyword::real("EXPTIME", 30.5);
 
-        let card = writer.format_card(&keyword).unwrap();
+        let card = format_card(&keyword).unwrap();
         assert_eq!(&card[0..7], b"EXPTIME");
         assert_eq!(card[8], b'=');
         assert!(String::from_utf8_lossy(&card[10..30]).contains("30.5"));
@@ -644,308 +295,42 @@ mod tests {
 
     #[test]
     fn format_card_string_value() {
-        let writer = FitsWriter::create(NamedTempFile::new().unwrap().path()).unwrap();
         let keyword = Keyword::string("OBJECT", "M31");
 
-        let card = writer.format_card(&keyword).unwrap();
+        let card = format_card(&keyword).unwrap();
         assert_eq!(&card[0..6], b"OBJECT");
         assert_eq!(card[8], b'=');
         assert!(String::from_utf8_lossy(&card[10..30]).contains("'M31"));
     }
 
     #[test]
-    fn format_card_string_truncation() {
-        let writer = FitsWriter::create(NamedTempFile::new().unwrap().path()).unwrap();
-        let long_string = "This is a very long string that exceeds 18 characters";
-        let keyword = Keyword::string("LONGNAME", long_string);
-
-        let card = writer.format_card(&keyword).unwrap();
-        let value_section = String::from_utf8_lossy(&card[10..30]);
-        assert!(value_section.len() <= 20);
-    }
-
-    #[test]
     fn format_card_with_comment() {
-        let writer = FitsWriter::create(NamedTempFile::new().unwrap().path()).unwrap();
         let mut keyword = Keyword::integer("BITPIX", 16);
         keyword.comment = Some("Bits per pixel".to_string());
 
-        let card = writer.format_card(&keyword).unwrap();
+        let card = format_card(&keyword).unwrap();
         assert_eq!(card[31], b'/');
         assert!(String::from_utf8_lossy(&card[33..]).contains("Bits per pixel"));
     }
 
     #[test]
     fn format_card_complex_value() {
-        let writer = FitsWriter::create(NamedTempFile::new().unwrap().path()).unwrap();
         let mut keyword = Keyword::new("COMPLEX".to_string());
         keyword.value = Some(KeywordValue::Complex(1.0, 2.0));
 
-        let card = writer.format_card(&keyword).unwrap();
+        let card = format_card(&keyword).unwrap();
         let value_section = String::from_utf8_lossy(&card[10..30]);
         assert!(value_section.contains("1"));
         assert!(value_section.contains("2"));
     }
 
     #[test]
-    fn write_header_padding() {
-        let temp_file = NamedTempFile::new().unwrap();
-        let path = temp_file.path();
-        let mut writer = FitsWriter::create(path).unwrap();
-
+    fn header_bytes_pad_to_one_block() {
         let mut header = Header::new();
         header.add_keyword(Keyword::logical("SIMPLE", true));
         header.add_keyword(Keyword::new("END".to_string()));
 
-        let result = writer.write_header(&header);
-        assert!(result.is_ok());
-    }
-
-    #[test]
-    fn write_compressed_image_i16() {
-        let temp_file = NamedTempFile::new().unwrap();
-        let path = temp_file.path();
-        let mut writer = FitsWriter::create(path).unwrap();
-
-        let data: Vec<i16> = (0..64).collect();
-        let dimensions = vec![8, 8];
-        let tile_size = (8, 8);
-
-        let result = writer.write_compressed_image(
-            &data,
-            &dimensions,
-            tile_size,
-            CompressionAlgorithm::Rice,
-            &[],
-        );
-        assert!(result.is_ok());
-    }
-
-    #[test]
-    fn write_compressed_image_i32() {
-        let temp_file = NamedTempFile::new().unwrap();
-        let path = temp_file.path();
-        let mut writer = FitsWriter::create(path).unwrap();
-
-        let data: Vec<i32> = (0..64).collect();
-        let dimensions = vec![8, 8];
-        let tile_size = (4, 4);
-
-        let result = writer.write_compressed_image(
-            &data,
-            &dimensions,
-            tile_size,
-            CompressionAlgorithm::Rice,
-            &[],
-        );
-        assert!(result.is_ok());
-    }
-
-    #[test]
-    fn write_compressed_image_with_keywords() {
-        let temp_file = NamedTempFile::new().unwrap();
-        let path = temp_file.path();
-        let mut writer = FitsWriter::create(path).unwrap();
-
-        let data: Vec<i16> = (0..100).collect();
-        let dimensions = vec![10, 10];
-        let tile_size = (10, 10);
-
-        let keywords = vec![
-            Keyword::string("OBJECT", "TestImage"),
-            Keyword::integer("EXPTIME", 60),
-        ];
-
-        let result = writer.write_compressed_image(
-            &data,
-            &dimensions,
-            tile_size,
-            CompressionAlgorithm::Rice,
-            &keywords,
-        );
-        assert!(result.is_ok());
-    }
-
-    #[test]
-    fn extract_tile_full_tile() {
-        let writer = FitsWriter::create(NamedTempFile::new().unwrap().path()).unwrap();
-
-        let data: Vec<u8> = (0..16).collect();
-        let params = TileExtractionParams {
-            width: 4,
-            col: 0,
-            row: 0,
-            tile_width: 2,
-            tile_height: 2,
-            bytes_per_pixel: 1,
-        };
-        let tile = writer.extract_tile(&data, &params);
-
-        assert_eq!(tile, vec![0, 1, 4, 5]);
-    }
-
-    #[test]
-    fn extract_tile_offset() {
-        let writer = FitsWriter::create(NamedTempFile::new().unwrap().path()).unwrap();
-
-        let data: Vec<u8> = (0..16).collect();
-        let params = TileExtractionParams {
-            width: 4,
-            col: 2,
-            row: 2,
-            tile_width: 2,
-            tile_height: 2,
-            bytes_per_pixel: 1,
-        };
-        let tile = writer.extract_tile(&data, &params);
-
-        assert_eq!(tile, vec![10, 11, 14, 15]);
-    }
-
-    #[test]
-    fn build_heap() {
-        let writer = FitsWriter::create(NamedTempFile::new().unwrap().path()).unwrap();
-
-        let tiles = vec![vec![1u8, 2, 3], vec![4u8, 5], vec![6u8]];
-        let heap = writer.build_heap(&tiles);
-
-        assert_eq!(heap, vec![1, 2, 3, 4, 5, 6]);
-    }
-
-    #[test]
-    fn add_compression_keywords_sets_zimage() {
-        let writer = FitsWriter::create(NamedTempFile::new().unwrap().path()).unwrap();
-        let mut header = Header::new();
-        let dimensions = vec![100, 100];
-
-        writer.add_compression_keywords(
-            &mut header,
-            &dimensions,
-            (32, 32),
-            16,
-            CompressionAlgorithm::Rice,
-        );
-
-        let zimage = header.get("ZIMAGE").as_bool();
-        assert_eq!(zimage, Some(true));
-
-        let zcmptype = header.get("ZCMPTYPE").as_str();
-        assert_eq!(zcmptype, Some("RICE_1"));
-
-        let zbitpix = header.get("ZBITPIX").as_i64();
-        assert_eq!(zbitpix, Some(16));
-    }
-
-    #[test]
-    fn compressed_image_roundtrip_i16() {
-        use crate::fits::io::reader::FitsFile;
-        use crate::fits::Hdu;
-
-        let temp_file = NamedTempFile::new().unwrap();
-        let path = temp_file.path();
-
-        let original_data: Vec<i16> = (0..64).collect();
-        let dimensions = vec![8, 8];
-        let tile_size = (8, 8);
-
-        {
-            let mut writer = FitsWriter::create(path).unwrap();
-            writer
-                .write_compressed_image(
-                    &original_data,
-                    &dimensions,
-                    tile_size,
-                    CompressionAlgorithm::Rice,
-                    &[],
-                )
-                .unwrap();
-        }
-
-        let mut fits = FitsFile::open(path).unwrap();
-        assert_eq!(fits.num_hdus(), 2);
-
-        let hdu = fits.read_hdu(1).unwrap();
-        if let Hdu::BinaryTable(table) = hdu {
-            assert!(table.is_compressed_image());
-            assert_eq!(table.compression_algorithm(), Some("RICE_1"));
-            assert_eq!(table.get_bits_per_pixel().unwrap(), 16);
-            assert_eq!(table.get_tile_dimensions().unwrap(), (8, 8));
-        } else {
-            panic!("Expected binary table HDU");
-        }
-    }
-
-    #[test]
-    fn compressed_image_roundtrip_i32() {
-        use crate::fits::io::reader::FitsFile;
-        use crate::fits::Hdu;
-
-        let temp_file = NamedTempFile::new().unwrap();
-        let path = temp_file.path();
-
-        let original_data: Vec<i32> = (0..100).collect();
-        let dimensions = vec![10, 10];
-        let tile_size = (5, 5);
-
-        {
-            let mut writer = FitsWriter::create(path).unwrap();
-            writer
-                .write_compressed_image(
-                    &original_data,
-                    &dimensions,
-                    tile_size,
-                    CompressionAlgorithm::Rice,
-                    &[],
-                )
-                .unwrap();
-        }
-
-        let mut fits = FitsFile::open(path).unwrap();
-        let hdu = fits.read_hdu(1).unwrap();
-
-        if let Hdu::BinaryTable(table) = hdu {
-            assert!(table.is_compressed_image());
-            assert_eq!(table.get_bits_per_pixel().unwrap(), 32);
-        } else {
-            panic!("Expected binary table HDU");
-        }
-    }
-
-    #[test]
-    fn compressed_image_with_multiple_tiles() {
-        use crate::fits::io::reader::FitsFile;
-        use crate::fits::Hdu;
-
-        let temp_file = NamedTempFile::new().unwrap();
-        let path = temp_file.path();
-
-        let original_data: Vec<i16> = (0..256).collect();
-        let dimensions = vec![16, 16];
-        let tile_size = (4, 4);
-
-        {
-            let mut writer = FitsWriter::create(path).unwrap();
-            writer
-                .write_compressed_image(
-                    &original_data,
-                    &dimensions,
-                    tile_size,
-                    CompressionAlgorithm::Rice,
-                    &[],
-                )
-                .unwrap();
-        }
-
-        let mut fits = FitsFile::open(path).unwrap();
-        let hdu = fits.read_hdu(1).unwrap();
-
-        if let Hdu::BinaryTable(table) = hdu {
-            assert!(table.is_compressed_image());
-            let nrows = table.number_of_rows().unwrap();
-            assert_eq!(nrows, 16);
-        } else {
-            panic!("Expected binary table HDU");
-        }
+        assert_eq!(header_bytes(&header).unwrap().len(), FITS_BLOCK_SIZE);
     }
 
     #[test]
@@ -1018,10 +403,9 @@ mod tests {
 
     #[test]
     fn format_checksum_card_correct_format() {
-        let writer = FitsWriter::create(NamedTempFile::new().unwrap().path()).unwrap();
         let checksum_value = "1234567890ABCDEF";
 
-        let card = writer.format_checksum_card(checksum_value).unwrap();
+        let card = format_checksum_card(checksum_value);
         assert_eq!(&card[0..8], b"CHECKSUM");
         assert_eq!(card[8], b'=');
         assert_eq!(card[9], b' ');
@@ -1030,10 +414,9 @@ mod tests {
 
     #[test]
     fn build_primary_header_includes_required_keywords() {
-        let writer = FitsWriter::create(NamedTempFile::new().unwrap().path()).unwrap();
         let dimensions = vec![10, 20];
 
-        let header = writer.build_primary_header::<i16>(&dimensions, &[]);
+        let header = build_primary_header(BitPix::I16, &dimensions, &[]);
 
         assert!(header.get("SIMPLE").exists());
         assert!(header.get("BITPIX").exists());
@@ -1095,5 +478,705 @@ mod tests {
         assert_eq!(read_back[20], 40);
         assert_eq!(read_back[24], 44);
         assert_eq!(gradient, read_back);
+    }
+
+    fn card_text(keyword: &Keyword) -> String {
+        let cards = format_card(keyword).unwrap();
+        String::from_utf8(cards[..].to_vec()).unwrap()
+    }
+
+    fn padded(cards: &[&str]) -> String {
+        cards.iter().map(|c| format!("{:<80}", c)).collect()
+    }
+
+    fn real_value_text(card: &str) -> &str {
+        let value = &card[10..];
+        value.split(" /").next().unwrap().trim()
+    }
+
+    #[test]
+    fn format_card_string_keeps_values_up_to_68_chars() {
+        assert_eq!(
+            card_text(&Keyword::string("DATE-OBS", "2024-01-15T12:34:56.789")),
+            padded(&["DATE-OBS= '2024-01-15T12:34:56.789'"])
+        );
+        assert_eq!(
+            card_text(&Keyword::string("OBJECT", "NGC 1234 field center")),
+            padded(&["OBJECT  = 'NGC 1234 field center'"])
+        );
+        let longest = "x".repeat(68);
+        assert_eq!(
+            card_text(&Keyword::string("LONGEST", &longest)),
+            padded(&[&format!("LONGEST = '{}'", longest)])
+        );
+    }
+
+    #[test]
+    fn format_card_string_escapes_quotes() {
+        assert_eq!(
+            card_text(&Keyword::string("OBSERVER", "O'Brien")),
+            padded(&["OBSERVER= 'O''Brien'"])
+        );
+        assert_eq!(
+            card_text(&Keyword::string("QUOTE", "'")),
+            padded(&["QUOTE   = '''      '"])
+        );
+    }
+
+    #[test]
+    fn format_card_string_pads_short_values_to_eight_chars() {
+        assert_eq!(
+            card_text(&Keyword::string("OBJECT", "M31").with_comment("target")),
+            padded(&["OBJECT  = 'M31     '           / target"])
+        );
+    }
+
+    #[test]
+    fn format_card_long_string_uses_continue_cards() {
+        let value: String = (0..100).map(|i| (b'0' + (i % 10) as u8) as char).collect();
+        let keyword = Keyword::string("LONGSTR", &value).with_comment("long value");
+        assert_eq!(
+            card_text(&keyword),
+            padded(&[
+                &format!("LONGSTR = '{}&'", &value[..67]),
+                &format!("CONTINUE  '{}' / long value", &value[67..]),
+            ])
+        );
+    }
+
+    #[test]
+    fn format_card_long_string_keeps_escaped_quote_on_one_card() {
+        // The 67th escaped character is the first half of a '' pair.
+        let value = format!("{}'{}", "a".repeat(66), "b".repeat(10));
+        assert_eq!(
+            card_text(&Keyword::string("SPLIT", &value)),
+            padded(&[
+                &format!("SPLIT   = '{}&'", "a".repeat(66)),
+                &format!("CONTINUE  '''{}'", "b".repeat(10)),
+            ])
+        );
+    }
+
+    #[test]
+    fn format_card_string_rejects_non_ascii_and_control_chars() {
+        for value in ["caf\u{e9}", "tab\there", "del\u{7f}"] {
+            let result = format_card(&Keyword::string("OBJECT", value));
+            assert!(
+                matches!(result, Err(FitsError::InvalidKeywordValue { .. })),
+                "{:?} was accepted",
+                value
+            );
+        }
+    }
+
+    #[test]
+    fn format_card_string_with_multibyte_char_returns_invalid_value_error() {
+        // Byte 18 falls inside a two-byte character, so cutting the value there would panic.
+        let value = format!("a{}", "\u{3b1}".repeat(10));
+        let result = format_card(&Keyword::string("OBJECT", &value));
+        assert!(matches!(result, Err(FitsError::InvalidKeywordValue { .. })));
+    }
+
+    #[test]
+    fn format_card_real_round_trips_bits() {
+        let values = [
+            -2.777_777_777_777_778e-4,
+            -1.234_567_890_123_456_8e-10,
+            2.345_678_901_234_568e-14,
+            4.57e-19,
+            -7.5e-19,
+            1e25,
+            512.0,
+            1.0,
+            -0.0,
+            0.1,
+            celestial_core::constants::PI,
+            f64::MAX,
+            f64::MIN_POSITIVE,
+            5e-324,
+        ];
+        for value in values {
+            let card = card_text(&Keyword::real("TEST", value).with_comment("c"));
+            let text = real_value_text(&card);
+            assert!(
+                text.contains('.') && text.parse::<i64>().is_err(),
+                "{} written as {:?}",
+                value,
+                text
+            );
+            assert_eq!(
+                text.parse::<f64>().unwrap().to_bits(),
+                value.to_bits(),
+                "{}",
+                text
+            );
+        }
+    }
+
+    #[test]
+    fn format_card_real_layout() {
+        assert_eq!(
+            card_text(&Keyword::real("CRPIX1", 512.0)),
+            padded(&["CRPIX1  =                512.0"])
+        );
+        assert_eq!(
+            card_text(&Keyword::real("A_5_0", 4.57e-19).with_comment("SIP")),
+            padded(&["A_5_0   =             4.57E-19 / SIP"])
+        );
+        assert_eq!(
+            card_text(&Keyword::real("TEST", 1e25)),
+            padded(&["TEST    =              1.0E+25"])
+        );
+        assert_eq!(
+            card_text(&Keyword::real("CD1_1", -2.777_777_777_777_778e-4).with_comment("CD")),
+            padded(&["CD1_1   = -0.0002777777777777778 / CD"])
+        );
+    }
+
+    #[test]
+    fn format_card_real_rejects_non_finite() {
+        for value in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            let result = format_card(&Keyword::real("BAD", value));
+            assert!(
+                matches!(result, Err(FitsError::InvalidKeywordValue { .. })),
+                "{} was accepted",
+                value
+            );
+        }
+    }
+
+    fn written_hdu(path: &std::path::Path) -> (Vec<u8>, Vec<u8>) {
+        let bytes = std::fs::read(path).unwrap();
+        let end = bytes
+            .chunks(80)
+            .position(|card| card.starts_with(b"END     "))
+            .unwrap();
+        let header_len = (end * 80 / FITS_BLOCK_SIZE + 1) * FITS_BLOCK_SIZE;
+        let (header, data) = bytes.split_at(header_len);
+        (header.to_vec(), data.to_vec())
+    }
+
+    #[test]
+    fn write_with_checksum_writes_valid_checksum() {
+        use crate::fits::io::reader::FitsFile;
+
+        let temp_file = NamedTempFile::new().unwrap();
+        let path = temp_file.path();
+        let data: Vec<i16> = (0..100).collect();
+        {
+            let mut writer = FitsWriter::create(path).unwrap();
+            writer
+                .write_primary_image_with_checksum(&data, &[10, 10], &[])
+                .unwrap();
+        }
+
+        let (header, data_bytes) = written_hdu(path);
+        assert!(checksum::verify_hdu_checksum(&header, &data_bytes));
+
+        let mut fits = FitsFile::open(path).unwrap();
+        let result = fits.validate_hdu_checksum(0).unwrap();
+        assert_eq!(result.checksum_valid, Some(true));
+        assert_eq!(result.datasum_valid, Some(true));
+    }
+
+    fn checksum_result_of(bytes: Vec<u8>) -> (Option<bool>, Option<bool>) {
+        let mut fits = crate::fits::io::reader::FitsFile::new(std::io::Cursor::new(bytes)).unwrap();
+        let result = fits.validate_hdu_checksum(0).unwrap();
+        (result.datasum_valid, result.checksum_valid)
+    }
+
+    #[test]
+    fn checksum_mismatches_are_reported_as_flags() {
+        let data: Vec<i16> = (0..100).collect();
+        let bytes = primary_image_bytes(&data, &[10, 10], &[], true).unwrap();
+        assert_eq!(checksum_result_of(bytes.clone()), (Some(true), Some(true)));
+
+        let mut data_changed = bytes.clone();
+        data_changed[FITS_BLOCK_SIZE + 1] ^= 1;
+        assert_eq!(checksum_result_of(data_changed), (Some(false), Some(false)));
+
+        let mut header_changed = bytes;
+        let comment = header_changed
+            .windows(4)
+            .position(|w| w == b"file")
+            .unwrap();
+        header_changed[comment] = b'F';
+        assert_eq!(
+            checksum_result_of(header_changed),
+            (Some(true), Some(false))
+        );
+    }
+
+    #[test]
+    fn compressed_file_primary_header_has_the_image_header_comments() {
+        let bytes =
+            compressed_image_bytes(&[0i16; 4], &[2, 2], None, CompressionAlgorithm::Gzip, &[])
+                .unwrap();
+        let header =
+            crate::fits::header::parser::HeaderParser::parse_header(&bytes[..2880]).unwrap();
+        let cards: Vec<_> = header
+            .keywords()
+            .iter()
+            .map(|k| (k.name.as_str(), k.comment.as_deref()))
+            .collect();
+        assert_eq!(
+            cards,
+            [
+                ("SIMPLE", Some("file does conform to FITS standard")),
+                ("BITPIX", Some("number of bits per data pixel")),
+                ("NAXIS", Some("number of data axes")),
+                ("EXTEND", Some("FITS dataset may contain extensions")),
+            ]
+        );
+    }
+
+    fn count_cards(header: &[u8], name: &[u8; 8]) -> usize {
+        header.chunks(80).filter(|c| c.starts_with(name)).count()
+    }
+
+    #[test]
+    fn write_drops_incoming_checksum_and_datasum() {
+        let stale = [
+            Keyword::string("CHECKSUM", "9aa2FaX19aa1CaW1"),
+            Keyword::string("DATASUM", "4266173065"),
+            Keyword::string("OBJECT", "M31"),
+        ];
+        let data: Vec<i16> = (0..16).collect();
+
+        let plain = NamedTempFile::new().unwrap();
+        FitsWriter::create(plain.path())
+            .unwrap()
+            .write_primary_image(&data, &[4, 4], &stale)
+            .unwrap();
+        let (header, _) = written_hdu(plain.path());
+        assert_eq!(count_cards(&header, b"CHECKSUM"), 0);
+        assert_eq!(count_cards(&header, b"DATASUM "), 0);
+        assert_eq!(count_cards(&header, b"OBJECT  "), 1);
+
+        let summed = NamedTempFile::new().unwrap();
+        FitsWriter::create(summed.path())
+            .unwrap()
+            .write_primary_image_with_checksum(&data, &[4, 4], &stale)
+            .unwrap();
+        let (header, data_bytes) = written_hdu(summed.path());
+        assert_eq!(count_cards(&header, b"CHECKSUM"), 1);
+        assert_eq!(count_cards(&header, b"DATASUM "), 1);
+        assert!(checksum::verify_hdu_checksum(&header, &data_bytes));
+    }
+
+    #[test]
+    fn write_rejects_data_length_that_does_not_match_dimensions() {
+        let temp_file = NamedTempFile::new().unwrap();
+        let mut writer = FitsWriter::create(temp_file.path()).unwrap();
+        match writer.write_primary_image(&[1i16, 2, 3], &[2, 2], &[]) {
+            Err(FitsError::InvalidFormat(m)) => {
+                assert_eq!(m, "data has 3 values but dimensions 2x2 need 4")
+            }
+            other => panic!("{other:?}"),
+        }
+        assert!(matches!(
+            writer.write_primary_image_with_checksum(&[1i16, 2, 3, 4, 5], &[2, 2], &[]),
+            Err(FitsError::InvalidFormat(_))
+        ));
+        match writer.write_primary_image(&[1i16], &[], &[]) {
+            Err(FitsError::InvalidFormat(m)) => {
+                assert_eq!(m, "data has 1 values but NAXIS = 0 declares no data")
+            }
+            other => panic!("{other:?}"),
+        }
+        assert!(matches!(
+            writer.write_compressed_image(
+                &[1i16, 2, 3],
+                &[2, 2],
+                Some((2, 2)),
+                CompressionAlgorithm::Rice,
+                &[]
+            ),
+            Err(FitsError::InvalidFormat(_))
+        ));
+    }
+
+    fn count_names(header: &[u8], name: &str) -> usize {
+        header
+            .chunks(80)
+            .filter(|c| {
+                String::from_utf8_lossy(&c[..8])
+                    .trim()
+                    .eq_ignore_ascii_case(name)
+            })
+            .count()
+    }
+
+    #[test]
+    fn write_drops_checksum_keywords_in_any_spelling() {
+        let stale = [
+            Keyword::string("CHECKSUM ", "9aa2FaX19aa1CaW1"),
+            Keyword::string("checksum", "9aa2FaX19aa1CaW1"),
+            Keyword::string(" DataSum", "4266173065"),
+            Keyword::string("ZHECKSUM", "9aa2FaX19aa1CaW1"),
+            Keyword::string("ZDATASUM", "4266173065"),
+        ];
+        let data: Vec<i16> = (0..16).collect();
+
+        let summed = NamedTempFile::new().unwrap();
+        FitsWriter::create(summed.path())
+            .unwrap()
+            .write_primary_image_with_checksum(&data, &[4, 4], &stale)
+            .unwrap();
+        let (header, data_bytes) = written_hdu(summed.path());
+        assert_eq!(count_names(&header, "CHECKSUM"), 1);
+        assert_eq!(count_names(&header, "DATASUM"), 1);
+        assert_eq!(count_names(&header, "ZHECKSUM"), 0);
+        assert_eq!(count_names(&header, "ZDATASUM"), 0);
+        assert!(checksum::verify_hdu_checksum(&header, &data_bytes));
+
+        let compressed = NamedTempFile::new().unwrap();
+        FitsWriter::create(compressed.path())
+            .unwrap()
+            .write_compressed_image(
+                &data,
+                &[4, 4],
+                Some((4, 4)),
+                CompressionAlgorithm::Rice,
+                &stale,
+            )
+            .unwrap();
+        let bytes = std::fs::read(compressed.path()).unwrap();
+        for name in ["CHECKSUM", "DATASUM", "ZHECKSUM", "ZDATASUM"] {
+            assert_eq!(count_names(&bytes, name), 0, "{}", name);
+        }
+    }
+
+    #[test]
+    fn format_card_long_string_drops_trailing_spaces() {
+        let value = format!("{}{}", "d".repeat(60), " ".repeat(20));
+        assert_eq!(
+            card_text(&Keyword::string("TRAIL", &value)),
+            padded(&[&format!("TRAIL   = '{}'", "d".repeat(60))])
+        );
+        let value = format!("{}{}", "e".repeat(100), " ".repeat(40));
+        assert_eq!(
+            card_text(&Keyword::string("TRAIL", &value)),
+            padded(&[
+                &format!("TRAIL   = '{}&'", "e".repeat(67)),
+                &format!("CONTINUE  '{}'", "e".repeat(33)),
+            ])
+        );
+    }
+
+    #[test]
+    fn format_card_rejects_non_ascii_in_names_comments_and_text() {
+        let keywords = [
+            Keyword::integer("TEMP", 1).with_comment("deg \u{b0}C"),
+            Keyword::string("OBJECT", "M31").with_comment("bell\u{7}"),
+            Keyword::real("EXPTIME", 1.0).with_comment("tab\there"),
+            Keyword::comment("caf\u{e9}"),
+            Keyword::history("line\nbreak"),
+            Keyword::integer("T\u{c9}MP", 1),
+            Keyword::integer("TE\tMP", 1),
+        ];
+        for keyword in keywords {
+            let result = format_card(&keyword);
+            assert!(
+                matches!(result, Err(FitsError::InvalidKeywordValue { .. })),
+                "{:?} was accepted",
+                keyword
+            );
+        }
+    }
+
+    #[test]
+    fn failed_write_leaves_existing_file_untouched() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("existing.fits");
+        let data: Vec<i16> = (0..4).collect();
+        let nan = [Keyword::real("BAD", f64::NAN)];
+        let non_ascii = [Keyword::string("OBJECT", "caf\u{e9}")];
+
+        std::fs::write(&path, b"original contents").unwrap();
+        let attempts: Vec<Result<()>> = vec![
+            FitsWriter::create(&path)
+                .unwrap()
+                .write_primary_image(&data, &[2, 2], &nan),
+            FitsWriter::create(&path)
+                .unwrap()
+                .write_primary_image_with_checksum(&data, &[2, 2], &non_ascii),
+            FitsWriter::create(&path)
+                .unwrap()
+                .write_primary_image(&data, &[3, 3], &[]),
+            FitsWriter::create(&path).unwrap().write_compressed_image(
+                &data,
+                &[2, 2],
+                Some((2, 2)),
+                CompressionAlgorithm::Rice,
+                &nan,
+            ),
+        ];
+        for (i, attempt) in attempts.iter().enumerate() {
+            assert!(attempt.is_err(), "attempt {} succeeded", i);
+        }
+        let contents = std::fs::read(&path).unwrap();
+        assert_eq!(
+            String::from_utf8_lossy(&contents[..contents.len().min(40)]),
+            "original contents"
+        );
+
+        let new_path = dir.path().join("new.fits");
+        let result =
+            FitsWriter::create(&new_path)
+                .unwrap()
+                .write_primary_image(&data, &[2, 2], &nan);
+        assert!(result.is_err());
+        assert!(!new_path.exists());
+    }
+
+    #[test]
+    fn write_rejects_axis_above_i64_max() {
+        let temp_file = NamedTempFile::new().unwrap();
+        let mut writer = FitsWriter::create(temp_file.path()).unwrap();
+        let empty: [i16; 0] = [];
+        assert!(matches!(
+            writer.write_primary_image(&empty, &[1usize << 63, 0], &[]),
+            Err(FitsError::InvalidFormat(_))
+        ));
+        match writer.write_primary_image(&empty, &[1usize << 40, 1 << 40], &[]) {
+            Err(FitsError::InvalidFormat(m)) => assert_eq!(
+                m,
+                "dimensions 1099511627776x1099511627776 overflow the pixel count"
+            ),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    fn standard_comments() -> [Keyword; 2] {
+        [
+            Keyword::comment(
+                "FITS (Flexible Image Transport System) format is defined in 'Astronomy",
+            ),
+            Keyword::comment(
+                "and Astrophysics', volume 376, page 359; bibcode: 2001A&A...376..359H",
+            ),
+        ]
+    }
+
+    #[test]
+    fn write_adds_standard_comments_only_when_absent() {
+        let data: Vec<i16> = (0..4).collect();
+        let mut keywords = standard_comments().to_vec();
+        keywords.push(Keyword::comment("user comment"));
+        for incoming in [&keywords[..], &[]] {
+            let temp_file = NamedTempFile::new().unwrap();
+            FitsWriter::create(temp_file.path())
+                .unwrap()
+                .write_primary_image(&data, &[2, 2], incoming)
+                .unwrap();
+            let (header, _) = written_hdu(temp_file.path());
+            for standard in standard_comments() {
+                let card = format!("COMMENT {:<72}", standard.comment.unwrap());
+                let copies = header.chunks(80).filter(|c| *c == card.as_bytes()).count();
+                assert_eq!(copies, 1, "{}", card);
+            }
+        }
+    }
+
+    #[test]
+    fn format_card_writes_long_or_spaced_names_as_hierarch() {
+        assert_eq!(
+            card_text(&Keyword::real("ESO DET DIT", 1.5).with_comment("c")),
+            padded(&["HIERARCH ESO DET DIT = 1.5 / c"])
+        );
+        assert_eq!(
+            card_text(&Keyword::string("ESO OBS NAME", "O'Brien")),
+            padded(&["HIERARCH ESO OBS NAME = 'O''Brien'"])
+        );
+        assert_eq!(
+            card_text(&Keyword::integer("LONGKEYWORD", 3)),
+            padded(&["HIERARCH LONGKEYWORD = 3"])
+        );
+        assert_eq!(
+            card_text(&Keyword::logical("ESO INS SHUT", true)),
+            padded(&["HIERARCH ESO INS SHUT = T"])
+        );
+    }
+
+    #[test]
+    fn format_card_hierarch_cuts_comment_and_rejects_long_name() {
+        let comment = "x".repeat(80);
+        let card = card_text(&Keyword::integer("ESO DET NDIT", 3).with_comment(&comment));
+        assert_eq!(
+            card,
+            format!("HIERARCH ESO DET NDIT = 3 / {}", &comment[..52])
+        );
+
+        let long = Keyword::integer(format!("ESO {}", "Y".repeat(70)), 1);
+        assert!(matches!(
+            format_card(&long),
+            Err(FitsError::InvalidKeywordValue { .. })
+        ));
+    }
+
+    #[test]
+    fn format_card_writes_non_standard_names_as_hierarch() {
+        assert_eq!(
+            card_text(&Keyword::integer("HIERARCH NAXIS1", 1)),
+            padded(&["HIERARCH NAXIS1 = 1"])
+        );
+        assert_eq!(
+            card_text(&Keyword::integer("foo", 1)),
+            padded(&["HIERARCH foo = 1"])
+        );
+        assert_eq!(
+            card_text(&Keyword::string("a.b", "x")),
+            padded(&["HIERARCH a.b = 'x       '"])
+        );
+        assert_eq!(
+            card_text(&Keyword::integer("DATE-OBS", 1)),
+            padded(&["DATE-OBS=                    1"])
+        );
+    }
+
+    #[test]
+    fn format_card_rejects_names_that_cannot_be_hierarch() {
+        for name in ["ESO=DET", " ESO", "ESO ", "HIERARCH ", "HIERARCH  ESO"] {
+            assert!(
+                matches!(
+                    format_card(&Keyword::integer(name, 1)),
+                    Err(FitsError::InvalidKeyword(_))
+                ),
+                "{:?}",
+                name
+            );
+        }
+    }
+
+    #[test]
+    fn format_card_continues_long_hierarch_string() {
+        let value: String = ('a'..='z').cycle().take(108).collect();
+        let keyword = Keyword::string("HIERARCH ESO OBS TARG NAME", &value).with_comment("c");
+        let first = format!("HIERARCH ESO OBS TARG NAME = '{}&'", &value[..48]);
+        let second = format!("CONTINUE  '{}' / c", &value[48..]);
+        assert_eq!(card_text(&keyword), padded(&[&first, &second]));
+
+        let mut block = card_text(&keyword).into_bytes();
+        block.extend(format!("{:<80}", "END").into_bytes());
+        block.resize(FITS_BLOCK_SIZE, b' ');
+        let header = crate::fits::header::parser::HeaderParser::parse_header(&block).unwrap();
+        let read = header.get_keyword("HIERARCH ESO OBS TARG NAME").unwrap();
+        assert_eq!(read.value, Some(KeywordValue::String(value)));
+        assert_eq!(read.comment.as_deref(), Some("c"));
+    }
+
+    #[test]
+    fn format_card_writes_undefined_value_with_indicator() {
+        assert_eq!(
+            card_text(&Keyword::new("EMPTYC".to_string()).with_comment("only comment")),
+            padded(&["EMPTYC  =                      / only comment"])
+        );
+        assert_eq!(
+            card_text(&Keyword::new("EMPTY".to_string())),
+            padded(&["EMPTY   ="])
+        );
+    }
+
+    #[test]
+    fn hierarch_cards_read_back_under_the_same_name() {
+        use crate::fits::header::parser::HeaderParser;
+
+        let keywords = [
+            Keyword::real("HIERARCH ESO DET DIT", 1.5),
+            Keyword::string("HIERARCH ESO OBS NAME", "a / b"),
+            Keyword::integer("HIERARCH NAXIS1", 3),
+        ];
+        let mut block: Vec<u8> = keywords
+            .iter()
+            .map(card_text)
+            .collect::<String>()
+            .into_bytes();
+        block.extend(format!("{:<80}", "END").into_bytes());
+        block.resize(FITS_BLOCK_SIZE, b' ');
+        let header = HeaderParser::parse_header(&block).unwrap();
+        for keyword in &keywords {
+            assert_eq!(header.get(&keyword.name).value(), keyword.value.as_ref());
+        }
+    }
+
+    #[test]
+    fn format_card_writes_blank_keyword_text_from_column_9() {
+        let mut keyword = Keyword::comment("= blank keyword text");
+        keyword.name = String::new();
+        assert_eq!(
+            card_text(&keyword),
+            padded(&["        = blank keyword text"])
+        );
+    }
+
+    fn parsed_keywords(cards: &[&str]) -> Vec<Keyword> {
+        let mut block: Vec<u8> = cards
+            .iter()
+            .chain(&["END"])
+            .flat_map(|c| format!("{:<80}", c).into_bytes())
+            .collect();
+        block.resize(FITS_BLOCK_SIZE, b' ');
+        crate::fits::header::parser::HeaderParser::parse_header(&block)
+            .unwrap()
+            .keywords()
+            .to_vec()
+    }
+
+    #[test]
+    fn cards_without_value_indicator_are_written_back_unchanged() {
+        let cards = [
+            "KEYWORD  free text",
+            "HIERARCHESO=1",
+            "HIERARCH",
+            "OBJECT  ='M31'",
+            "CONTINUE  'orphan'",
+            "lower    text",
+            "EMPTY   =",
+            "EMPTYC  =                      / only comment",
+        ];
+        let written: String = parsed_keywords(&cards).iter().map(card_text).collect();
+        assert_eq!(written, padded(&cards));
+    }
+
+    #[test]
+    fn format_card_moves_comment_of_long_string_to_final_continue() {
+        let value: String = ('a'..='z').cycle().take(108).collect();
+        let hierarch =
+            Keyword::string("HIERARCH ESO OBS TARG NAME", &value).with_comment("a comment");
+        let first = format!("HIERARCH ESO OBS TARG NAME = '{}&'", &value[..48]);
+        let second = format!("CONTINUE  '{}&'", &value[48..]);
+        assert_eq!(
+            card_text(&hierarch),
+            padded(&[&first, &second, "CONTINUE  '' / a comment"])
+        );
+
+        let long: String = ('a'..='z').cycle().take(127).collect();
+        let standard = Keyword::string("LONGKEY", &long).with_comment("a comment");
+        let first = format!("LONGKEY = '{}&'", &long[..67]);
+        let second = format!("CONTINUE  '{}&'", &long[67..]);
+        assert_eq!(
+            card_text(&standard),
+            padded(&[&first, &second, "CONTINUE  '' / a comment"])
+        );
+
+        for keyword in [hierarch, standard] {
+            let text = card_text(&keyword);
+            let lines: Vec<&str> = (0..text.len())
+                .step_by(80)
+                .map(|i| &text[i..i + 80])
+                .collect();
+            let read = parsed_keywords(&lines);
+            assert_eq!(read, [keyword]);
+        }
+    }
+
+    #[test]
+    fn format_card_writes_commentary_keyword_with_value_as_value_card() {
+        let keyword = Keyword::commentary("KEY", "text").with_value(5);
+        assert_eq!(
+            card_text(&keyword),
+            padded(&["KEY     =                    5 / text"])
+        );
     }
 }

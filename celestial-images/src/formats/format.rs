@@ -1,4 +1,4 @@
-use crate::core::{ImageError, Result};
+use crate::core::errors::{ImageError, Result};
 use std::io::{Read, Seek};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

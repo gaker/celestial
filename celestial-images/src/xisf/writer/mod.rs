@@ -1,19 +1,26 @@
-mod data_type;
+pub mod data_type;
 mod layout;
-mod wcs;
+mod metadata;
+pub(crate) mod wcs;
 mod xml;
 
-pub use data_type::XisfDataType;
-pub use wcs::wcs_to_xisf_properties;
+use data_type::XisfDataType;
 
-use crate::fits::header::Keyword;
-use crate::xisf::header::{
-    ColorSpace, DataLocation, ImageInfo, PixelStorage, XisfCompression, XisfProperty,
-};
-use crate::xisf::Result;
+use crate::core::shape::plane_dimensions;
+use crate::fits::header::keywords::{set_keyword, Keyword};
+use crate::xisf::errors::{Result, XisfError};
+use crate::xisf::header::checksum::Checksum;
+use crate::xisf::header::color_space::ColorSpace;
+use crate::xisf::header::compression::XisfCompression;
+use crate::xisf::header::image_info::ImageInfo;
+use crate::xisf::header::location::DataLocation;
+use crate::xisf::header::pixel_storage::PixelStorage;
+use crate::xisf::header::property::XisfProperty;
+use crate::xisf::header::sample_format::SampleFormat;
 use std::fs::File;
 use std::io::{BufWriter, Cursor, Seek, Write};
 use std::path::Path;
+use std::time::SystemTime;
 
 const XISF_SIGNATURE: &[u8] = b"XISF0100";
 const HEADER_ALIGNMENT: usize = 16;
@@ -21,10 +28,15 @@ const HEADER_ALIGNMENT: usize = 16;
 pub struct XisfWriter<W> {
     pub(super) writer: W,
     pub(super) images: Vec<ImageData>,
+    // The FITSKeyword and Property children of image 0.
     pub(super) keywords: Vec<Keyword>,
     pub(super) properties: Vec<XisfProperty>,
     pub(super) compression: XisfCompression,
     pub(super) property_blocks: Vec<PropertyDataBlock>,
+    sha1_checksums: bool,
+    // The XISF:CreationTime value. None writes the system time at `write`.
+    // Tests fix it so the output is the same on every run.
+    pub(crate) creation_time: Option<SystemTime>,
 }
 
 pub(super) struct ImageData {
@@ -36,6 +48,7 @@ pub(super) struct PropertyDataBlock {
     pub(super) property_index: usize,
     pub(super) data: Vec<u8>,
     pub(super) location: DataLocation,
+    pub(super) checksum: Option<Checksum>,
 }
 
 impl XisfWriter<BufWriter<File>> {
@@ -61,6 +74,8 @@ impl<W: Write + Seek> XisfWriter<W> {
             properties: Vec::new(),
             compression: XisfCompression::None,
             property_blocks: Vec::new(),
+            sha1_checksums: false,
+            creation_time: None,
         }
     }
 
@@ -69,8 +84,11 @@ impl<W: Write + Seek> XisfWriter<W> {
         self
     }
 
-    pub fn set_compression(&mut self, compression: XisfCompression) {
-        self.compression = compression;
+    // Gives every attached data block a SHA-1 checksum attribute (XISF 1.0
+    // section 10.5), computed over the stored bytes.
+    pub fn sha1_checksums(mut self, enabled: bool) -> Self {
+        self.sha1_checksums = enabled;
+        self
     }
 
     pub fn add_image<T: XisfDataType>(
@@ -92,56 +110,22 @@ impl<W: Write + Seek> XisfWriter<W> {
         channels: usize,
         bounds: (f64, f64),
     ) -> Result<()> {
-        let geometry = layout::build_geometry(width, height, channels);
-        layout::validate_data_length(data.len(), &geometry)?;
-
-        let raw_bytes = T::to_le_bytes(data);
-        let uncompressed_size = raw_bytes.len();
-        let (compressed_bytes, compression_used) =
-            layout::compress_data(self.compression, &raw_bytes);
-
-        let info = ImageInfo {
-            geometry,
-            sample_format: T::SAMPLE_FORMAT,
-            bounds,
-            color_space: if channels == 3 {
-                ColorSpace::Rgb
-            } else {
-                ColorSpace::Gray
-            },
-            pixel_storage: PixelStorage::Planar,
-            location: DataLocation::new(0, compressed_bytes.len() as u64),
-            compression: compression_used,
-            uncompressed_size: if compression_used.is_compressed() {
-                Some(uncompressed_size as u64)
-            } else {
-                None
-            },
-        };
-
-        self.images.push(ImageData {
-            info,
-            data: compressed_bytes,
-        });
+        let geometry = plane_dimensions(width, height, channels);
+        check_image(&geometry, bounds, data.len())?;
+        let mut info = image_info(geometry, T::SAMPLE_FORMAT, bounds);
+        let data = stored_block(self.compression, &T::to_le_bytes(data), &mut info)?;
+        self.images.push(ImageData { info, data });
         Ok(())
     }
 
+    // Keywords and properties added here belong to image 0. Replaces every
+    // keyword of the same name with one; `add_keyword` appends.
     pub fn set_keyword(&mut self, name: &str, value: &str) {
-        self.keywords.push(Keyword::string(name, value));
+        set_keyword(&mut self.keywords, Keyword::string(name, value));
     }
 
     pub fn add_keyword(&mut self, keyword: Keyword) {
         self.keywords.push(keyword);
-    }
-
-    #[deprecated(note = "Use set_keyword() instead")]
-    pub fn set_fits_keyword(&mut self, name: &str, value: &str) {
-        self.set_keyword(name, value);
-    }
-
-    #[deprecated(note = "Use add_keyword() instead")]
-    pub fn add_fits_keyword(&mut self, keyword: Keyword) {
-        self.add_keyword(keyword);
     }
 
     pub fn add_property(&mut self, property: XisfProperty) {
@@ -159,11 +143,25 @@ impl<W: Write + Seek> XisfWriter<W> {
     }
 
     fn write_internal(&mut self) -> Result<()> {
+        // The keywords and properties are children of image 0, and their
+        // data blocks would be written with no element to reference them.
+        let has_metadata = !self.keywords.is_empty() || !self.properties.is_empty();
+        if has_metadata && self.images.is_empty() {
+            return Err(XisfError::InvalidFormat(
+                "Keywords and properties are written with image 0, and the writer has no image"
+                    .to_string(),
+            ));
+        }
+        let created = self.creation_time.unwrap_or_else(SystemTime::now);
+        let created = metadata::time_point(created)?;
         self.property_blocks = layout::build_property_blocks(&self.properties);
+        if self.sha1_checksums {
+            layout::add_sha1_checksums(&mut self.property_blocks, &mut self.images);
+        }
         self.writer.write_all(XISF_SIGNATURE)?;
 
-        let padded_xml = layout::generate_final_xml(self)?;
-        layout::write_header_length(&mut self.writer, padded_xml.len() as u32)?;
+        let padded_xml = layout::generate_final_xml(self, &created)?;
+        layout::write_header_length(&mut self.writer, padded_xml.len())?;
         self.writer.write_all(&padded_xml)?;
         layout::write_property_data(&mut self.writer, &self.property_blocks)?;
         layout::write_image_data(&mut self.writer, &self.images)?;
@@ -171,13 +169,83 @@ impl<W: Write + Seek> XisfWriter<W> {
     }
 }
 
+impl<W> XisfWriter<W> {
+    // The keywords and properties written as children of image `index`.
+    pub(super) fn image_metadata(&self, index: usize) -> (&[Keyword], &[XisfProperty]) {
+        if index == 0 {
+            (&self.keywords, &self.properties)
+        } else {
+            (&[], &[])
+        }
+    }
+}
+
+// XISF 1.0 geometry dimensions are at least 1; readers refuse 0.
+fn check_image(geometry: &[usize], bounds: (f64, f64), data_len: usize) -> Result<()> {
+    if geometry.contains(&0) {
+        return Err(XisfError::InvalidFormat(format!(
+            "Image geometry {geometry:?} has a zero dimension"
+        )));
+    }
+    check_bounds(bounds)?;
+    layout::validate_data_length(data_len, geometry)
+}
+
+// XISF 1.0 section 11.5.1 gives the representable range as lower:upper; a
+// range that is not two finite numbers in order cannot describe the samples.
+fn check_bounds((lower, upper): (f64, f64)) -> Result<()> {
+    if lower.is_finite() && upper.is_finite() && lower <= upper {
+        return Ok(());
+    }
+    Err(XisfError::InvalidFormat(format!(
+        "Image bounds ({lower}, {upper}) are not two finite numbers with lower <= upper"
+    )))
+}
+
+// Returns the bytes to store for `raw` and sets the compression and size
+// attributes of `info` to match them.
+fn stored_block(compression: XisfCompression, raw: &[u8], info: &mut ImageInfo) -> Result<Vec<u8>> {
+    let (stored, used) = layout::compress_data(compression, raw)?;
+    info.location = DataLocation::new(0, stored.len() as u64);
+    info.compression = used;
+    info.uncompressed_size = used.is_compressed().then_some(raw.len() as u64);
+    Ok(stored)
+}
+
+fn image_info(geometry: Vec<usize>, sample_format: SampleFormat, bounds: (f64, f64)) -> ImageInfo {
+    let color_space = if geometry.get(2) == Some(&3) {
+        ColorSpace::Rgb
+    } else {
+        ColorSpace::Gray
+    };
+    ImageInfo {
+        geometry,
+        sample_format,
+        bounds,
+        color_space,
+        pixel_storage: PixelStorage::Planar,
+        location: DataLocation::new(0, 0),
+        compression: XisfCompression::None,
+        uncompressed_size: None,
+        shuffle_item_size: None,
+        subblocks: Vec::new(),
+        byte_order: crate::core::types::ByteOrder::LittleEndian,
+        checksum: None,
+        block_defect: None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::fits::header::{Keyword, KeywordValue};
-    use crate::xisf::header::{SampleFormat, XisfProperty};
-    use crate::xisf::{XisfError, XisfFile};
+    use crate::fits::header::keywords::{Keyword, KeywordValue};
+    use crate::xisf::errors::XisfError;
+    use crate::xisf::header::property::XisfProperty;
+    use crate::xisf::header::sample_format::SampleFormat;
+    use crate::xisf::reader::XisfFile;
+    use celestial_time::scales::utc::UTC;
     use std::io::Cursor;
+    use std::time::{Duration, UNIX_EPOCH};
 
     fn roundtrip<T: XisfDataType>(
         data: &[T],
@@ -206,13 +274,6 @@ mod tests {
     fn compression_builder_sets_field() {
         let w = XisfWriter::new(Cursor::new(Vec::new())).compression(XisfCompression::Lz4);
         assert_eq!(w.compression, XisfCompression::Lz4);
-    }
-
-    #[test]
-    fn set_compression_mutates_in_place() {
-        let mut w = XisfWriter::new(Cursor::new(Vec::new()));
-        w.set_compression(XisfCompression::Zlib);
-        assert_eq!(w.compression, XisfCompression::Zlib);
     }
 
     #[test]
@@ -337,14 +398,34 @@ mod tests {
     }
 
     #[test]
-    fn zstd_falls_back_to_uncompressed() {
-        let data = vec![5u8; 512];
-        let mut reader = roundtrip(&data, 16, 32, 1, XisfCompression::Zstd);
-        let info = reader.image_info(0).unwrap();
-        assert_eq!(info.compression, XisfCompression::None);
-        assert_eq!(info.uncompressed_size, None);
-        let bytes = reader.read_image_data_raw(0).unwrap();
-        assert_eq!(bytes, data);
+    fn keywords_or_properties_without_an_image_are_rejected() {
+        let mut w = XisfWriter::new(Cursor::new(Vec::new()));
+        w.add_property(XisfProperty::f64_vector("V", vec![1.0]));
+        let err = w.write_to_vec().unwrap_err();
+        assert!(matches!(err, XisfError::InvalidFormat(_)), "{err}");
+
+        let mut w = XisfWriter::new(Cursor::new(Vec::new()));
+        w.add_keyword(Keyword::string("OBJECT", "M31"));
+        let err = w.write_to_vec().unwrap_err();
+        assert!(matches!(err, XisfError::InvalidFormat(_)), "{err}");
+    }
+
+    #[test]
+    fn a_writer_without_images_or_metadata_writes_an_empty_unit() {
+        let bytes = XisfWriter::new(Cursor::new(Vec::new()))
+            .write_to_vec()
+            .unwrap();
+        assert_eq!(XisfFile::new(Cursor::new(bytes)).unwrap().num_images(), 0);
+    }
+
+    #[test]
+    fn zstd_is_rejected() {
+        let mut w = XisfWriter::new(Cursor::new(Vec::new())).compression(XisfCompression::Zstd);
+        let err = w.add_image(&[5u8; 512], 16, 32, 1).unwrap_err();
+        assert!(
+            matches!(&err, XisfError::UnsupportedCodec(codec) if codec == "zstd"),
+            "{err}"
+        );
     }
 
     #[test]
@@ -380,6 +461,23 @@ mod tests {
     }
 
     #[test]
+    fn set_keyword_replaces_previous_value() {
+        let mut w = XisfWriter::new(Cursor::new(Vec::new()));
+        w.add_image::<u8>(&[0u8; 4], 2, 2, 1).unwrap();
+        w.set_keyword("OBJECT", "A");
+        w.set_keyword("OBJECT", "B");
+        let bytes = w.write_to_vec().unwrap();
+        let reader = XisfFile::new(Cursor::new(bytes)).unwrap();
+        let objects: Vec<_> = reader
+            .keywords()
+            .iter()
+            .filter(|k| k.name == "OBJECT")
+            .map(|k| k.value.clone())
+            .collect();
+        assert_eq!(objects, [Some(KeywordValue::String("B".into()))]);
+    }
+
+    #[test]
     fn add_keyword_appears_in_roundtrip() {
         let mut w = XisfWriter::new(Cursor::new(Vec::new()));
         w.add_image::<u8>(&[0u8; 4], 2, 2, 1).unwrap();
@@ -391,26 +489,196 @@ mod tests {
     }
 
     #[test]
-    #[allow(deprecated)]
-    fn deprecated_set_fits_keyword_still_works() {
+    fn keywords_and_properties_read_back_on_image_0_only() {
         let mut w = XisfWriter::new(Cursor::new(Vec::new()));
         w.add_image::<u8>(&[0u8; 4], 2, 2, 1).unwrap();
-        w.set_fits_keyword("OBJECT", "M31");
+        w.add_image::<u8>(&[1u8; 4], 2, 2, 1).unwrap();
+        w.add_keyword(Keyword::string("OBJECT", "M31"));
+        w.add_property(XisfProperty::f64_vector("V", vec![1.0, 2.0]));
         let bytes = w.write_to_vec().unwrap();
-        let reader = XisfFile::new(Cursor::new(bytes)).unwrap();
-        let kw = reader.get_keyword("OBJECT").unwrap();
-        assert_eq!(kw.value, Some(KeywordValue::String("M31".to_string())));
+        let mut reader = XisfFile::new(Cursor::new(bytes)).unwrap();
+        let object = [Keyword::string("OBJECT", "M31")];
+        assert_eq!(reader.keywords(), object);
+        assert_eq!(reader.image_keywords(0), Some(&object[..]));
+        assert_eq!(reader.image_keywords(1), Some(&[][..]));
+        let vector = XisfProperty::f64_vector("V", vec![1.0, 2.0]);
+        assert_eq!(reader.properties(0).unwrap(), [vector]);
+        assert_eq!(reader.properties(1).unwrap(), []);
+    }
+
+    // XISF 1.0 section 10.5: the digest covers the stored bytes, which are
+    // the compressed bytes of a compressed block (section 10.6.2).
+    #[test]
+    fn sha1_checksums_are_written_and_verified_by_the_reader() {
+        for compression in [XisfCompression::None, XisfCompression::Zlib] {
+            let data = vec![9u8; 64];
+            let mut w = XisfWriter::new(Cursor::new(Vec::new()))
+                .compression(compression)
+                .sha1_checksums(true);
+            w.add_image(&data, 8, 8, 1).unwrap();
+            w.add_property(XisfProperty::f64_vector("V", vec![1.0, 2.0]));
+            let bytes = w.write_to_vec().unwrap();
+
+            let mut reader = XisfFile::new(Cursor::new(bytes.clone())).unwrap();
+            let info = reader.image_info(0).unwrap().clone();
+            assert_eq!(info.compression, compression);
+            let start = info.location.offset as usize;
+            let stored = &bytes[start..start + info.location.size as usize];
+            assert_eq!(info.checksum, Some(Checksum::sha1(stored)));
+            assert_eq!(reader.read_image_data_raw(0).unwrap(), data);
+            let vector = XisfProperty::f64_vector("V", vec![1.0, 2.0]);
+            assert_eq!(reader.properties(0).unwrap(), [vector]);
+
+            let mut corrupted = bytes;
+            corrupted[start] ^= 1;
+            let mut reader = XisfFile::new(Cursor::new(corrupted)).unwrap();
+            assert!(matches!(
+                reader.read_image_data_raw(0),
+                Err(XisfError::ChecksumMismatch { .. })
+            ));
+        }
     }
 
     #[test]
-    #[allow(deprecated)]
-    fn deprecated_add_fits_keyword_still_works() {
-        let mut w = XisfWriter::new(Cursor::new(Vec::new()));
+    fn sha1_checksums_cover_property_blocks() {
+        let mut w = XisfWriter::new(Cursor::new(Vec::new())).sha1_checksums(true);
         w.add_image::<u8>(&[0u8; 4], 2, 2, 1).unwrap();
-        w.add_fits_keyword(Keyword::real("GAIN", 1.5));
+        w.add_property(XisfProperty::f64_vector("V", vec![1.0, 2.0]));
+        let mut bytes = w.write_to_vec().unwrap();
+        let header_end = 16 + u32::from_le_bytes([bytes[8], bytes[9], bytes[10], bytes[11]]);
+        // The property block is written first, right after the header.
+        bytes[header_end as usize] ^= 1;
+        let mut reader = XisfFile::new(Cursor::new(bytes)).unwrap();
+        assert_eq!(reader.properties(0).unwrap(), []);
+    }
+
+    #[test]
+    fn checksums_are_off_by_default() {
+        let mut w = XisfWriter::new(Cursor::new(Vec::new())).compression(XisfCompression::Zlib);
+        w.add_image(&[9u8; 64], 8, 8, 1).unwrap();
+        w.add_property(XisfProperty::f64_vector("V", vec![1.0, 2.0]));
         let bytes = w.write_to_vec().unwrap();
-        let reader = XisfFile::new(Cursor::new(bytes)).unwrap();
-        assert!(reader.get_keyword("GAIN").is_some());
+        let reader = XisfFile::new(Cursor::new(bytes.clone())).unwrap();
+        assert_eq!(reader.image_info(0).unwrap().checksum, None);
+        let text = String::from_utf8_lossy(&bytes);
+        assert!(!text.contains("checksum="));
+        assert!(!text.contains("ChecksumAlgorithms"));
+    }
+
+    fn unix_now() -> i64 {
+        let since = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap();
+        i64::try_from(since.as_secs()).unwrap()
+    }
+
+    // Writes a file with one image, property A and keyword OBJECT, checks
+    // that the Metadata element is the last child of the root element and
+    // holds `extra` after the two properties XISF 1.0 section 11.4.1 makes
+    // mandatory, and that the metadata does not change what the reader gives
+    // for the image.
+    fn check_metadata(w: XisfWriter<Cursor<Vec<u8>>>, extra: &str) {
+        let mut w = w;
+        // 64 equal bytes, which every codec makes smaller.
+        w.add_image(&[9u8; 64], 8, 8, 1).unwrap();
+        w.add_property(XisfProperty::int32("A", 1));
+        w.add_keyword(Keyword::string("OBJECT", "M31"));
+        let before = unix_now();
+        let bytes = w.write_to_vec().unwrap();
+        let after = unix_now();
+        let text = String::from_utf8_lossy(&bytes);
+        let time_attribute = "type=\"TimePoint\" value=\"";
+        let time_start = text.find(time_attribute).unwrap() + time_attribute.len();
+        let time = &text[time_start..time_start + 20];
+        let metadata = format!(
+            "  <Metadata>\n    \
+             <Property id=\"XISF:CreationTime\" type=\"TimePoint\" value=\"{time}\"/>\n    \
+             <Property id=\"XISF:CreatorApplication\" type=\"String\">celestial-images {}</Property>\n\
+             {extra}  </Metadata>\n</xisf>",
+            env!("CARGO_PKG_VERSION")
+        );
+        assert!(text.contains(&metadata), "{text}");
+        assert_eq!(text.matches("<Metadata>").count(), 1);
+        assert!(time.ends_with('Z'), "{time}");
+        let (seconds, nanos) = time.parse::<UTC>().unwrap().to_unix().unwrap();
+        assert_eq!(nanos, 0);
+        assert!((before..=after).contains(&seconds), "{time}");
+
+        let mut reader = XisfFile::new(Cursor::new(bytes)).unwrap();
+        assert_eq!(reader.properties(0).unwrap(), [XisfProperty::int32("A", 1)]);
+        assert_eq!(reader.keywords(), [Keyword::string("OBJECT", "M31")]);
+    }
+
+    // XISF 1.0 section 11.4.2: XISF:CompressionCodecs lists the codecs of
+    // the compressed data blocks.
+    #[test]
+    fn compression_codecs_are_listed_in_the_metadata() {
+        check_metadata(
+            XisfWriter::new(Cursor::new(Vec::new())).compression(XisfCompression::Zlib),
+            "    <Property id=\"XISF:CompressionCodecs\" type=\"String\">zlib</Property>\n",
+        );
+        check_metadata(
+            XisfWriter::new(Cursor::new(Vec::new()))
+                .compression(XisfCompression::Lz4Hc)
+                .sha1_checksums(true),
+            concat!(
+                "    <Property id=\"XISF:ChecksumAlgorithms\" type=\"String\">sha-1</Property>\n",
+                "    <Property id=\"XISF:CompressionCodecs\" type=\"String\">lz4hc</Property>\n",
+            ),
+        );
+    }
+
+    // A block the codec does not make smaller is stored uncompressed, and
+    // then no codec is listed.
+    #[test]
+    fn compression_codecs_are_left_out_without_compressed_blocks() {
+        let mut w = XisfWriter::new(Cursor::new(Vec::new())).compression(XisfCompression::Zlib);
+        w.add_image(&[1u8, 2, 3, 4], 2, 2, 1).unwrap();
+        let bytes = w.write_to_vec().unwrap();
+        let reader = XisfFile::new(Cursor::new(bytes.clone())).unwrap();
+        assert_eq!(
+            reader.image_info(0).unwrap().compression,
+            XisfCompression::None
+        );
+        assert!(!String::from_utf8_lossy(&bytes).contains("CompressionCodecs"));
+    }
+
+    #[test]
+    fn a_fixed_creation_time_is_written() {
+        let mut w = XisfWriter::new(Cursor::new(Vec::new()));
+        w.creation_time = Some(UNIX_EPOCH + Duration::from_secs(1_418_128_695));
+        w.add_image(&[9u8; 4], 2, 2, 1).unwrap();
+        let text = String::from_utf8_lossy(&w.write_to_vec().unwrap()).into_owned();
+        let property =
+            r#"<Property id="XISF:CreationTime" type="TimePoint" value="2014-12-09T12:38:15Z"/>"#;
+        assert!(text.contains(property), "{text}");
+    }
+
+    #[test]
+    fn a_creation_time_before_1970_is_an_error() {
+        let mut out = Vec::new();
+        let mut w = XisfWriter::new(Cursor::new(&mut out));
+        w.creation_time = Some(UNIX_EPOCH - Duration::from_secs(1));
+        w.add_image(&[9u8; 4], 2, 2, 1).unwrap();
+        let err = w.write().unwrap_err();
+        assert!(matches!(err, XisfError::CreationTime(_)), "{err}");
+        assert_eq!(out, []);
+    }
+
+    // XISF 1.0 section 11.4: every header has one Metadata element.
+    #[test]
+    fn every_file_has_the_mandatory_metadata() {
+        check_metadata(XisfWriter::new(Cursor::new(Vec::new())), "");
+    }
+
+    // XISF 1.0 section 11.4.2: the XISF:ChecksumAlgorithms property lists
+    // the algorithms of the data block checksums.
+    #[test]
+    fn sha1_checksums_are_listed_in_the_metadata() {
+        check_metadata(
+            XisfWriter::new(Cursor::new(Vec::new())).sha1_checksums(true),
+            "    <Property id=\"XISF:ChecksumAlgorithms\" type=\"String\">sha-1</Property>\n",
+        );
     }
 
     #[test]
@@ -490,6 +758,18 @@ mod tests {
         let first = reader.image_info(0).unwrap().location.offset;
         let second = reader.image_info(1).unwrap().location.offset;
         assert!(second > first);
+    }
+
+    // XISF 1.0 geometry dimensions are at least 1, and a reader refuses 0.
+    #[test]
+    fn add_image_refuses_a_zero_dimension() {
+        let mut writer = XisfWriter::new(Cursor::new(Vec::new()));
+        for (width, height) in [(0, 0), (0, 4), (4, 0)] {
+            assert!(matches!(
+                writer.add_image::<u8>(&[], width, height, 1),
+                Err(crate::xisf::errors::XisfError::InvalidFormat(_))
+            ));
+        }
     }
 
     #[test]

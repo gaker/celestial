@@ -13,7 +13,7 @@ pub enum XisfPropertyValue {
 }
 
 impl XisfPropertyValue {
-    pub fn type_name(&self) -> &'static str {
+    pub(crate) fn type_name(&self) -> &'static str {
         match self {
             Self::String(_) => "String",
             Self::Boolean(_) => "Boolean",
@@ -24,34 +24,26 @@ impl XisfPropertyValue {
         }
     }
 
-    pub fn format_value(&self) -> String {
+    pub(crate) fn format_value(&self) -> String {
         match self {
             Self::String(s) => s.clone(),
-            Self::Boolean(b) => if *b { "1" } else { "0" }.to_string(),
-            Self::Float64(v) => format!("{:?}", v),
+            // XISF 1.0 section 8.3.4: encoders write true and false.
+            Self::Boolean(b) => if *b { "true" } else { "false" }.to_string(),
+            Self::Float64(v) => float_text(*v),
             Self::Int32(v) => format!("{}", v),
-            Self::F64Vector(v) => v
+            Self::F64Vector(data) | Self::F64Matrix { data, .. } => data
                 .iter()
-                .map(|x| format!("{:?}", x))
-                .collect::<Vec<_>>()
-                .join(" "),
-            Self::F64Matrix { data, .. } => data
-                .iter()
-                .map(|x| format!("{:?}", x))
+                .map(|x| float_text(*x))
                 .collect::<Vec<_>>()
                 .join(" "),
         }
     }
 
-    pub fn is_scalar(&self) -> bool {
-        matches!(self, Self::Float64(_) | Self::Int32(_) | Self::Boolean(_))
-    }
-
-    pub fn needs_data_block(&self) -> bool {
+    pub(crate) fn needs_data_block(&self) -> bool {
         matches!(self, Self::F64Vector(_) | Self::F64Matrix { .. })
     }
 
-    pub fn to_le_bytes(&self) -> Option<Vec<u8>> {
+    pub(crate) fn to_le_bytes(&self) -> Option<Vec<u8>> {
         match self {
             Self::F64Vector(v) => {
                 let mut bytes = Vec::with_capacity(v.len() * 8);
@@ -68,14 +60,6 @@ impl XisfPropertyValue {
                 Some(bytes)
             }
             _ => None,
-        }
-    }
-
-    pub fn data_size(&self) -> usize {
-        match self {
-            Self::F64Vector(v) => v.len() * 8,
-            Self::F64Matrix { data, .. } => data.len() * 8,
-            _ => 0,
         }
     }
 }
@@ -119,6 +103,19 @@ impl XisfProperty {
     }
 }
 
+// XISF 1.0 section 8.3.3 has encoders write infinities as +Inf and -Inf,
+// and NaN as NaN. For finite values, `{:?}` gives the shortest text that
+// parses back to the same bits, with an exponent for large and small
+// magnitudes, as that section allows.
+fn float_text(value: f64) -> String {
+    match value {
+        f64::INFINITY => "+Inf".to_string(),
+        f64::NEG_INFINITY => "-Inf".to_string(),
+        _ if value.is_nan() => "NaN".to_string(),
+        _ => format!("{:?}", value),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -155,9 +152,9 @@ mod tests {
     }
 
     #[test]
-    fn format_value_boolean_is_zero_or_one() {
-        assert_eq!(XisfPropertyValue::Boolean(true).format_value(), "1");
-        assert_eq!(XisfPropertyValue::Boolean(false).format_value(), "0");
+    fn format_value_boolean_is_true_or_false() {
+        assert_eq!(XisfPropertyValue::Boolean(true).format_value(), "true");
+        assert_eq!(XisfPropertyValue::Boolean(false).format_value(), "false");
     }
 
     #[test]
@@ -194,13 +191,19 @@ mod tests {
     fn format_value_float_handles_special_values() {
         assert_eq!(
             XisfPropertyValue::Float64(f64::INFINITY).format_value(),
-            "inf"
+            "+Inf"
         );
         assert_eq!(
             XisfPropertyValue::Float64(f64::NEG_INFINITY).format_value(),
-            "-inf"
+            "-Inf"
         );
         assert_eq!(XisfPropertyValue::Float64(f64::NAN).format_value(), "NaN");
+    }
+
+    #[test]
+    fn vector_text_writes_special_values_in_section_8_3_3_form() {
+        let v = XisfPropertyValue::F64Vector(vec![f64::INFINITY, f64::NEG_INFINITY, -f64::NAN]);
+        assert_eq!(v.format_value(), "+Inf -Inf NaN");
     }
 
     #[test]
@@ -227,21 +230,6 @@ mod tests {
     }
 
     #[test]
-    fn is_scalar_true_only_for_primitive_scalars() {
-        assert!(XisfPropertyValue::Float64(1.0).is_scalar());
-        assert!(XisfPropertyValue::Int32(1).is_scalar());
-        assert!(XisfPropertyValue::Boolean(true).is_scalar());
-        assert!(!XisfPropertyValue::String("x".into()).is_scalar());
-        assert!(!XisfPropertyValue::F64Vector(vec![]).is_scalar());
-        assert!(!XisfPropertyValue::F64Matrix {
-            rows: 0,
-            cols: 0,
-            data: vec![]
-        }
-        .is_scalar());
-    }
-
-    #[test]
     fn needs_data_block_true_only_for_bulk_types() {
         assert!(XisfPropertyValue::F64Vector(vec![]).needs_data_block());
         assert!(XisfPropertyValue::F64Matrix {
@@ -254,25 +242,6 @@ mod tests {
         assert!(!XisfPropertyValue::Float64(0.0).needs_data_block());
         assert!(!XisfPropertyValue::Int32(0).needs_data_block());
         assert!(!XisfPropertyValue::Boolean(false).needs_data_block());
-    }
-
-    #[test]
-    fn is_scalar_and_needs_data_block_are_disjoint() {
-        let cases = [
-            XisfPropertyValue::String("x".into()),
-            XisfPropertyValue::Boolean(true),
-            XisfPropertyValue::Float64(1.0),
-            XisfPropertyValue::Int32(1),
-            XisfPropertyValue::F64Vector(vec![1.0]),
-            XisfPropertyValue::F64Matrix {
-                rows: 1,
-                cols: 1,
-                data: vec![1.0],
-            },
-        ];
-        for v in cases {
-            assert!(!(v.is_scalar() && v.needs_data_block()));
-        }
     }
 
     #[test]
@@ -313,26 +282,6 @@ mod tests {
     fn to_le_bytes_empty_vector_returns_empty_buffer() {
         let bytes = XisfPropertyValue::F64Vector(vec![]).to_le_bytes().unwrap();
         assert!(bytes.is_empty());
-    }
-
-    #[test]
-    fn data_size_matches_to_le_bytes_length() {
-        let cases: [XisfPropertyValue; 6] = [
-            XisfPropertyValue::String("x".into()),
-            XisfPropertyValue::Boolean(true),
-            XisfPropertyValue::Float64(1.0),
-            XisfPropertyValue::Int32(1),
-            XisfPropertyValue::F64Vector(vec![1.0, 2.0, 3.0]),
-            XisfPropertyValue::F64Matrix {
-                rows: 2,
-                cols: 3,
-                data: vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0],
-            },
-        ];
-        for v in cases {
-            let expected = v.to_le_bytes().map(|b| b.len()).unwrap_or(0);
-            assert_eq!(v.data_size(), expected);
-        }
     }
 
     #[test]

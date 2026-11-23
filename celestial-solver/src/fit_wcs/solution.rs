@@ -15,7 +15,7 @@ use celestial_core::constants::{DEG_TO_RAD, RAD_TO_DEG};
 /// # Examples
 ///
 /// ```rust,ignore
-/// # let img = celestial_images::formats::Image::open("f.fits")?;
+/// # let img = celestial_images::formats::image::Image::open("f.fits")?;
 /// # let catalog = celestial_catalog::query::Catalog::open("cat.bin")?;
 /// let result = celestial_solver::solve(&img, &catalog).run()?;
 /// let worst = result.wcs.residuals.iter()
@@ -47,7 +47,7 @@ pub struct StarResidual {
 /// # Examples
 ///
 /// ```rust,ignore
-/// # let img = celestial_images::formats::Image::open("f.fits")?;
+/// # let img = celestial_images::formats::image::Image::open("f.fits")?;
 /// # let catalog = celestial_catalog::query::Catalog::open("cat.bin")?;
 /// let result = celestial_solver::solve(&img, &catalog).run()?;
 /// let (ra, dec) = result.wcs.pixel_to_sky(1024.0, 768.0);
@@ -100,7 +100,7 @@ impl WcsSolution {
     /// # Examples
     ///
     /// ```rust,ignore
-    /// # let img = celestial_images::formats::Image::open("f.fits")?;
+    /// # let img = celestial_images::formats::image::Image::open("f.fits")?;
     /// # let catalog = celestial_catalog::query::Catalog::open("cat.bin")?;
     /// let result = celestial_solver::solve(&img, &catalog).run()?;
     /// let (ra, dec) = result.wcs.pixel_to_sky(100.0, 200.0);
@@ -128,7 +128,7 @@ impl WcsSolution {
     /// # Examples
     ///
     /// ```rust,ignore
-    /// # let img = celestial_images::formats::Image::open("f.fits")?;
+    /// # let img = celestial_images::formats::image::Image::open("f.fits")?;
     /// # let catalog = celestial_catalog::query::Catalog::open("cat.bin")?;
     /// let result = celestial_solver::solve(&img, &catalog).run()?;
     /// if let Some((x, y)) = result.wcs.sky_to_pixel(180.0, 30.0) {
@@ -155,7 +155,7 @@ impl WcsSolution {
     /// # Examples
     ///
     /// ```rust,ignore
-    /// # let img = celestial_images::formats::Image::open("f.fits")?;
+    /// # let img = celestial_images::formats::image::Image::open("f.fits")?;
     /// # let catalog = celestial_catalog::query::Catalog::open("cat.bin")?;
     /// let result = celestial_solver::solve(&img, &catalog).run()?;
     /// let (sx, sy) = result.wcs.scale_arcsec();
@@ -176,7 +176,7 @@ impl WcsSolution {
     /// # Examples
     ///
     /// ```rust,ignore
-    /// # let img = celestial_images::formats::Image::open("f.fits")?;
+    /// # let img = celestial_images::formats::image::Image::open("f.fits")?;
     /// # let catalog = celestial_catalog::query::Catalog::open("cat.bin")?;
     /// let result = celestial_solver::solve(&img, &catalog).run()?;
     /// println!("rotation: {:.2}°", result.wcs.rotation_deg());
@@ -200,7 +200,7 @@ impl WcsSolution {
     /// # Examples
     ///
     /// ```rust,ignore
-    /// # let img = celestial_images::formats::Image::open("f.fits")?;
+    /// # let img = celestial_images::formats::image::Image::open("f.fits")?;
     /// # let catalog = celestial_catalog::query::Catalog::open("cat.bin")?;
     /// let result = celestial_solver::solve(&img, &catalog).run()?;
     /// if result.wcs.is_flipped() {
@@ -222,7 +222,7 @@ impl WcsSolution {
     /// # Examples
     ///
     /// ```rust,ignore
-    /// # let img = celestial_images::formats::Image::open("f.fits")?;
+    /// # let img = celestial_images::formats::image::Image::open("f.fits")?;
     /// # let catalog = celestial_catalog::query::Catalog::open("cat.bin")?;
     /// let result = celestial_solver::solve(&img, &catalog).run()?;
     /// if let Some(f) = result.wcs.effective_focal_mm() {

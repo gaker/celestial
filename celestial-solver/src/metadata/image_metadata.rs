@@ -1,5 +1,5 @@
 use celestial_coords::frames::icrs::ICRSPosition;
-use celestial_images::formats::Image;
+use celestial_images::formats::image::Image;
 use celestial_time::julian::JulianDate;
 
 use super::error::MetadataError;
@@ -60,7 +60,7 @@ pub struct ImageMetadata {
 /// ```rust,ignore
 /// use celestial_solver::metadata::{metadata_from_image, MetadataOverrides};
 ///
-/// # let img = celestial_images::formats::Image::open("f.fits")?;
+/// # let img = celestial_images::formats::image::Image::open("f.fits")?;
 /// let overrides = MetadataOverrides {
 ///     focal_mm: Some(500.0),       // override header
 ///     ..Default::default()         // everything else from headers
@@ -98,7 +98,7 @@ pub struct MetadataOverrides {
 /// ```rust,ignore
 /// use celestial_solver::metadata::{metadata_from_image, MetadataOverrides};
 ///
-/// # let img = celestial_images::formats::Image::open("f.fits")?;
+/// # let img = celestial_images::formats::image::Image::open("f.fits")?;
 /// let meta = metadata_from_image(&img, &MetadataOverrides::default())?;
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
@@ -134,8 +134,8 @@ pub fn metadata_from_image(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use celestial_images::fits::header::Keyword;
-    use celestial_images::formats::PixelData;
+    use celestial_images::fits::header::keywords::Keyword;
+    use celestial_images::formats::pixel_data::PixelData;
 
     fn full_image() -> Image {
         let mut img = Image::new(PixelData::F32(vec![0.0; 4]), [2, 2]);

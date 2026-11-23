@@ -45,13 +45,14 @@
 //! significant digits in the fractional portion.
 
 use super::common::{get_tai_utc_offset, next_calendar_day};
-use super::conversions::utc_tai::julian_to_calendar;
+use super::conversions::utc_tai::{calendar_to_julian, julian_to_calendar};
 use crate::constants::UNIX_EPOCH_JD;
 use crate::julian::{day_fraction, JulianDate};
 use crate::parsing::parse_iso8601;
 use crate::{TimeError, TimeResult};
 use celestial_core::constants::{
-    NANOSECONDS_PER_SECOND, NANOSECONDS_PER_SECOND_F64, SECONDS_PER_DAY, SECONDS_PER_DAY_F64,
+    MJD_ZERO_POINT, NANOSECONDS_PER_SECOND, NANOSECONDS_PER_SECOND_F64, SECONDS_PER_DAY,
+    SECONDS_PER_DAY_F64,
 };
 use std::str::FromStr;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -91,6 +92,37 @@ impl UTC {
         let minute = (second_of_day % 3600 / 60) as u8;
         let second = (second_of_day % 60) as f64 + f64::from(nanos) / NANOSECONDS_PER_SECOND_F64;
         utc_from_calendar(year, month as u8, day as u8, hour, minute, second)
+    }
+
+    // The inverse of `new`: for every (seconds, nanos) that `new` accepts,
+    // `UTC::new(seconds, nanos)?.to_unix()` returns them unchanged. Any other
+    // instant is rounded to the nearest nanosecond. Unix time has no value for
+    // the extra time at the end of a day longer than 86,400 s, so an instant
+    // that rounds into a leap second (23:59:60) or a pre-1972 step returns
+    // ConversionError.
+    pub fn to_unix(&self) -> TimeResult<(i64, u32)> {
+        let jd = self.to_julian_date();
+        let (year, month, day, fraction) = julian_to_calendar(jd.jd1(), jd.jd2())?;
+        let day_length = SECONDS_PER_DAY_F64 + leap_at_end_of_day(year, month, day)?;
+        let nanos_of_day = libm::round(fraction * day_length * NANOSECONDS_PER_SECOND_F64) as i64;
+        let nanos_per_day = SECONDS_PER_DAY * i64::from(NANOSECONDS_PER_SECOND);
+        if nanos_of_day >= nanos_per_day && day_length > SECONDS_PER_DAY_F64 {
+            return Err(TimeError::ConversionError(format!(
+                "{:04}-{:02}-{:02} {} s after midnight is in the day's extra time, \
+                 which Unix time cannot represent",
+                year,
+                month,
+                day,
+                nanos_of_day as f64 / NANOSECONDS_PER_SECOND_F64
+            )));
+        }
+        let (_, mjd) = calendar_to_julian(year, month, day)?;
+        let days = (mjd - (UNIX_EPOCH_JD - MJD_ZERO_POINT)) as i64;
+        let per_second = i64::from(NANOSECONDS_PER_SECOND);
+        Ok((
+            days * SECONDS_PER_DAY + nanos_of_day / per_second,
+            (nanos_of_day % per_second) as u32,
+        ))
     }
 
     /// Returns the current UTC time from the system clock.

@@ -1,8 +1,8 @@
 use super::bitbuffer::BitReader;
 use super::RiceCompressible;
-use crate::fits::Result;
+use crate::fits::errors::Result;
 
-pub fn decompress_rice<T: RiceCompressible>(
+pub(super) fn decompress_rice<T: RiceCompressible>(
     compressed: &[u8],
     output_len: usize,
     block_size: usize,
@@ -35,7 +35,7 @@ pub fn decompress_rice<T: RiceCompressible>(
 
 fn read_first_value_direct<T: RiceCompressible>(compressed: &[u8]) -> Result<T> {
     if compressed.len() < T::BYTES_PER_ELEMENT {
-        return Err(crate::fits::FitsError::InvalidFormat(
+        return Err(crate::fits::errors::FitsError::InvalidFormat(
             "Compressed data too short for first pixel".to_string(),
         ));
     }
@@ -82,17 +82,7 @@ fn high_entropy_block<T: RiceCompressible>(
     block_size: usize,
 ) -> Result<()> {
     for _ in 0..block_size {
-        let diff_bits = reader.read_bits(T::BBITS)?;
-
-        let diff = if (diff_bits & 1) == 0 {
-            (diff_bits >> 1) as i32
-        } else {
-            !((diff_bits >> 1) as i32)
-        };
-
-        let pixel_value = diff.wrapping_add(*last_pix);
-        result.push(T::from_signed(pixel_value));
-        *last_pix = pixel_value;
+        push_difference(result, last_pix, reader.read_bits(T::BBITS)?);
     }
     Ok(())
 }
@@ -107,20 +97,21 @@ fn rice_block<T: RiceCompressible>(
     for _ in 0..block_size {
         let leading_zeros = reader.count_leading_zeros()?;
         let bottom_bits = if fs > 0 { reader.read_bits(fs)? } else { 0 };
-
-        let diff_mapped = (leading_zeros << fs) as u32 | bottom_bits;
-
-        let diff = if (diff_mapped & 1) == 0 {
-            (diff_mapped >> 1) as i32
-        } else {
-            !((diff_mapped >> 1) as i32)
-        };
-
-        let pixel_value = diff.wrapping_add(*last_pix);
-        result.push(T::from_signed(pixel_value));
-        *last_pix = pixel_value;
+        push_difference(result, last_pix, (leading_zeros << fs) as u32 | bottom_bits);
     }
     Ok(())
+}
+
+// Differences are stored mapped to unsigned values: 0, -1, 1, -2, ... are
+// 0, 1, 2, 3, ... Each pixel is the previous pixel plus its difference.
+fn push_difference<T: RiceCompressible>(result: &mut Vec<T>, last_pix: &mut i32, mapped: u32) {
+    let diff = if (mapped & 1) == 0 {
+        (mapped >> 1) as i32
+    } else {
+        !((mapped >> 1) as i32)
+    };
+    *last_pix = diff.wrapping_add(*last_pix);
+    result.push(T::from_signed(*last_pix));
 }
 
 #[cfg(test)]
@@ -296,24 +287,6 @@ mod tests {
 
         let result = decompress_rice::<i8>(&data, 1, 32).unwrap();
         assert_eq!(result, vec![0x42]);
-    }
-
-    #[test]
-    fn test_decompress_rice_u8() {
-        let mut data = vec![0x42];
-        data.extend_from_slice(&[0b00010000]);
-
-        let result = u8::decompress(&data, 1, 32).unwrap();
-        assert_eq!(result, vec![0x42]);
-    }
-
-    #[test]
-    fn test_decompress_rice_u16() {
-        let mut data = vec![0x12, 0x34];
-        data.extend_from_slice(&[0b00000000]);
-
-        let result = u16::decompress(&data, 1, 32).unwrap();
-        assert_eq!(result, vec![0x1234]);
     }
 
     #[test]

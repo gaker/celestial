@@ -1,21 +1,22 @@
-use crate::core::BitPix;
-use crate::xisf::{Result, XisfError};
+use crate::xisf::errors::{Result, XisfError};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SampleFormat {
     UInt8,
     UInt16,
     UInt32,
+    UInt64,
     Float32,
     Float64,
 }
 
 impl SampleFormat {
-    pub fn parse(s: &str) -> Result<Self> {
+    pub(crate) fn parse(s: &str) -> Result<Self> {
         match s {
             "UInt8" => Ok(Self::UInt8),
             "UInt16" => Ok(Self::UInt16),
             "UInt32" => Ok(Self::UInt32),
+            "UInt64" => Ok(Self::UInt64),
             "Float32" => Ok(Self::Float32),
             "Float64" => Ok(Self::Float64),
             _ => Err(XisfError::UnsupportedFormat(s.to_string())),
@@ -27,18 +28,9 @@ impl SampleFormat {
             Self::UInt8 => "UInt8",
             Self::UInt16 => "UInt16",
             Self::UInt32 => "UInt32",
+            Self::UInt64 => "UInt64",
             Self::Float32 => "Float32",
             Self::Float64 => "Float64",
-        }
-    }
-
-    pub fn to_bitpix(&self) -> BitPix {
-        match self {
-            Self::UInt8 => BitPix::U8,
-            Self::UInt16 => BitPix::I16,
-            Self::UInt32 => BitPix::I32,
-            Self::Float32 => BitPix::F32,
-            Self::Float64 => BitPix::F64,
         }
     }
 
@@ -47,6 +39,7 @@ impl SampleFormat {
             Self::UInt8 => 1,
             Self::UInt16 => 2,
             Self::UInt32 => 4,
+            Self::UInt64 => 8,
             Self::Float32 => 4,
             Self::Float64 => 8,
         }
@@ -61,11 +54,12 @@ impl SampleFormat {
 mod tests {
     use super::*;
 
-    fn all_variants() -> [SampleFormat; 5] {
+    fn all_variants() -> [SampleFormat; 6] {
         [
             SampleFormat::UInt8,
             SampleFormat::UInt16,
             SampleFormat::UInt32,
+            SampleFormat::UInt64,
             SampleFormat::Float32,
             SampleFormat::Float64,
         ]
@@ -74,16 +68,16 @@ mod tests {
     #[test]
     fn parse_accepts_every_canonical_name() {
         let cases = [
-            ("UInt8", BitPix::U8, 1, false),
-            ("UInt16", BitPix::I16, 2, false),
-            ("UInt32", BitPix::I32, 4, false),
-            ("Float32", BitPix::F32, 4, true),
-            ("Float64", BitPix::F64, 8, true),
+            ("UInt8", 1, false),
+            ("UInt16", 2, false),
+            ("UInt32", 4, false),
+            ("UInt64", 8, false),
+            ("Float32", 4, true),
+            ("Float64", 8, true),
         ];
-        for (name, bitpix, bps, is_fp) in cases {
+        for (name, bps, is_fp) in cases {
             let parsed = SampleFormat::parse(name).expect("valid name parses");
             assert_eq!(parsed.as_str(), name);
-            assert_eq!(parsed.to_bitpix(), bitpix);
             assert_eq!(parsed.bytes_per_sample(), bps);
             assert_eq!(parsed.is_floating_point(), is_fp);
         }
@@ -98,15 +92,7 @@ mod tests {
 
     #[test]
     fn parse_rejects_unsupported_types() {
-        for bad in [
-            "",
-            "Int8",
-            "Int16",
-            "Complex64",
-            "Float16",
-            "Bool",
-            "UInt64",
-        ] {
+        for bad in ["", "Int8", "Int16", "Complex64", "Float16", "Bool"] {
             let err = SampleFormat::parse(bad).expect_err("should fail");
             assert!(
                 err.to_string().contains(bad) || bad.is_empty(),
@@ -129,5 +115,6 @@ mod tests {
         assert!(!SampleFormat::UInt8.is_floating_point());
         assert!(!SampleFormat::UInt16.is_floating_point());
         assert!(!SampleFormat::UInt32.is_floating_point());
+        assert!(!SampleFormat::UInt64.is_floating_point());
     }
 }

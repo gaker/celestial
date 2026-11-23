@@ -14,7 +14,7 @@ use anyhow::Result;
 use celestial_catalog::query::{neighbor_quads, Quad};
 use celestial_coords::frames::icrs::ICRSPosition;
 use celestial_core::constants::PI;
-use celestial_images::formats::Image;
+use celestial_images::formats::image::Image;
 use celestial_time::julian::JulianDate;
 use rayon::prelude::*;
 
@@ -82,7 +82,7 @@ pub struct QuadMatch {
 /// # Examples
 ///
 /// ```rust,ignore
-/// # let img = celestial_images::formats::Image::open("f.fits")?;
+/// # let img = celestial_images::formats::image::Image::open("f.fits")?;
 /// # let catalog = celestial_catalog::query::Catalog::open("cat.bin")?;
 /// let result = celestial_solver::solve(&img, &catalog).run()?;
 /// let top = &result.pairs[0];
@@ -139,7 +139,7 @@ pub struct FieldMatch {
 /// use celestial_solver::match_field::{match_field, MatchParams};
 ///
 /// # let stars = vec![];
-/// # let img = celestial_images::formats::Image::open("f.fits")?;
+/// # let img = celestial_images::formats::image::Image::open("f.fits")?;
 /// # let catalog = celestial_catalog::query::Catalog::open("cat.bin")?;
 /// # let hint = celestial_coords::frames::icrs::ICRSPosition::from_degrees(180.0, 30.0)?;
 /// # let epoch = celestial_time::julian::JulianDate::new(2_400_000.5, 0.0);
@@ -334,7 +334,7 @@ mod tests {
     use super::*;
 
     use celestial_catalog::query::Catalog;
-    use celestial_images::formats::PixelData;
+    use celestial_images::formats::pixel_data::PixelData;
     use celestial_time::julian::JulianDate;
 
     use crate::detect::DetectedStar;

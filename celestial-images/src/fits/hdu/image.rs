@@ -1,5 +1,5 @@
 use super::{HduTrait, HduType};
-use crate::fits::header::Header;
+use crate::fits::header::parser::Header;
 use crate::fits::io::reader::HduInfo;
 
 #[derive(Debug)]
@@ -9,7 +9,7 @@ pub struct ImageHdu {
 }
 
 impl ImageHdu {
-    pub fn new(header: Header, info: HduInfo) -> Self {
+    pub(crate) fn new(header: Header, info: HduInfo) -> Self {
         Self { header, info }
     }
 
@@ -27,29 +27,6 @@ impl ImageHdu {
 
     pub fn extension_version(&self) -> Option<i64> {
         self.header.get("EXTVER").as_i64()
-    }
-
-    pub fn has_data(&self) -> bool {
-        self.header.get("NAXIS").as_i64().unwrap_or(0) > 0
-    }
-
-    pub fn data_dimensions(&self) -> Vec<usize> {
-        let naxis = self.header.get("NAXIS").as_i64().unwrap_or(0) as usize;
-
-        let mut dims = Vec::with_capacity(naxis);
-        for i in 1..=naxis {
-            let axis_name = format!("NAXIS{}", i);
-            let axis_size = self.header.get(&axis_name).as_i64().unwrap_or(0) as usize;
-            dims.push(axis_size);
-        }
-        dims
-    }
-
-    pub fn bitpix(&self) -> Option<crate::core::BitPix> {
-        self.header
-            .get("BITPIX")
-            .as_i64()
-            .and_then(|i| crate::core::BitPix::from_value(i as i32))
     }
 }
 
@@ -70,10 +47,11 @@ impl HduTrait for ImageHdu {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::BitPix;
-    use crate::fits::header::{Header, Keyword};
+    use crate::core::types::BitPix;
+    use crate::fits::errors::{FitsError, Result};
+    use crate::fits::header::keywords::Keyword;
+    use crate::fits::header::parser::Header;
     use crate::fits::io::reader::HduInfo;
-    use crate::fits::{FitsError, Result};
     use std::io::Cursor;
 
     fn create_test_header(naxis: i64, bitpix: i32, extname: Option<&str>) -> Header {
@@ -210,7 +188,7 @@ mod tests {
         let info = create_test_hdu_info();
         let hdu = ImageHdu::new(header, info);
 
-        assert_eq!(hdu.data_dimensions(), vec![1024, 512]);
+        assert_eq!(hdu.data_dimensions().unwrap(), vec![1024, 512]);
     }
 
     #[test]
@@ -219,7 +197,7 @@ mod tests {
         let info = create_test_hdu_info();
         let hdu = ImageHdu::new(header, info);
 
-        assert_eq!(hdu.data_dimensions(), vec![]);
+        assert_eq!(hdu.data_dimensions().unwrap(), vec![]);
     }
 
     #[test]
@@ -230,7 +208,7 @@ mod tests {
         let info = create_test_hdu_info();
         let hdu = ImageHdu::new(header, info);
 
-        assert_eq!(hdu.data_dimensions(), vec![100, 0]);
+        assert_eq!(hdu.data_dimensions().unwrap(), vec![100, 0]);
     }
 
     #[test]
@@ -356,7 +334,7 @@ mod tests {
     fn calculate_data_size_handles_overflow() {
         let mut header = Header::new();
         header.add_keyword(Keyword::integer("NAXIS", 2));
-        header.add_keyword(Keyword::integer("NAXIS1", usize::MAX as i64));
+        header.add_keyword(Keyword::integer("NAXIS1", i64::MAX));
         header.add_keyword(Keyword::integer("NAXIS2", 2));
         header.add_keyword(Keyword::integer("BITPIX", 16));
         let info = create_test_hdu_info();
@@ -379,7 +357,7 @@ mod tests {
         let hdu = ImageHdu::new(header, info);
 
         assert!(hdu.has_data());
-        assert_eq!(hdu.data_dimensions(), vec![4, 3]);
+        assert_eq!(hdu.data_dimensions().unwrap(), vec![4, 3]);
         assert_eq!(hdu.bitpix(), Some(BitPix::U8));
         assert_eq!(hdu.extension_name(), Some("SCIENCE"));
         assert_eq!(hdu.extension_version(), Some(2));

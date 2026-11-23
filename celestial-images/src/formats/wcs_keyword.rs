@@ -1,4 +1,4 @@
-use crate::fits::header::Keyword;
+use crate::fits::header::keywords::Keyword;
 use celestial_wcs::builder::{WcsKeyword, WcsKeywordValue};
 
 impl From<WcsKeyword> for Keyword {
@@ -14,7 +14,7 @@ impl From<WcsKeyword> for Keyword {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::fits::header::KeywordValue;
+    use crate::fits::header::keywords::KeywordValue;
 
     #[test]
     fn real_conversion_preserves_name_and_value() {

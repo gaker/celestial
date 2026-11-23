@@ -1,4 +1,4 @@
-use celestial_images::formats::Image;
+use celestial_images::formats::image::Image;
 
 /// Observer location parsed from FITS `OBSGEO-*` headers.
 ///
@@ -10,7 +10,7 @@ use celestial_images::formats::Image;
 /// ```rust,ignore
 /// use celestial_solver::observation::geodetic_from_image;
 ///
-/// # let img = celestial_images::formats::Image::open("f.fits")?;
+/// # let img = celestial_images::formats::image::Image::open("f.fits")?;
 /// if let Some(geo) = geodetic_from_image(&img) {
 ///     println!("observer: {:.4}° {:.4}°", geo.lat_deg, geo.lon_deg);
 /// }
@@ -36,7 +36,7 @@ pub struct Geodetic {
 /// ```rust,ignore
 /// use celestial_solver::observation::geodetic_from_image;
 ///
-/// # let img = celestial_images::formats::Image::open("f.fits")?;
+/// # let img = celestial_images::formats::image::Image::open("f.fits")?;
 /// let maybe_geo = geodetic_from_image(&img);
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
@@ -54,8 +54,8 @@ pub fn geodetic_from_image(img: &Image) -> Option<Geodetic> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use celestial_images::fits::header::Keyword;
-    use celestial_images::formats::PixelData;
+    use celestial_images::fits::header::keywords::Keyword;
+    use celestial_images::formats::pixel_data::PixelData;
 
     fn stub_image() -> Image {
         Image::new(PixelData::F32(vec![0.0; 4]), [2, 2])

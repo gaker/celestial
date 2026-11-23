@@ -1,13 +1,6 @@
-mod buffer;
-mod error;
-mod header;
-mod reader;
-mod types;
-mod writer;
-
-pub use buffer::FrameBuffer;
-pub use error::{Result, SerError};
-pub use header::SerHeader;
-pub use reader::SerReader;
-pub use types::{ColorId, SerFile, SerFrame, SerFrameId, SerTimestamp};
-pub use writer::SerWriter;
+pub mod error;
+pub mod header;
+pub mod reader;
+pub mod timestamp;
+pub mod types;
+pub mod writer;

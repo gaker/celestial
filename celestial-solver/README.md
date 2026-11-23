@@ -26,7 +26,7 @@ For any FITS image from a capture application (NINA, SharpCap, Ekos, SGP, PixIns
 the headers carry enough metadata that solving is one line:
 
 ```rust,ignore
-use celestial_images::formats::Image;
+use celestial_images::formats::image::Image;
 use celestial_catalog::query::Catalog;
 
 let img = Image::open("lights/m31_001.fits")?;

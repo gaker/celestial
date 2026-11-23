@@ -1,29 +1,65 @@
+use crate::fits::io::card;
+use std::convert::Infallible;
 use std::fmt;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum FrameType {
-    Light,
-    Dark,
-    Bias,
-    Flat,
-    Tricolor,
+// FITS 4.0 §4.1.2.1: a keyword name has at most 8 characters, each one of
+// A-Z, 0-9, '-' and '_'.
+pub(crate) fn is_standard_name(name: &str) -> bool {
+    name.len() <= 8
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit() || b == b'-' || b == b'_')
 }
 
-impl FrameType {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::Light => "Light Frame",
-            Self::Dark => "Dark Frame",
-            Self::Bias => "Bias Frame",
-            Self::Flat => "Flat Frame",
-            Self::Tricolor => "Tricolor Image",
-        }
+// The other spelling of a HIERARCH keyword, which a lookup also tries.
+// "ESO DET" and "HIERARCH ESO DET" name the same card, since the writer
+// stores a non-standard name under the HIERARCH convention. A standard name
+// has no alias, so "NAXIS1" never matches "HIERARCH NAXIS1".
+pub(crate) fn hierarch_alias(name: &str) -> Option<String> {
+    match name.strip_prefix("HIERARCH ") {
+        Some(rest) => (!is_standard_name(rest)).then(|| rest.to_string()),
+        None => (!is_standard_name(name)).then(|| format!("HIERARCH {}", name)),
     }
 }
 
-impl fmt::Display for FrameType {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.as_str())
+// The first keyword named `name`, or else the first named with its HIERARCH
+// alias. astropy and cfitsio return the first card of a repeated name.
+pub(crate) fn find_keyword(keywords: &[Keyword], name: &str) -> Option<usize> {
+    let find = |name: &str| keywords.iter().position(|k| k.name == name);
+    find(name).or_else(|| hierarch_alias(name).and_then(|full| find(&full)))
+}
+
+// The last keyword named `name`, or else the last named with its HIERARCH
+// alias. Readers apply the last of a repeated scaling or WCS card.
+pub(crate) fn find_last_keyword(keywords: &[Keyword], name: &str) -> Option<usize> {
+    let find = |name: &str| keywords.iter().rposition(|k| k.name == name);
+    find(name).or_else(|| hierarch_alias(name).and_then(|full| find(&full)))
+}
+
+// Replaces the first card with the keyword's name or its HIERARCH alias and
+// removes the later ones, or appends the keyword. Data and WCS readers use
+// the last of a repeated card, so a later copy would hide the new value.
+// The replacement keeps the stored spelling of the name. A header may hold
+// many commentary cards, so those are always appended.
+pub(crate) fn set_keyword(keywords: &mut Vec<Keyword>, keyword: Keyword) {
+    if keyword.is_commentary() {
+        keywords.push(keyword);
+        return;
+    }
+    let alias = hierarch_alias(&keyword.name);
+    let named = |k: &Keyword| k.name == keyword.name || alias.as_deref() == Some(&k.name);
+    let Some(first) = keywords.iter().position(named) else {
+        keywords.push(keyword);
+        return;
+    };
+    let mut index = 0;
+    keywords.retain(|k| {
+        index += 1;
+        index - 1 == first || !named(k)
+    });
+    if let Some(existing) = keywords.get_mut(first) {
+        let name = std::mem::take(&mut existing.name);
+        *existing = Keyword { name, ..keyword };
     }
 }
 
@@ -32,6 +68,7 @@ pub struct Keyword {
     pub name: String,
     pub value: Option<KeywordValue>,
     pub comment: Option<String>,
+    pub(super) commentary: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -49,6 +86,7 @@ impl Keyword {
             name,
             value: None,
             comment: None,
+            commentary: false,
         }
     }
 
@@ -67,6 +105,7 @@ impl Keyword {
             name: name.into(),
             value: Some(KeywordValue::Logical(value)),
             comment: None,
+            commentary: false,
         }
     }
 
@@ -75,6 +114,7 @@ impl Keyword {
             name: name.into(),
             value: Some(KeywordValue::Integer(value)),
             comment: None,
+            commentary: false,
         }
     }
 
@@ -83,6 +123,7 @@ impl Keyword {
             name: name.into(),
             value: Some(KeywordValue::Real(value)),
             comment: None,
+            commentary: false,
         }
     }
 
@@ -91,6 +132,7 @@ impl Keyword {
             name: name.into(),
             value: Some(KeywordValue::String(value.into())),
             comment: None,
+            commentary: false,
         }
     }
 
@@ -100,6 +142,7 @@ impl Keyword {
             name: "HISTORY".to_string(),
             value: None,
             comment: Some(text.into()),
+            commentary: true,
         }
     }
 
@@ -109,13 +152,33 @@ impl Keyword {
             name: "COMMENT".to_string(),
             value: None,
             comment: Some(text.into()),
+            commentary: true,
         }
     }
 
+    // A card without the value indicator "= " in columns 9-10 holds text in
+    // columns 9-80 (FITS 4.0 §4.1.2.2). The writer writes the name and the
+    // text back unchanged.
+    pub fn commentary<S: Into<String>>(name: S, text: S) -> Self {
+        Self {
+            name: name.into(),
+            value: None,
+            comment: Some(text.into()),
+            commentary: true,
+        }
+    }
+
+    pub fn is_commentary(&self) -> bool {
+        self.commentary || matches!(self.name.as_str(), "COMMENT" | "HISTORY" | "")
+    }
+
+    // XTENSION, PCOUNT and GCOUNT are the extension keywords of FITS 4.0
+    // §4.4.1.2. Writers generate them, so an image read from an extension
+    // does not carry them into a primary header.
     pub fn is_mandatory(&self) -> bool {
         matches!(
             self.name.as_str(),
-            "SIMPLE" | "BITPIX" | "NAXIS" | "EXTEND" | "END"
+            "SIMPLE" | "BITPIX" | "NAXIS" | "EXTEND" | "END" | "XTENSION" | "PCOUNT" | "GCOUNT"
         ) || (self.name.starts_with("NAXIS")
             && self.name.len() > 5
             && self.name[5..].chars().all(|c| c.is_ascii_digit()))
@@ -153,15 +216,12 @@ impl KeywordValue {
     }
 }
 
+// The value field as a FITS card holds it. A NaN or infinite real has no
+// FITS form, so it prints as Rust prints it.
 impl fmt::Display for KeywordValue {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Logical(b) => write!(f, "{}", if *b { "T" } else { "F" }),
-            Self::Integer(i) => write!(f, "{}", i),
-            Self::Real(r) => write!(f, "{}", r),
-            Self::String(s) => write!(f, "'{}'", s),
-            Self::Complex(real, imag) => write!(f, "({}, {})", real, imag),
-        }
+        let Ok(text) = card::value_field(self, |r| Ok::<_, Infallible>(r.to_string()));
+        f.write_str(&text)
     }
 }
 
@@ -213,221 +273,36 @@ impl From<(f64, f64)> for KeywordValue {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct KeywordBuilder {
-    keywords: Vec<Keyword>,
-}
-
-impl KeywordBuilder {
-    pub fn new() -> Self {
-        Self {
-            keywords: Vec::new(),
-        }
-    }
-
-    pub fn from_image(dimensions: impl AsRef<[usize]>, bitpix: crate::core::BitPix) -> Self {
-        let mut builder = Self::new();
-        builder.add_mandatory(dimensions.as_ref(), bitpix);
-        builder
-    }
-
-    fn add_mandatory(&mut self, dimensions: &[usize], bitpix: crate::core::BitPix) {
-        self.keywords.push(
-            Keyword::logical("SIMPLE", true).with_comment("file does conform to FITS standard"),
-        );
-        self.keywords.push(
-            Keyword::integer("BITPIX", bitpix.value() as i64)
-                .with_comment("number of bits per data pixel"),
-        );
-
-        self.keywords.push(
-            Keyword::integer("NAXIS", dimensions.len() as i64).with_comment("number of data axes"),
-        );
-
-        for (i, &dim) in dimensions.iter().enumerate() {
-            self.keywords.push(
-                Keyword::integer(format!("NAXIS{}", i + 1), dim as i64)
-                    .with_comment(format!("length of data axis {}", i + 1)),
-            );
-        }
-
-        self.keywords.push(Keyword::comment(
-            "FITS (Flexible Image Transport System) format is defined in 'Astronomy",
-        ));
-
-        self.keywords.push(Keyword::comment(
-            "and Astrophysics', volume 376, page 359; bibcode: 2001A&A...376..359H",
-        ));
-    }
-
-    pub fn date<S: Into<String>>(&mut self, iso_date: S) -> &mut Self {
-        let date_str: String = iso_date.into();
-        self.keywords.push(Keyword::string("DATE", &date_str));
-        self
-    }
-
-    pub fn date_obs<S: Into<String>>(&mut self, iso_date: S) -> &mut Self {
-        let date_str: String = iso_date.into();
-        self.keywords.push(Keyword::string("DATE-OBS", &date_str));
-        self
-    }
-
-    pub fn date_from_utc(
-        &mut self,
-        utc: &celestial_time::scales::utc::UTC,
-    ) -> celestial_time::TimeResult<&mut Self> {
-        Ok(self.date(utc.to_iso8601()?))
-    }
-
-    pub fn date_obs_from_utc(
-        &mut self,
-        utc: &celestial_time::scales::utc::UTC,
-    ) -> celestial_time::TimeResult<&mut Self> {
-        Ok(self.date_obs(utc.to_iso8601()?))
-    }
-
-    pub fn object<S: Into<String>>(&mut self, name: S) -> &mut Self {
-        let s: String = name.into();
-        self.keywords.push(Keyword::string("OBJECT", &s));
-        self
-    }
-
-    pub fn observer<S: Into<String>>(&mut self, name: S) -> &mut Self {
-        let s: String = name.into();
-        self.keywords.push(Keyword::string("OBSERVER", &s));
-        self
-    }
-
-    pub fn telescope<S: Into<String>>(&mut self, name: S) -> &mut Self {
-        let s: String = name.into();
-        self.keywords.push(Keyword::string("TELESCOP", &s));
-        self
-    }
-
-    pub fn instrument<S: Into<String>>(&mut self, name: S) -> &mut Self {
-        let s: String = name.into();
-        self.keywords.push(Keyword::string("INSTRUME", &s));
-        self
-    }
-
-    pub fn exposure(&mut self, seconds: f64) -> &mut Self {
-        self.keywords
-            .push(Keyword::real("EXPTIME", seconds).with_comment("Exposure time in seconds"));
-        self
-    }
-
-    pub fn filter<S: Into<String>>(&mut self, name: S) -> &mut Self {
-        let s: String = name.into();
-        self.keywords.push(Keyword::string("FILTER", &s));
-        self
-    }
-
-    pub fn temperature(&mut self, celsius: f64) -> &mut Self {
-        self.keywords
-            .push(Keyword::real("CCD-TEMP", celsius).with_comment("CCD temperature in Celsius"));
-        self
-    }
-
-    pub fn software<S: Into<String>>(&mut self, name: S) -> &mut Self {
-        let s: String = name.into();
-        self.keywords
-            .push(Keyword::string("SWCREATE", &s).with_comment("SBIGFITSEXT Name & vers"));
-
-        self
-    }
-
-    pub fn gain(&mut self, value: i64) -> &mut Self {
-        self.keywords
-            .push(Keyword::integer("GAINRAW", value).with_comment("Your gain value (integer)"));
-        self
-    }
-
-    pub fn offset(&mut self, value: i64) -> &mut Self {
-        self.keywords
-            .push(Keyword::integer("OFFSET", value).with_comment("camera offset"));
-        self
-    }
-
-    pub fn frame_type(&mut self, frame_type: FrameType) -> &mut Self {
-        self.keywords.push(
-            Keyword::string("IMAGETYP", frame_type.as_str())
-                .with_comment("SBIGFITSEXT Light, Dark, Bias or Flat"),
-        );
-
-        let ft = match frame_type {
-            FrameType::Light => 1,
-            FrameType::Bias => 2,
-            _ => 0,
-        };
-
-        self.keywords.push(
-            Keyword::integer("PICTTYPE".to_string(), ft)
-                .with_comment("Image type as index 0= Unknown 1=Light, 2=Bias,"),
-        );
-        self
-    }
-
-    pub fn binning(&mut self, x: u32, y: u32) -> &mut Self {
-        self.keywords.push(
-            Keyword::integer("XBINNING", x as i64)
-                .with_comment("SBIGFITSEXT Binning factor in width"),
-        );
-        self.keywords.push(
-            Keyword::integer("YBINNING", y as i64)
-                .with_comment("SBIGFITSEXT Binning factor in height"),
-        );
-        self
-    }
-
-    pub fn bscale(&mut self, value: f64) -> &mut Self {
-        self.keywords.push(Keyword::real("BSCALE", value));
-        self
-    }
-
-    pub fn bzero(&mut self, value: f64) -> &mut Self {
-        self.keywords.push(Keyword::real("BZERO", value));
-        self
-    }
-
-    pub fn keyword(&mut self, kw: Keyword) -> &mut Self {
-        self.keywords.push(kw);
-        self
-    }
-
-    pub fn history<S: Into<String>>(&mut self, text: S) -> &mut Self {
-        self.keywords.push(Keyword::history(text));
-        self
-    }
-
-    pub fn comment<S: Into<String>>(&mut self, text: S) -> &mut Self {
-        self.keywords.push(Keyword::comment(text));
-        self
-    }
-
-    pub fn build(self) -> Vec<Keyword> {
-        self.keywords
-    }
-
-    pub fn keywords(&self) -> &[Keyword] {
-        &self.keywords
-    }
-}
-
-impl Default for KeywordBuilder {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl From<KeywordBuilder> for Vec<Keyword> {
-    fn from(builder: KeywordBuilder) -> Self {
-        builder.keywords
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn set_keyword_replaces_the_first_card_and_removes_later_copies() {
+        let mut keywords = vec![
+            Keyword::real("CRVAL1", 83.6),
+            Keyword::string("ESO DET", "a"),
+            Keyword::real("CRVAL1", 84.0),
+            Keyword::string("HIERARCH ESO DET", "b"),
+            Keyword::history("h"),
+        ];
+        set_keyword(&mut keywords, Keyword::real("CRVAL1", 50.0));
+        set_keyword(&mut keywords, Keyword::string("HIERARCH ESO DET", "c"));
+        set_keyword(&mut keywords, Keyword::history("h"));
+        set_keyword(&mut keywords, Keyword::new(String::new()));
+        set_keyword(&mut keywords, Keyword::new(String::new()));
+        assert_eq!(
+            keywords,
+            vec![
+                Keyword::real("CRVAL1", 50.0),
+                Keyword::string("ESO DET", "c"),
+                Keyword::history("h"),
+                Keyword::history("h"),
+                Keyword::new(String::new()),
+                Keyword::new(String::new()),
+            ]
+        );
+    }
 
     #[test]
     fn keyword_new_creates_empty_keyword() {
@@ -583,6 +458,13 @@ mod tests {
     }
 
     #[test]
+    fn keyword_is_mandatory_extension_keywords() {
+        assert!(Keyword::string("XTENSION", "IMAGE").is_mandatory());
+        assert!(Keyword::integer("PCOUNT", 0).is_mandatory());
+        assert!(Keyword::integer("GCOUNT", 1).is_mandatory());
+    }
+
+    #[test]
     fn keyword_is_not_mandatory_custom() {
         let keyword = Keyword::string("OBJECT", "M31");
         assert!(!keyword.is_mandatory());
@@ -711,7 +593,26 @@ mod tests {
         assert_eq!(format!("{}", value), "-2.71");
 
         let value = KeywordValue::Real(0.0);
-        assert_eq!(format!("{}", value), "0");
+        assert_eq!(format!("{}", value), "0.0");
+
+        let value = KeywordValue::Real(512.0);
+        assert_eq!(format!("{}", value), "512.0");
+
+        let value = KeywordValue::Real(1e25);
+        assert_eq!(format!("{}", value), "1.0E+25");
+
+        let value = KeywordValue::Real(4.57e-19);
+        assert_eq!(format!("{}", value), "4.57E-19");
+    }
+
+    // FITS cannot hold these, so they print as Rust prints them.
+    #[test]
+    fn keyword_value_display_non_finite_real() {
+        assert_eq!(KeywordValue::Real(f64::NAN).to_string(), "NaN");
+        assert_eq!(
+            KeywordValue::Complex(1.0, f64::INFINITY).to_string(),
+            "(1.0, inf)"
+        );
     }
 
     #[test]
@@ -724,12 +625,15 @@ mod tests {
 
         let value = KeywordValue::String("test with spaces".to_string());
         assert_eq!(format!("{}", value), "'test with spaces'");
+
+        let value = KeywordValue::String("O'Brien  ".to_string());
+        assert_eq!(format!("{}", value), "'O''Brien'");
     }
 
     #[test]
     fn keyword_value_display_complex() {
         let value = KeywordValue::Complex(1.0, 2.0);
-        assert_eq!(format!("{}", value), "(1, 2)");
+        assert_eq!(format!("{}", value), "(1.0, 2.0)");
 
         let value = KeywordValue::Complex(-1.5, celestial_core::constants::PI);
         assert_eq!(
@@ -738,7 +642,7 @@ mod tests {
         );
 
         let value = KeywordValue::Complex(0.0, 0.0);
-        assert_eq!(format!("{}", value), "(0, 0)");
+        assert_eq!(format!("{}", value), "(0.0, 0.0)");
     }
 
     #[test]
@@ -809,54 +713,6 @@ mod tests {
             "Reference coordinate value"
         );
         assert!(!keyword.is_mandatory());
-        assert_eq!(format!("{}", keyword.value.as_ref().unwrap()), "180");
-    }
-
-    #[test]
-    fn keyword_builder_from_image() {
-        use crate::core::BitPix;
-        let mut builder = KeywordBuilder::from_image([1024, 768], BitPix::I16);
-        builder.object("M31");
-        builder.exposure(300.0);
-        builder.filter("Ha");
-        let keywords = builder.build();
-
-        assert!(keywords.iter().any(|k| k.name == "SIMPLE"));
-        assert!(keywords
-            .iter()
-            .any(|k| k.name == "BITPIX" && k.value == Some(KeywordValue::Integer(16))));
-        assert!(keywords
-            .iter()
-            .any(|k| k.name == "NAXIS" && k.value == Some(KeywordValue::Integer(2))));
-        assert!(keywords
-            .iter()
-            .any(|k| k.name == "NAXIS1" && k.value == Some(KeywordValue::Integer(1024))));
-        assert!(keywords
-            .iter()
-            .any(|k| k.name == "NAXIS2" && k.value == Some(KeywordValue::Integer(768))));
-        assert!(keywords.iter().any(|k| k.name == "OBJECT"));
-        assert!(keywords.iter().any(|k| k.name == "EXPTIME"));
-        assert!(keywords.iter().any(|k| k.name == "FILTER"));
-    }
-
-    #[test]
-    fn keyword_builder_into_vec() {
-        use crate::core::BitPix;
-        let builder = KeywordBuilder::from_image([100, 100], BitPix::F32);
-        let keywords: Vec<Keyword> = builder.into();
-        assert!(!keywords.is_empty());
-    }
-
-    #[test]
-    fn keyword_builder_date_from_utc() {
-        use crate::core::BitPix;
-        let utc = celestial_time::scales::utc::UTC::j2000();
-        let mut builder = KeywordBuilder::from_image([100, 100], BitPix::F32);
-        builder.date_from_utc(&utc).unwrap();
-        let keywords = builder.build();
-
-        let date_kw = keywords.iter().find(|k| k.name == "DATE").unwrap();
-        let date_val = date_kw.value.as_ref().unwrap().as_string().unwrap();
-        assert!(date_val.starts_with("2000-01-01T12:"));
+        assert_eq!(format!("{}", keyword.value.as_ref().unwrap()), "180.0");
     }
 }

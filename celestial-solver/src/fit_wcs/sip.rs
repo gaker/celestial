@@ -27,7 +27,7 @@ struct Position {
 /// # Examples
 ///
 /// ```rust,ignore
-/// # let img = celestial_images::formats::Image::open("f.fits")?;
+/// # let img = celestial_images::formats::image::Image::open("f.fits")?;
 /// # let catalog = celestial_catalog::query::Catalog::open("cat.bin")?;
 /// let result = celestial_solver::solve(&img, &catalog).run()?;
 /// if let Some(sip) = &result.sip {

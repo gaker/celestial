@@ -8,15 +8,12 @@ pub enum FitsError {
 
     #[error("Data type mismatch: expected {expected:?}, got {actual:?}")]
     TypeMismatch {
-        expected: crate::core::BitPix,
-        actual: crate::core::BitPix,
+        expected: crate::core::types::BitPix,
+        actual: crate::core::types::BitPix,
     },
 
     #[error("Invalid BITPIX value: {0}")]
     InvalidBitPix(i32),
-
-    #[error("Header parsing error: {0}")]
-    HeaderParse(String),
 
     #[error("Invalid keyword: {0}")]
     InvalidKeyword(String),
@@ -24,20 +21,11 @@ pub enum FitsError {
     #[error("Invalid keyword value: {keyword} = {value}")]
     InvalidKeywordValue { keyword: String, value: String },
 
-    #[error("Checksum verification failed: {0}")]
-    ChecksumMismatch(String),
-
-    #[error("DATASUM verification failed: expected {expected}, computed {computed}")]
-    DatasumMismatch { expected: String, computed: u32 },
-
     #[error("Unsupported compression: {0}")]
     UnsupportedCompression(String),
 
     #[error("HDU not found: {0}")]
     HduNotFound(usize),
-
-    #[error("EOF reached unexpectedly")]
-    UnexpectedEof,
 
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),

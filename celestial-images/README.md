@@ -25,7 +25,6 @@ celestial-images = "0.1"
 | `ser`      | SER video format reader/writer with frame timestamps         |
 | `formats`  | Unified AstroImage abstraction across formats                |
 | `debayer`  | Bayer pattern demosaicing (bilinear interpolation)           |
-| `ricecomp` | Rice compression/decompression codec                         |
 
 ## Example
 
@@ -34,7 +33,8 @@ is detected from the file extension — FITS and XISF work out of the box, PNG/T
 the `standard-formats` feature.
 
 ```rust,ignore
-use celestial_images::formats::{AstroImage, Image};
+use celestial_images::formats::astro_image::AstroImage;
+use celestial_images::formats::image::Image;
 
 // Open any supported format — FITS, XISF, (PNG/TIFF with `standard-formats`)
 let img = Image::open("m31.fits")?;
@@ -58,13 +58,20 @@ AstroImage::new(&pixels, [1024, 1024])
     .write_to("m31_ha.fits")?;       // dispatches on extension
 ```
 
-For lower-level access (HDU iteration, binary tables, raw compression), the `fits` and
-`xisf` modules expose the format-specific types directly.
+For lower-level access, the `fits` and `xisf` modules expose the format-specific types:
+
+- `fits::io::reader::FitsFile` reads any HDU of a FITS file: headers, image arrays,
+  ASCII and binary tables, random groups, and CHECKSUM/DATASUM results. FITS files are
+  written through `Image` and `AstroImage`; `AstroImage::compressed` writes a
+  tile-compressed image.
+- `xisf::reader::XisfFile` reads each image's geometry, sample format and storage
+  (`image_info`), its keywords and properties, and its samples as bytes or typed values.
+  `xisf::writer::XisfWriter` writes one or more images with keywords, properties,
+  compression and SHA-1 checksums.
 
 ## Features
 
 - **`parallel`** (default) — Enables parallel processing via rayon
-- **`simd`** — SIMD acceleration for image operations via wide
 - **`standard-formats`** — PNG/TIFF export support
 
 ## License

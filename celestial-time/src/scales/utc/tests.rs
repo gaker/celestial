@@ -248,3 +248,126 @@ fn test_next_calendar_day() {
         assert_eq!(next_calendar_day(y, m, d).unwrap(), expected);
     }
 }
+
+// A fixed-seed linear congruential generator, so the sweep is reproducible.
+fn lcg(state: &mut u64) -> u64 {
+    *state = state
+        .wrapping_mul(6364136223846793005)
+        .wrapping_add(1442695040888963407);
+    *state >> 11
+}
+
+fn assert_to_unix_inverts_new(seconds: i64, nanos: u32) {
+    let utc = UTC::new(seconds, nanos).unwrap();
+    assert_eq!(
+        utc.to_unix(),
+        Ok((seconds, nanos)),
+        "{seconds} s {nanos} ns"
+    );
+}
+
+#[test]
+fn test_to_unix_inverts_new_across_the_calendar() {
+    // 0001-01-01 to 9999-12-31, the range of SER and .NET timestamps.
+    let (first, last) = (-62_135_596_800_i64, 253_402_300_799_i64);
+    let span = (last - first + 1) as u64;
+    let mut state = 1;
+    for _ in 0..100_000 {
+        let seconds = first + (lcg(&mut state) % span) as i64;
+        let nanos = (lcg(&mut state) % 1_000_000_000) as u32;
+        assert_to_unix_inverts_new(seconds, nanos);
+    }
+    for seconds in [first, -1, 0, 1, last] {
+        for nanos in [0, 1, 500_000_000, 999_999_999] {
+            assert_to_unix_inverts_new(seconds, nanos);
+        }
+    }
+}
+
+#[test]
+fn test_to_unix_inverts_new_on_days_longer_or_shorter_than_86400_s() {
+    // The last two minutes of 2016-12-31 and 1972-06-30, which end in a leap
+    // second, and of 1963-10-31 (+0.1 s step) and 1961-07-31 (-0.05 s step).
+    // The last 0.05 s of 1961-07-31 does not exist, so the sweep stops at .94.
+    // Each day end is checked against its calendar date, so the sweep cannot
+    // drift onto an ordinary neighbouring day.
+    let day_ends = [
+        (1_483_228_800_i64, (2016, 12, 31)),
+        (78_796_800, (1972, 6, 30)),
+        (-194_659_200, (1963, 10, 31)),
+        (-265_680_000, (1961, 7, 31)),
+    ];
+    for (day_end, date) in day_ends {
+        let jd = UTC::new(day_end - 1, 0).unwrap().to_julian_date();
+        let (year, month, day, _) = julian_to_calendar(jd.jd1(), jd.jd2()).unwrap();
+        assert_eq!((year, month, day), date);
+        for seconds in day_end - 120..day_end {
+            for nanos in [0, 1, 123_456_789, 940_000_000] {
+                assert_to_unix_inverts_new(seconds, nanos);
+            }
+        }
+    }
+    assert_to_unix_inverts_new(1_483_185_600, 0);
+    assert_to_unix_inverts_new(1_483_228_799, 999_999_999);
+}
+
+#[test]
+fn test_to_unix_of_parsed_times() {
+    let cases = [
+        ("2016-12-31T12:00:00", (1_483_185_600, 0)),
+        (
+            "2016-12-31T23:59:59.999999999",
+            (1_483_228_799, 999_999_999),
+        ),
+        ("2017-01-01T00:00:00", (1_483_228_800, 0)),
+        ("1969-12-31T23:59:59.5", (-1, 500_000_000)),
+        ("2024-06-01T12:34:56.1234567", (1_717_245_296, 123_456_700)),
+    ];
+    for (text, expected) in cases {
+        assert_eq!(
+            UTC::from_str(text).unwrap().to_unix(),
+            Ok(expected),
+            "{text}"
+        );
+    }
+}
+
+#[test]
+fn test_to_unix_rejects_the_extra_time_at_the_end_of_a_day() {
+    let cases = [
+        (
+            "2016-12-31T23:59:60",
+            "2016-12-31 86400 s after midnight is in the day's extra time, \
+             which Unix time cannot represent",
+        ),
+        (
+            "2016-12-31T23:59:60.5",
+            "2016-12-31 86400.5 s after midnight is in the day's extra time, \
+             which Unix time cannot represent",
+        ),
+        (
+            "1963-10-31T23:59:60.05",
+            "1963-10-31 86400.05 s after midnight is in the day's extra time, \
+             which Unix time cannot represent",
+        ),
+    ];
+    for (text, message) in cases {
+        assert_eq!(
+            UTC::from_str(text).unwrap().to_unix(),
+            Err(TimeError::ConversionError(message.to_string())),
+            "{text}"
+        );
+    }
+}
+
+#[test]
+fn test_to_unix_rounds_to_the_nearest_nanosecond() {
+    // 0.4 ns and 0.6 ns after 2024-06-01T00:00:00 on an 86,400 s day.
+    let midnight = JulianDate::new(2460462.5, 0.0);
+    let ns = 1.0 / (SECONDS_PER_DAY_F64 * NANOSECONDS_PER_SECOND_F64);
+    let at = |fraction: f64| UTC::from_julian_date(JulianDate::new(midnight.jd1(), fraction));
+    assert_eq!(at(0.4 * ns).to_unix(), Ok((1_717_200_000, 0)));
+    assert_eq!(at(0.6 * ns).to_unix(), Ok((1_717_200_000, 1)));
+    // 0.4 ns before midnight rounds into the next day.
+    assert_eq!(at(1.0 - 0.4 * ns).to_unix(), Ok((1_717_286_400, 0)));
+}

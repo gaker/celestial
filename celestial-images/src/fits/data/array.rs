@@ -1,29 +1,38 @@
-use super::value::DataValue;
-use crate::core::{BitPix, ByteOrder};
-use crate::fits::Result;
+use crate::core::types::{BitPix, ByteOrder};
+use crate::fits::errors::{FitsError, Result};
 
-pub trait DataArray: Sized + PartialEq {
+// Callers can name `DataArray` in bounds but cannot implement it. The
+// readers and writers support only the sample types listed here.
+mod sealed {
+    pub trait Sealed {}
+
+    impl Sealed for u8 {}
+    impl Sealed for i16 {}
+    impl Sealed for i32 {}
+    impl Sealed for i64 {}
+    impl Sealed for f32 {}
+    impl Sealed for f64 {}
+}
+
+pub trait DataArray: sealed::Sealed + Sized + PartialEq {
     const BITPIX: BitPix;
 
     fn from_bytes(bytes: &[u8], byte_order: ByteOrder) -> Result<Vec<Self>>;
     fn to_bytes(data: &[Self], byte_order: ByteOrder) -> Result<Vec<u8>>;
+}
 
-    fn from_bytes_with_null(
-        bytes: &[u8],
-        byte_order: ByteOrder,
-        null_value: Option<Self>,
-    ) -> Result<Vec<DataValue<Self>>> {
-        let raw_data = Self::from_bytes(bytes, byte_order)?;
-        Ok(raw_data
-            .into_iter()
-            .map(|value| match &null_value {
-                Some(null_val) if value == *null_val => DataValue::Null,
-                _ => DataValue::Value(value),
-            })
-            .collect())
+// Maps each `N`-byte sample of `bytes` through `sample`. A length that is
+// not a whole number of samples is an error.
+pub(crate) fn decode<const N: usize, T>(
+    bytes: &[u8],
+    sample: impl Fn([u8; N]) -> T,
+) -> Result<Vec<T>> {
+    let (samples, rest) = bytes.as_chunks::<N>();
+    if !rest.is_empty() {
+        return Err(FitsError::InvalidFormat(format!(
+            "the data is {} bytes, not a whole number of {N}-byte samples",
+            bytes.len()
+        )));
     }
-
-    fn parse_null_value(null_str: &str) -> Result<Self>;
-
-    fn apply_scaling(data: &mut [Self], bscale: f64, bzero: f64);
+    Ok(samples.iter().map(|&s| sample(s)).collect())
 }

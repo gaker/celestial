@@ -1,14 +1,14 @@
 use std::collections::VecDeque;
 
 #[derive(Debug)]
-pub struct BufferPool {
+pub(crate) struct BufferPool {
     pool: VecDeque<Vec<u8>>,
     max_capacity: usize,
     target_capacity: usize,
 }
 
 impl BufferPool {
-    pub fn new(target_capacity: usize, max_capacity: usize) -> Self {
+    pub(crate) fn new(target_capacity: usize, max_capacity: usize) -> Self {
         Self {
             pool: VecDeque::new(),
             max_capacity,
@@ -16,7 +16,7 @@ impl BufferPool {
         }
     }
 
-    pub fn get(&mut self, size: usize) -> Vec<u8> {
+    pub(crate) fn get(&mut self, size: usize) -> Vec<u8> {
         if let Some(mut buffer) = self.pool.pop_front() {
             if buffer.capacity() >= size {
                 buffer.clear();
@@ -28,14 +28,14 @@ impl BufferPool {
         vec![0u8; size]
     }
 
-    pub fn return_buffer(&mut self, mut buffer: Vec<u8>) {
+    pub(crate) fn return_buffer(&mut self, mut buffer: Vec<u8>) {
         if self.pool.len() < self.max_capacity && buffer.capacity() >= self.target_capacity {
             buffer.clear();
             self.pool.push_back(buffer);
         }
     }
 
-    pub fn clear(&mut self) {
+    pub(crate) fn clear(&mut self) {
         self.pool.clear();
     }
 }

@@ -1,6 +1,6 @@
 use chrono::{Datelike, NaiveDate, NaiveDateTime, NaiveTime, Timelike};
 
-use celestial_images::formats::Image;
+use celestial_images::formats::image::Image;
 use celestial_time::julian::JulianDate;
 use celestial_time::scales::utc::utc_from_calendar;
 
@@ -27,7 +27,7 @@ use super::error::MetadataError;
 /// ```rust,ignore
 /// use celestial_solver::metadata::jd_from_image;
 ///
-/// # let img = celestial_images::formats::Image::open("f.fits")?;
+/// # let img = celestial_images::formats::image::Image::open("f.fits")?;
 /// let jd = jd_from_image(&img)?;
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
@@ -91,8 +91,8 @@ fn parse_date_obs(img: &Image, date_obs: &str) -> Result<NaiveDateTime, Metadata
 #[cfg(test)]
 mod tests {
     use super::*;
-    use celestial_images::fits::header::Keyword;
-    use celestial_images::formats::PixelData;
+    use celestial_images::fits::header::keywords::Keyword;
+    use celestial_images::formats::pixel_data::PixelData;
 
     fn stub_image() -> Image {
         Image::new(PixelData::F32(vec![0.0; 4]), [2, 2])

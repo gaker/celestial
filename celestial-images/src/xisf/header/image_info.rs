@@ -1,11 +1,22 @@
-use crate::fits::header::Keyword;
-use crate::xisf::header::{ColorSpace, DataLocation, PixelStorage, SampleFormat, XisfCompression};
+use crate::core::types::ByteOrder;
+use crate::fits::header::keywords::Keyword;
+use crate::xisf::errors::{Result, XisfError};
+use crate::xisf::header::block_attrs::BlockDefect;
+use crate::xisf::header::checksum::Checksum;
+use crate::xisf::header::color_space::ColorSpace;
+use crate::xisf::header::compression::XisfCompression;
+use crate::xisf::header::location::DataLocation;
+use crate::xisf::header::pixel_storage::PixelStorage;
+use crate::xisf::header::sample_format::SampleFormat;
 
 #[derive(Debug, Clone)]
-pub struct XisfHeader {
+pub(crate) struct XisfHeader {
     pub version: String,
     pub images: Vec<ImageInfo>,
-    pub keywords: Vec<Keyword>,
+    // One list per image, in the order of `images`.
+    pub keywords: Vec<Vec<Keyword>>,
+    // The FITSKeyword children of the root element.
+    pub(crate) root_keywords: Vec<Keyword>,
 }
 
 #[derive(Debug, Clone)]
@@ -15,37 +26,54 @@ pub struct ImageInfo {
     pub bounds: (f64, f64),
     pub color_space: ColorSpace,
     pub pixel_storage: PixelStorage,
-    pub location: DataLocation,
-    pub compression: XisfCompression,
-    pub uncompressed_size: Option<u64>,
+    pub(crate) location: DataLocation,
+    pub(crate) compression: XisfCompression,
+    pub(crate) uncompressed_size: Option<u64>,
+    pub(crate) shuffle_item_size: Option<usize>,
+    pub(crate) subblocks: Vec<(u64, u64)>,
+    pub byte_order: ByteOrder,
+    pub(crate) checksum: Option<Checksum>,
+    pub(crate) block_defect: Option<BlockDefect>,
 }
 
 impl ImageInfo {
-    pub fn data_size(&self) -> u64 {
+    // Byte length of the decoded pixel data. Fails for an empty geometry and
+    // for sizes that do not fit in memory.
+    pub(crate) fn checked_data_size(&self) -> Result<usize> {
         if self.geometry.is_empty() {
-            return 0;
+            return Err(XisfError::InvalidGeometry(
+                "the image has no dimensions".to_string(),
+            ));
         }
-        let total_pixels: u64 = self.geometry.iter().map(|&d| d as u64).product();
-        total_pixels * self.sample_format.bytes_per_sample() as u64
+        self.geometry
+            .iter()
+            .try_fold(self.sample_format.bytes_per_sample(), |acc, &d| {
+                acc.checked_mul(d)
+            })
+            .ok_or_else(|| {
+                XisfError::InvalidGeometry(format!(
+                    "{:?} of {} samples overflows the address space",
+                    self.geometry,
+                    self.sample_format.as_str()
+                ))
+            })
     }
 
-    pub fn format_bounds(&self) -> String {
+    pub(crate) fn format_bounds(&self) -> String {
         format!("{}:{}", self.bounds.0, self.bounds.1)
     }
 
-    pub fn num_channels(&self) -> usize {
+    // Normal storage interleaves the channels of each pixel (XISF 1.0
+    // section 8.5.3.2); one channel is the same in either order.
+    pub(crate) fn stores_interleaved(&self) -> bool {
+        self.pixel_storage == PixelStorage::Normal && self.num_channels() > 1
+    }
+
+    pub(crate) fn num_channels(&self) -> usize {
         if self.geometry.len() >= 3 {
             self.geometry[2]
         } else {
             1
-        }
-    }
-
-    pub fn pixels_per_channel(&self) -> usize {
-        if self.geometry.len() >= 2 {
-            self.geometry[0] * self.geometry[1]
-        } else {
-            0
         }
     }
 }
@@ -53,7 +81,7 @@ impl ImageInfo {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::fits::header::{Keyword, KeywordValue};
+    use crate::fits::header::keywords::{Keyword, KeywordValue};
 
     fn info(geometry: Vec<usize>, sample_format: SampleFormat) -> ImageInfo {
         ImageInfo {
@@ -65,37 +93,12 @@ mod tests {
             location: DataLocation::new(0, 0),
             compression: XisfCompression::None,
             uncompressed_size: None,
+            shuffle_item_size: None,
+            subblocks: Vec::new(),
+            byte_order: ByteOrder::LittleEndian,
+            checksum: None,
+            block_defect: None,
         }
-    }
-
-    #[test]
-    fn data_size_is_pixels_times_bytes_per_sample() {
-        let gray = info(vec![1920, 1080], SampleFormat::UInt16);
-        assert_eq!(gray.data_size(), 1920 * 1080 * 2);
-
-        let rgb = info(vec![1920, 1080, 3], SampleFormat::UInt8);
-        assert_eq!(rgb.data_size(), 1920 * 1080 * 3);
-
-        let f64_cube = info(vec![100, 100, 4], SampleFormat::Float64);
-        assert_eq!(f64_cube.data_size(), 100 * 100 * 4 * 8);
-    }
-
-    #[test]
-    fn data_size_empty_geometry_is_zero() {
-        let empty = info(vec![], SampleFormat::UInt8);
-        assert_eq!(empty.data_size(), 0);
-
-        let empty_f64 = info(vec![], SampleFormat::Float64);
-        assert_eq!(empty_f64.data_size(), 0);
-    }
-
-    #[test]
-    fn data_size_scales_with_float_formats() {
-        let f32_img = info(vec![512, 512], SampleFormat::Float32);
-        assert_eq!(f32_img.data_size(), 512 * 512 * 4);
-
-        let f64_img = info(vec![512, 512], SampleFormat::Float64);
-        assert_eq!(f64_img.data_size(), 512 * 512 * 8);
     }
 
     #[test]
@@ -133,21 +136,6 @@ mod tests {
     }
 
     #[test]
-    fn pixels_per_channel_multiplies_first_two_dims() {
-        let img = info(vec![100, 50], SampleFormat::UInt8);
-        assert_eq!(img.pixels_per_channel(), 5000);
-
-        let img = info(vec![100, 50, 3], SampleFormat::UInt8);
-        assert_eq!(img.pixels_per_channel(), 5000);
-    }
-
-    #[test]
-    fn pixels_per_channel_zero_for_under_two_dims() {
-        assert_eq!(info(vec![], SampleFormat::UInt8).pixels_per_channel(), 0);
-        assert_eq!(info(vec![10], SampleFormat::UInt8).pixels_per_channel(), 0);
-    }
-
-    #[test]
     fn image_info_preserves_all_fields() {
         let img = ImageInfo {
             geometry: vec![1920, 1080, 3],
@@ -158,6 +146,11 @@ mod tests {
             location: DataLocation::new(1024, 12441600),
             compression: XisfCompression::Lz4,
             uncompressed_size: Some(12441600),
+            shuffle_item_size: Some(2),
+            subblocks: vec![(100, 200)],
+            byte_order: ByteOrder::BigEndian,
+            checksum: None,
+            block_defect: None,
         };
         assert_eq!(img.geometry, vec![1920, 1080, 3]);
         assert!(matches!(img.sample_format, SampleFormat::UInt16));
@@ -168,6 +161,33 @@ mod tests {
         assert_eq!(img.location.size, 12441600);
         assert_eq!(img.compression, XisfCompression::Lz4);
         assert_eq!(img.uncompressed_size, Some(12441600));
+        assert_eq!(img.shuffle_item_size, Some(2));
+        assert_eq!(img.subblocks, vec![(100, 200)]);
+        assert_eq!(img.byte_order, ByteOrder::BigEndian);
+    }
+
+    #[test]
+    fn sizes_do_not_overflow_on_huge_geometry() {
+        let huge = info(vec![1 << 32, 1 << 32, 3], SampleFormat::UInt16);
+        assert!(matches!(
+            huge.checked_data_size(),
+            Err(XisfError::InvalidGeometry(_))
+        ));
+    }
+
+    #[test]
+    fn checked_data_size_matches_data_size_and_needs_a_dimension() {
+        let rgb = info(vec![1920, 1080, 3], SampleFormat::Float32);
+        assert_eq!(rgb.checked_data_size().unwrap(), 1920 * 1080 * 3 * 4);
+        assert_eq!(
+            info(vec![10], SampleFormat::UInt8)
+                .checked_data_size()
+                .unwrap(),
+            10
+        );
+        assert!(info(vec![], SampleFormat::UInt8)
+            .checked_data_size()
+            .is_err());
     }
 
     #[test]
@@ -175,14 +195,17 @@ mod tests {
         let header = XisfHeader {
             version: "1.0".to_string(),
             images: vec![info(vec![10, 10], SampleFormat::UInt8)],
-            keywords: vec![Keyword::string("TELESCOP", "Hubble").with_comment("name")],
+            keywords: vec![vec![
+                Keyword::string("TELESCOP", "Hubble").with_comment("name")
+            ]],
+            root_keywords: Vec::new(),
         };
         assert_eq!(header.version, "1.0");
         assert_eq!(header.images.len(), 1);
-        assert_eq!(header.keywords.len(), 1);
-        assert_eq!(header.keywords[0].name, "TELESCOP");
+        assert_eq!(header.keywords[0].len(), 1);
+        assert_eq!(header.keywords[0][0].name, "TELESCOP");
         assert_eq!(
-            header.keywords[0].value,
+            header.keywords[0][0].value,
             Some(KeywordValue::String("Hubble".to_string()))
         );
     }

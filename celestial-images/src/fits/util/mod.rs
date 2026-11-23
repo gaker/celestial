@@ -1,3 +1,3 @@
-pub mod buffer_pool;
-pub mod checksum;
-pub mod image;
+pub(crate) mod buffer_pool;
+pub(crate) mod checksum;
+pub(crate) mod image;

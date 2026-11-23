@@ -1,42 +1,50 @@
 #[derive(Debug, Clone, PartialEq)]
-pub enum DataValue<T> {
-    Value(T),
-    Null,
-}
-
-#[derive(Debug, Clone, PartialEq)]
 pub enum TableValue {
     Logical(bool),
     Byte(u8),
+    I8(i8),
     I16(i16),
+    U16(u16),
     I32(i32),
+    U32(u32),
     I64(i64),
+    U64(u64),
     F32(f32),
     F64(f64),
     String(String),
     Complex32(f32, f32),
     Complex64(f64, f64),
+    Bits(Vec<bool>),
+    Array(Vec<TableValue>),
     Null,
 }
 
 impl TableValue {
     pub fn as_i64(&self) -> Option<i64> {
         match self {
-            Self::Byte(v) => Some(*v as i64),
-            Self::I16(v) => Some(*v as i64),
-            Self::I32(v) => Some(*v as i64),
+            Self::Byte(v) => Some(i64::from(*v)),
+            Self::I8(v) => Some(i64::from(*v)),
+            Self::I16(v) => Some(i64::from(*v)),
+            Self::U16(v) => Some(i64::from(*v)),
+            Self::I32(v) => Some(i64::from(*v)),
+            Self::U32(v) => Some(i64::from(*v)),
             Self::I64(v) => Some(*v),
+            Self::U64(v) => i64::try_from(*v).ok(),
             _ => None,
         }
     }
 
     pub fn as_f64(&self) -> Option<f64> {
         match self {
-            Self::Byte(v) => Some(*v as f64),
-            Self::I16(v) => Some(*v as f64),
-            Self::I32(v) => Some(*v as f64),
+            Self::Byte(v) => Some(f64::from(*v)),
+            Self::I8(v) => Some(f64::from(*v)),
+            Self::I16(v) => Some(f64::from(*v)),
+            Self::U16(v) => Some(f64::from(*v)),
+            Self::I32(v) => Some(f64::from(*v)),
+            Self::U32(v) => Some(f64::from(*v)),
             Self::I64(v) => Some(*v as f64),
-            Self::F32(v) => Some(*v as f64),
+            Self::U64(v) => Some(*v as f64),
+            Self::F32(v) => Some(f64::from(*v)),
             Self::F64(v) => Some(*v),
             _ => None,
         }
@@ -54,71 +62,9 @@ impl TableValue {
     }
 }
 
-impl<T> DataValue<T> {
-    pub fn is_null(&self) -> bool {
-        matches!(self, Self::Null)
-    }
-
-    pub fn value(&self) -> Option<&T> {
-        match self {
-            Self::Value(v) => Some(v),
-            Self::Null => None,
-        }
-    }
-
-    pub fn unwrap_or(self, default: T) -> T {
-        match self {
-            Self::Value(v) => v,
-            Self::Null => default,
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn data_value_creation() {
-        let val = DataValue::Value(42i16);
-        let null = DataValue::<i16>::Null;
-
-        assert!(!val.is_null());
-        assert!(null.is_null());
-        assert_eq!(val.value(), Some(&42));
-        assert_eq!(null.value(), None);
-    }
-
-    #[test]
-    fn data_value_unwrap_or() {
-        let val = DataValue::Value(42i16);
-        let null = DataValue::<i16>::Null;
-
-        assert_eq!(val.unwrap_or(0), 42);
-        assert_eq!(null.unwrap_or(0), 0);
-    }
-
-    #[test]
-    fn data_value_operations() {
-        let value = DataValue::Value(42);
-        let null = DataValue::<i32>::Null;
-
-        assert!(!value.is_null());
-        assert!(null.is_null());
-
-        assert_eq!(value.value(), Some(&42));
-        assert_eq!(null.value(), None);
-
-        let cloned_value = value.clone();
-        assert_eq!(cloned_value, DataValue::Value(42));
-
-        let cloned_null = null.clone();
-        assert_eq!(cloned_null, DataValue::<i32>::Null);
-
-        assert_eq!(value.unwrap_or(-1), 42);
-        assert_eq!(null.clone().unwrap_or(-1), -1);
-        assert_eq!(null.unwrap_or(999), 999);
-    }
 
     #[test]
     fn table_value_as_i64_integer_types() {
@@ -126,6 +72,12 @@ mod tests {
         assert_eq!(TableValue::I16(1000).as_i64(), Some(1000));
         assert_eq!(TableValue::I32(-500).as_i64(), Some(-500));
         assert_eq!(TableValue::I64(123456789).as_i64(), Some(123456789));
+        assert_eq!(TableValue::I8(-5).as_i64(), Some(-5));
+        assert_eq!(TableValue::U16(65535).as_i64(), Some(65535));
+        assert_eq!(TableValue::U32(u32::MAX).as_i64(), Some(4294967295));
+        assert_eq!(TableValue::U64(1 << 63).as_i64(), None);
+        assert_eq!(TableValue::U64(7).as_f64(), Some(7.0));
+        assert_eq!(TableValue::Array(vec![TableValue::I16(1)]).as_i64(), None);
     }
 
     #[test]

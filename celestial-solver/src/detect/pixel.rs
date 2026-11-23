@@ -1,6 +1,6 @@
 /// Pixel types the detector can consume.
 ///
-/// Implemented for `u8`, `u16`, `i16`, `i32`, `f32`, `f64`. Two methods:
+/// Implemented for `u8`, `i8`, `u16`, `i16`, `u32`, `i32`, `u64`, `i64`, `f32`, `f64`. Two methods:
 /// [`Pixel::to_f64`] for arithmetic, [`Pixel::saturation_ceiling`] for the saturation
 /// threshold used during centroiding. Integer types return their native max; float
 /// types return infinity, which falls through to a tied-maximum heuristic in
@@ -35,6 +35,15 @@ impl Pixel for u8 {
     }
 }
 
+impl Pixel for i8 {
+    fn to_f64(self) -> f64 {
+        self as f64
+    }
+    fn saturation_ceiling() -> f64 {
+        Self::MAX as f64
+    }
+}
+
 impl Pixel for u16 {
     fn to_f64(self) -> f64 {
         self as f64
@@ -53,7 +62,34 @@ impl Pixel for i16 {
     }
 }
 
+impl Pixel for u32 {
+    fn to_f64(self) -> f64 {
+        self as f64
+    }
+    fn saturation_ceiling() -> f64 {
+        Self::MAX as f64
+    }
+}
+
 impl Pixel for i32 {
+    fn to_f64(self) -> f64 {
+        self as f64
+    }
+    fn saturation_ceiling() -> f64 {
+        Self::MAX as f64
+    }
+}
+
+impl Pixel for u64 {
+    fn to_f64(self) -> f64 {
+        self as f64
+    }
+    fn saturation_ceiling() -> f64 {
+        Self::MAX as f64
+    }
+}
+
+impl Pixel for i64 {
     fn to_f64(self) -> f64 {
         self as f64
     }
@@ -90,6 +126,10 @@ mod tests {
         assert_eq!(<u16 as Pixel>::saturation_ceiling(), 65535.0);
         assert_eq!(<i16 as Pixel>::saturation_ceiling(), 32767.0);
         assert_eq!(<i32 as Pixel>::saturation_ceiling(), i32::MAX as f64);
+        assert_eq!(<i8 as Pixel>::saturation_ceiling(), 127.0);
+        assert_eq!(<u32 as Pixel>::saturation_ceiling(), 4294967295.0);
+        assert_eq!(<u64 as Pixel>::saturation_ceiling(), u64::MAX as f64);
+        assert_eq!(<i64 as Pixel>::saturation_ceiling(), i64::MAX as f64);
     }
 
     #[test]
@@ -104,6 +144,10 @@ mod tests {
         assert_eq!(Pixel::to_f64(40000u16), 40000.0);
         assert_eq!(Pixel::to_f64(-100i16), -100.0);
         assert_eq!(Pixel::to_f64(1_000_000i32), 1_000_000.0);
+        assert_eq!(Pixel::to_f64(-100i8), -100.0);
+        assert_eq!(Pixel::to_f64(3_000_000_000u32), 3_000_000_000.0);
+        assert_eq!(Pixel::to_f64(1u64 << 60), 1152921504606846976.0);
+        assert_eq!(Pixel::to_f64(-(1i64 << 60)), -1152921504606846976.0);
         assert_eq!(Pixel::to_f64(3.5f32), 3.5);
         assert_eq!(Pixel::to_f64(1.5f64), 1.5);
     }

@@ -5,7 +5,7 @@
 //! The primary entry point is [`solve()`], which returns a [`Solver`] builder:
 //!
 //! ```rust,ignore
-//! use celestial_images::formats::Image;
+//! use celestial_images::formats::image::Image;
 //! use celestial_catalog::query::Catalog;
 //!
 //! let img = Image::open("m31.fits")?;
@@ -30,7 +30,7 @@
 //! use celestial_coords::frames::icrs::ICRSPosition;
 //! use celestial_time::scales::utc::utc_from_calendar;
 //!
-//! # let img = celestial_images::formats::Image::open("frame.png")?;
+//! # let img = celestial_images::formats::image::Image::open("frame.png")?;
 //! # let catalog = celestial_catalog::query::Catalog::open("cat.bin")?;
 //! let meta = ImageMetadata {
 //!     hint: ICRSPosition::from_degrees(83.633, 22.014)?,

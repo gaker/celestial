@@ -2,9 +2,13 @@ mod bitbuffer;
 mod compress;
 mod decompress;
 
-use crate::fits::Result;
+use crate::fits::errors::Result;
 
-pub trait RiceCompressible: Copy {
+// Rice coding parameters for each pixel width. FSBITS bits hold the code of
+// a block's split level, and a split level of FSMAX marks a block stored as
+// raw BBITS-bit differences. Differences wrap modulo 2^BBITS, so unsigned
+// pixels of the same width encode through the signed type.
+pub(crate) trait RiceCompressible: Copy {
     const FSBITS: usize;
     const FSMAX: usize;
     const BBITS: usize;
@@ -16,153 +20,47 @@ pub trait RiceCompressible: Copy {
     fn as_signed(self) -> i32;
     fn from_signed(val: i32) -> Self;
 
-    fn compute_difference(next_pix: i32, last_pix: i32) -> i32;
-}
-
-impl RiceCompressible for i32 {
-    const FSBITS: usize = 5;
-    const FSMAX: usize = 25;
-    const BBITS: usize = 32;
-    const BYTES_PER_ELEMENT: usize = 4;
-
-    fn compress(data: &[Self], block_size: usize) -> Result<Vec<u8>> {
-        compress::compress_rice(data, block_size)
-    }
-
-    fn decompress(compressed: &[u8], output_len: usize, block_size: usize) -> Result<Vec<Self>> {
-        decompress::decompress_rice(compressed, output_len, block_size)
-    }
-
-    fn as_signed(self) -> i32 {
-        self
-    }
-
-    fn from_signed(val: i32) -> Self {
-        val
-    }
-
     fn compute_difference(next_pix: i32, last_pix: i32) -> i32 {
-        next_pix.wrapping_sub(last_pix)
+        Self::from_signed(next_pix.wrapping_sub(last_pix)).as_signed()
     }
 }
 
-impl RiceCompressible for i16 {
-    const FSBITS: usize = 4;
-    const FSMAX: usize = 14;
-    const BBITS: usize = 16;
-    const BYTES_PER_ELEMENT: usize = 2;
+macro_rules! rice_compressible {
+    ($t:ty, $fsbits:expr, $fsmax:expr) => {
+        impl RiceCompressible for $t {
+            const FSBITS: usize = $fsbits;
+            const FSMAX: usize = $fsmax;
+            const BBITS: usize = <$t>::BITS as usize;
+            const BYTES_PER_ELEMENT: usize = std::mem::size_of::<$t>();
 
-    fn compress(data: &[Self], block_size: usize) -> Result<Vec<u8>> {
-        compress::compress_rice(data, block_size)
-    }
+            fn compress(data: &[Self], block_size: usize) -> Result<Vec<u8>> {
+                compress::compress_rice(data, block_size)
+            }
 
-    fn decompress(compressed: &[u8], output_len: usize, block_size: usize) -> Result<Vec<Self>> {
-        decompress::decompress_rice(compressed, output_len, block_size)
-    }
+            fn decompress(
+                compressed: &[u8],
+                output_len: usize,
+                block_size: usize,
+            ) -> Result<Vec<Self>> {
+                decompress::decompress_rice(compressed, output_len, block_size)
+            }
 
-    fn as_signed(self) -> i32 {
-        self as i32
-    }
+            fn as_signed(self) -> i32 {
+                i32::from(self)
+            }
 
-    fn from_signed(val: i32) -> Self {
-        val as Self
-    }
-
-    fn compute_difference(next_pix: i32, last_pix: i32) -> i32 {
-        let diff = (next_pix as Self).wrapping_sub(last_pix as Self);
-        diff as i32
-    }
+            // Truncation keeps the low bits, which wraps the value modulo
+            // 2^BBITS.
+            fn from_signed(val: i32) -> Self {
+                val as Self
+            }
+        }
+    };
 }
 
-impl RiceCompressible for u8 {
-    const FSBITS: usize = 3;
-    const FSMAX: usize = 6;
-    const BBITS: usize = 8;
-    const BYTES_PER_ELEMENT: usize = 1;
-
-    fn compress(data: &[Self], block_size: usize) -> Result<Vec<u8>> {
-        let signed_data: Vec<i8> = data.iter().map(|&x| x as i8).collect();
-        compress::compress_rice(&signed_data, block_size)
-    }
-
-    fn decompress(compressed: &[u8], output_len: usize, block_size: usize) -> Result<Vec<Self>> {
-        let signed_result: Vec<i8> =
-            decompress::decompress_rice(compressed, output_len, block_size)?;
-        Ok(signed_result.into_iter().map(|x| x as Self).collect())
-    }
-
-    fn as_signed(self) -> i32 {
-        self as i8 as i32
-    }
-
-    fn from_signed(val: i32) -> Self {
-        val as Self
-    }
-
-    fn compute_difference(next_pix: i32, last_pix: i32) -> i32 {
-        let diff = (next_pix as i8).wrapping_sub(last_pix as i8);
-        diff as i32
-    }
-}
-
-impl RiceCompressible for u16 {
-    const FSBITS: usize = 4;
-    const FSMAX: usize = 14;
-    const BBITS: usize = 16;
-    const BYTES_PER_ELEMENT: usize = 2;
-
-    fn compress(data: &[Self], block_size: usize) -> Result<Vec<u8>> {
-        let signed_data: Vec<i16> = data.iter().map(|&x| x as i16).collect();
-        compress::compress_rice(&signed_data, block_size)
-    }
-
-    fn decompress(compressed: &[u8], output_len: usize, block_size: usize) -> Result<Vec<Self>> {
-        let signed_result: Vec<i16> =
-            decompress::decompress_rice(compressed, output_len, block_size)?;
-        Ok(signed_result.into_iter().map(|x| x as Self).collect())
-    }
-
-    fn as_signed(self) -> i32 {
-        self as i16 as i32
-    }
-
-    fn from_signed(val: i32) -> Self {
-        val as Self
-    }
-
-    fn compute_difference(next_pix: i32, last_pix: i32) -> i32 {
-        let diff = (next_pix as i16).wrapping_sub(last_pix as i16);
-        diff as i32
-    }
-}
-
-impl RiceCompressible for i8 {
-    const FSBITS: usize = 3;
-    const FSMAX: usize = 6;
-    const BBITS: usize = 8;
-    const BYTES_PER_ELEMENT: usize = 1;
-
-    fn compress(data: &[Self], block_size: usize) -> Result<Vec<u8>> {
-        compress::compress_rice(data, block_size)
-    }
-
-    fn decompress(compressed: &[u8], output_len: usize, block_size: usize) -> Result<Vec<Self>> {
-        decompress::decompress_rice(compressed, output_len, block_size)
-    }
-
-    fn as_signed(self) -> i32 {
-        self as i32
-    }
-
-    fn from_signed(val: i32) -> Self {
-        val as Self
-    }
-
-    fn compute_difference(next_pix: i32, last_pix: i32) -> i32 {
-        let diff = (next_pix as Self).wrapping_sub(last_pix as Self);
-        diff as i32
-    }
-}
+rice_compressible!(i8, 3, 6);
+rice_compressible!(i16, 4, 14);
+rice_compressible!(i32, 5, 25);
 
 #[cfg(test)]
 mod tests {
@@ -182,22 +80,6 @@ mod tests {
         assert_eq!(i16::FSMAX, 14);
         assert_eq!(i16::BBITS, 16);
         assert_eq!(i16::BYTES_PER_ELEMENT, 2);
-    }
-
-    #[test]
-    fn test_u8_constants() {
-        assert_eq!(u8::FSBITS, 3);
-        assert_eq!(u8::FSMAX, 6);
-        assert_eq!(u8::BBITS, 8);
-        assert_eq!(u8::BYTES_PER_ELEMENT, 1);
-    }
-
-    #[test]
-    fn test_u16_constants() {
-        assert_eq!(u16::FSBITS, 4);
-        assert_eq!(u16::FSMAX, 14);
-        assert_eq!(u16::BBITS, 16);
-        assert_eq!(u16::BYTES_PER_ELEMENT, 2);
     }
 
     #[test]
@@ -231,28 +113,6 @@ mod tests {
     }
 
     #[test]
-    fn test_u8_as_signed() {
-        let val: u8 = 200;
-        assert_eq!(val.as_signed(), -56);
-    }
-
-    #[test]
-    fn test_u8_from_signed() {
-        assert_eq!(u8::from_signed(-56), 200);
-    }
-
-    #[test]
-    fn test_u16_as_signed() {
-        let val: u16 = 40000;
-        assert_eq!(val.as_signed(), -25536);
-    }
-
-    #[test]
-    fn test_u16_from_signed() {
-        assert_eq!(u16::from_signed(-25536), 40000);
-    }
-
-    #[test]
     fn test_i8_as_signed() {
         let val: i8 = -42;
         assert_eq!(val.as_signed(), -42);
@@ -275,20 +135,6 @@ mod tests {
         assert_eq!(i16::compute_difference(10, 5), 5);
         assert_eq!(i16::compute_difference(5, 10), -5);
         assert_eq!(i16::compute_difference(32767, -32768), -1);
-    }
-
-    #[test]
-    fn test_u8_compute_difference() {
-        assert_eq!(u8::compute_difference(10, 5), 5);
-        assert_eq!(u8::compute_difference(5, 10), -5);
-        assert_eq!(u8::compute_difference(127, -128), -1);
-    }
-
-    #[test]
-    fn test_u16_compute_difference() {
-        assert_eq!(u16::compute_difference(10, 5), 5);
-        assert_eq!(u16::compute_difference(5, 10), -5);
-        assert_eq!(u16::compute_difference(32767, -32768), -1);
     }
 
     #[test]
@@ -319,22 +165,6 @@ mod tests {
         let data = vec![1i8, 2, 3, 4, 5];
         let compressed = i8::compress(&data, 32).unwrap();
         let decompressed = i8::decompress(&compressed, data.len(), 32).unwrap();
-        assert_eq!(data, decompressed);
-    }
-
-    #[test]
-    fn test_u8_round_trip_compression() {
-        let data = vec![1u8, 2, 3, 4, 5];
-        let compressed = u8::compress(&data, 32).unwrap();
-        let decompressed = u8::decompress(&compressed, data.len(), 32).unwrap();
-        assert_eq!(data, decompressed);
-    }
-
-    #[test]
-    fn test_u16_round_trip_compression() {
-        let data = vec![1u16, 2, 3, 4, 5];
-        let compressed = u16::compress(&data, 32).unwrap();
-        let decompressed = u16::decompress(&compressed, data.len(), 32).unwrap();
         assert_eq!(data, decompressed);
     }
 
@@ -400,5 +230,24 @@ mod tests {
         let compressed = i32::compress(&data, 32).unwrap();
         let decompressed = i32::decompress(&compressed, 1000, 32).unwrap();
         assert_eq!(data, decompressed);
+    }
+
+    // One large difference among zeros sets a low split level, so its unary
+    // prefix runs past 32 bits.
+    #[test]
+    fn round_trip_with_a_lone_large_difference() {
+        let mut i32s = vec![0i32; 64];
+        i32s[31] = 1000;
+        let stream = i32::compress(&i32s, 32).unwrap();
+        assert_eq!(i32::decompress(&stream, 64, 32).unwrap(), i32s);
+
+        let mut i16s = vec![0i16; 64];
+        i16s[31] = 1000;
+        let stream = i16::compress(&i16s, 32).unwrap();
+        assert_eq!(i16::decompress(&stream, 64, 32).unwrap(), i16s);
+
+        let i8s: Vec<i8> = (0..64).map(|i| if i < 37 { 0 } else { -56 }).collect();
+        let stream = i8::compress(&i8s, 32).unwrap();
+        assert_eq!(i8::decompress(&stream, 64, 32).unwrap(), i8s);
     }
 }

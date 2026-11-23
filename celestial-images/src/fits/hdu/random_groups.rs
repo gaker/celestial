@@ -1,6 +1,10 @@
 use super::{HduTrait, HduType};
-use crate::fits::header::Header;
+use crate::core::types::BitPix;
+use crate::fits::data::scaling::{integer_value, Linear};
+use crate::fits::errors::{FitsError, Result};
+use crate::fits::header::parser::Header;
 use crate::fits::io::reader::HduInfo;
+use std::io::{Read, Seek, SeekFrom};
 
 #[derive(Debug)]
 pub struct RandomGroupsHdu {
@@ -8,8 +12,25 @@ pub struct RandomGroupsHdu {
     info: HduInfo,
 }
 
+// One group of FITS 4.0 §6: the parameters scaled by PSCALn and PZEROn,
+// and the array scaled by BSCALE and BZERO. Integer array values equal to
+// BLANK are NaN.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RandomGroup {
+    pub parameters: Vec<f64>,
+    pub array: Vec<f64>,
+}
+
+// The stored sizes of a random-groups data unit, in values.
+struct Shape {
+    bitpix: BitPix,
+    parameters: usize,
+    array: usize,
+    groups: usize,
+}
+
 impl RandomGroupsHdu {
-    pub fn new(header: Header, info: HduInfo) -> Self {
+    pub(crate) fn new(header: Header, info: HduInfo) -> Self {
         Self { header, info }
     }
 
@@ -28,6 +49,128 @@ impl RandomGroupsHdu {
     pub fn extension_version(&self) -> Option<i64> {
         self.header.get("EXTVER").as_i64()
     }
+
+    pub fn read_groups<R: Read + Seek>(&self, reader: &mut R) -> Result<Vec<RandomGroup>> {
+        let shape = self.shape()?;
+        let size = self.checked_data_size()?;
+        if shape.groups == 0 {
+            return Ok(Vec::new());
+        }
+        // With at least one group, the size check bounds PCOUNT by the data
+        // unit, so the scalings below cost no more than the data does.
+        let group_len = match shape.parameters.checked_add(shape.array) {
+            Some(0) | None => {
+                return Err(invalid(
+                    "random groups hold no values, or too many to count",
+                ))
+            }
+            Some(n) => n,
+        };
+        let scaling = GroupScaling::from_header(&self.header, shape.parameters)?;
+        reader.seek(SeekFrom::Start(self.info.data_start))?;
+        let mut bytes = vec![0u8; size];
+        reader.read_exact(&mut bytes)?;
+        Ok(stored(&bytes, shape.bitpix)
+            .chunks_exact(group_len)
+            .map(|group| scaling.group(group))
+            .collect())
+    }
+
+    // NAXIS1 = 0, and NAXIS2 ... NAXISn give the shape of each array.
+    fn shape(&self) -> Result<Shape> {
+        let count = |name: &str| super::table::layout::count(&self.header, name);
+        let axes = count("NAXIS")?;
+        let array = (2..=axes)
+            .try_fold(1usize, |n, i| {
+                n.checked_mul(count(&format!("NAXIS{i}")).ok()?)
+            })
+            .ok_or_else(|| invalid("random-groups axes are missing or too large"))?;
+        let bitpix = self.bitpix().ok_or_else(|| FitsError::KeywordNotFound {
+            keyword: "BITPIX".to_string(),
+        })?;
+        Ok(Shape {
+            bitpix,
+            parameters: count("PCOUNT")?,
+            array,
+            groups: count("GCOUNT")?,
+        })
+    }
+}
+
+// PSCALn and PZEROn for each parameter, and BSCALE, BZERO and BLANK for
+// the array.
+struct GroupScaling {
+    parameters: Vec<Linear>,
+    array: Linear,
+    blank: Option<i64>,
+}
+
+impl GroupScaling {
+    fn from_header(header: &Header, parameters: usize) -> Result<Self> {
+        Ok(Self {
+            parameters: (1..=parameters)
+                .map(|n| Linear::from_header(header, &format!("PSCAL{n}"), &format!("PZERO{n}")))
+                .collect::<Result<_>>()?,
+            array: Linear::from_header(header, "BSCALE", "BZERO")?,
+            blank: header.get_last("BLANK").value().and_then(integer_value),
+        })
+    }
+
+    // `values` holds every parameter, then the array.
+    fn group(&self, values: &[Stored]) -> RandomGroup {
+        let (parameters, array) = values.split_at(self.parameters.len().min(values.len()));
+        RandomGroup {
+            parameters: parameters
+                .iter()
+                .zip(&self.parameters)
+                .map(|(v, s)| v.physical(s, None))
+                .collect(),
+            array: array
+                .iter()
+                .map(|v| v.physical(&self.array, self.blank))
+                .collect(),
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+enum Stored {
+    Integer(i64),
+    Real(f64),
+}
+
+impl Stored {
+    fn physical(self, scale: &Linear, blank: Option<i64>) -> f64 {
+        match self {
+            Self::Integer(v) if Some(v) == blank => f64::NAN,
+            Self::Integer(v) => scale.apply(v as f64),
+            Self::Real(v) => scale.apply(v),
+        }
+    }
+}
+
+fn stored(bytes: &[u8], bitpix: BitPix) -> Vec<Stored> {
+    let size = bitpix.bytes_per_pixel();
+    bytes
+        .chunks_exact(size)
+        .map(|b| {
+            let mut be = [0u8; 8];
+            be[8 - size..].copy_from_slice(b);
+            let wide = u64::from_be_bytes(be);
+            match bitpix {
+                BitPix::U8 => Stored::Integer(wide as i64),
+                BitPix::I16 => Stored::Integer(i64::from(wide as u16 as i16)),
+                BitPix::I32 => Stored::Integer(i64::from(wide as u32 as i32)),
+                BitPix::I64 => Stored::Integer(wide as i64),
+                BitPix::F32 => Stored::Real(f64::from(f32::from_bits(wide as u32))),
+                BitPix::F64 => Stored::Real(f64::from_bits(wide)),
+            }
+        })
+        .collect()
+}
+
+fn invalid(message: &str) -> FitsError {
+    FitsError::InvalidFormat(message.to_string())
 }
 
 impl HduTrait for RandomGroupsHdu {
@@ -47,7 +190,8 @@ impl HduTrait for RandomGroupsHdu {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::fits::header::{Header, Keyword};
+    use crate::fits::header::keywords::Keyword;
+    use crate::fits::header::parser::Header;
     use crate::fits::io::reader::HduInfo;
 
     fn create_test_header(extname: Option<&str>, groups: bool) -> Header {

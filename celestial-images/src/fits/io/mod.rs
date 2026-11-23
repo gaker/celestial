@@ -1,5 +1,5 @@
+pub(crate) mod card;
 pub mod reader;
-pub mod writer;
-
-pub use reader::{ChecksumResult, FitsFile, FitsReader};
-pub use writer::FitsWriter;
+#[cfg(test)]
+pub(crate) mod test_support;
+pub(crate) mod writer;

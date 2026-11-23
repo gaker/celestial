@@ -149,8 +149,8 @@ pub struct BackgroundMap {
 /// labeling, centroiding, SNR filtering, and deduplication. Output is sorted by
 /// descending flux.
 ///
-/// Generic over any type implementing [`Pixel`] — `u8`, `u16`, `i16`, `i32`, `f32`,
-/// `f64` are all supported.
+/// Generic over any type implementing [`Pixel`]: `u8`, `i8`, `u16`, `i16`, `u32`,
+/// `i32`, `u64`, `i64`, `f32` and `f64` are all supported.
 ///
 /// # Examples
 ///

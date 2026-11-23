@@ -1,6 +1,19 @@
-use crate::xisf::header::SampleFormat;
+use crate::xisf::header::sample_format::SampleFormat;
 
-pub trait XisfDataType: Copy {
+// Callers can name `XisfDataType` in bounds but cannot implement it. The
+// reader and writer support only the sample types listed here.
+mod sealed {
+    pub trait Sealed {}
+
+    impl Sealed for u8 {}
+    impl Sealed for u16 {}
+    impl Sealed for u32 {}
+    impl Sealed for u64 {}
+    impl Sealed for f32 {}
+    impl Sealed for f64 {}
+}
+
+pub trait XisfDataType: sealed::Sealed + Copy {
     const SAMPLE_FORMAT: SampleFormat;
     fn to_le_bytes(data: &[Self]) -> Vec<u8>;
     fn from_le_bytes(bytes: &[u8]) -> Vec<Self>;
@@ -74,6 +87,31 @@ impl XisfDataType for u32 {
     }
 }
 
+impl XisfDataType for u64 {
+    const SAMPLE_FORMAT: SampleFormat = SampleFormat::UInt64;
+    fn to_le_bytes(data: &[Self]) -> Vec<u8> {
+        let mut bytes = Vec::with_capacity(data.len() * 8);
+        for &val in data {
+            bytes.extend_from_slice(&val.to_le_bytes());
+        }
+        bytes
+    }
+    fn from_le_bytes(bytes: &[u8]) -> Vec<Self> {
+        bytes
+            .as_chunks::<8>()
+            .0
+            .iter()
+            .map(|&c| Self::from_le_bytes(c))
+            .collect()
+    }
+    fn default_bounds() -> (f64, f64) {
+        (0.0, 18446744073709551615.0)
+    }
+    fn calculate_bounds(_data: &[Self]) -> (f64, f64) {
+        Self::default_bounds()
+    }
+}
+
 impl XisfDataType for f32 {
     const SAMPLE_FORMAT: SampleFormat = SampleFormat::Float32;
     fn to_le_bytes(data: &[Self]) -> Vec<u8> {
@@ -95,23 +133,7 @@ impl XisfDataType for f32 {
         (0.0, 1.0)
     }
     fn calculate_bounds(data: &[Self]) -> (f64, f64) {
-        if data.is_empty() {
-            return Self::default_bounds();
-        }
-        let mut min = f64::INFINITY;
-        let mut max = f64::NEG_INFINITY;
-        for &v in data {
-            let fv = v as f64;
-            if fv.is_finite() {
-                min = min.min(fv);
-                max = max.max(fv);
-            }
-        }
-        if min.is_infinite() || max.is_infinite() {
-            Self::default_bounds()
-        } else {
-            (min, max)
-        }
+        float_bounds(data.iter().map(|&v| f64::from(v)))
     }
 }
 
@@ -136,22 +158,23 @@ impl XisfDataType for f64 {
         (0.0, 1.0)
     }
     fn calculate_bounds(data: &[Self]) -> (f64, f64) {
-        if data.is_empty() {
-            return Self::default_bounds();
-        }
-        let mut min = Self::INFINITY;
-        let mut max = Self::NEG_INFINITY;
-        for &v in data {
-            if v.is_finite() {
-                min = min.min(v);
-                max = max.max(v);
-            }
-        }
-        if min.is_infinite() || max.is_infinite() {
-            Self::default_bounds()
-        } else {
-            (min, max)
-        }
+        float_bounds(data.iter().copied())
+    }
+}
+
+// The range of the finite samples. XISF 1.0 section 11.5.1 makes the bounds
+// a black point and a white point, so a range of one value, or of none, is
+// widened to include [0, 1].
+fn float_bounds(samples: impl Iterator<Item = f64>) -> (f64, f64) {
+    let (min, max) = samples
+        .filter(|v| v.is_finite())
+        .fold((f64::INFINITY, f64::NEG_INFINITY), |(min, max), v| {
+            (min.min(v), max.max(v))
+        });
+    if min < max {
+        (min, max)
+    } else {
+        (min.min(0.0), max.max(1.0))
     }
 }
 
@@ -176,6 +199,10 @@ mod tests {
             SampleFormat::UInt32
         ));
         assert!(matches!(
+            <u64 as XisfDataType>::SAMPLE_FORMAT,
+            SampleFormat::UInt64
+        ));
+        assert!(matches!(
             <f32 as XisfDataType>::SAMPLE_FORMAT,
             SampleFormat::Float32
         ));
@@ -183,6 +210,18 @@ mod tests {
             <f64 as XisfDataType>::SAMPLE_FORMAT,
             SampleFormat::Float64
         ));
+    }
+
+    #[test]
+    fn u64_roundtrip_preserves_values_and_encodes_little_endian() {
+        let original: Vec<u64> = vec![0, (1 << 53) + 1, 0x0123_4567_89AB_CDEF, u64::MAX];
+        let bytes = <u64 as XisfDataType>::to_le_bytes(&original);
+        assert_eq!(&bytes[16..24], &0x0123_4567_89AB_CDEFu64.to_le_bytes());
+        assert_eq!(<u64 as XisfDataType>::from_le_bytes(&bytes), original);
+        assert_eq!(
+            <u64 as XisfDataType>::default_bounds(),
+            (0.0, 18446744073709551615.0)
+        );
     }
 
     #[test]

@@ -1,8 +1,8 @@
 use super::bitbuffer::BitWriter;
 use super::RiceCompressible;
-use crate::fits::Result;
+use crate::fits::errors::Result;
 
-pub fn compress_rice<T: RiceCompressible>(data: &[T], block_size: usize) -> Result<Vec<u8>> {
+pub(super) fn compress_rice<T: RiceCompressible>(data: &[T], block_size: usize) -> Result<Vec<u8>> {
     if data.is_empty() {
         return Ok(Vec::new());
     }
@@ -74,8 +74,11 @@ fn map_signed_to_unsigned(pdiff: i32) -> u32 {
     }
 }
 
+// Half the block length is an integer division, so an odd block subtracts
+// the rounded-down half.
 fn calculate_split_level(pixel_sum: f64, block_size: usize) -> usize {
-    let dpsum = (pixel_sum - (block_size as f64 / 2.0) - 1.0) / block_size as f64;
+    let half = (block_size / 2) as f64;
+    let dpsum = (pixel_sum - half - 1.0) / block_size as f64;
     let dpsum = dpsum.max(0.0);
     let mut psum = (dpsum as u32) >> 1;
     let mut fs = 0;
@@ -131,10 +134,16 @@ fn write_rice_coded_block<T: RiceCompressible>(
     Ok(())
 }
 
+// The unary prefix is `top` zero bits, then a one bit. The split level comes
+// from the block's mean, so one large difference among small ones can need
+// more than the 32 bits `output_nbits` writes at once.
 fn write_rice_value(writer: &mut BitWriter, v: u32, fs: usize, fsmask: u32) -> Result<()> {
-    let top = v >> fs;
-
-    writer.output_nbits(1, (top + 1) as usize)?;
+    let mut zeros = (v >> fs) as usize;
+    while zeros >= 32 {
+        writer.output_nbits(0, 32)?;
+        zeros -= 32;
+    }
+    writer.output_nbits(1, zeros + 1)?;
 
     if fs > 0 {
         writer.output_nbits(v & fsmask, fs)?;
@@ -246,20 +255,6 @@ mod tests {
     fn test_compress_rice_i8() {
         let data = vec![1i8, 2, 3, 4, 5];
         let result = compress_rice(&data, 32).unwrap();
-        assert!(!result.is_empty());
-    }
-
-    #[test]
-    fn test_compress_rice_u8() {
-        let data = vec![1u8, 2, 3, 4, 5];
-        let result = u8::compress(&data, 32).unwrap();
-        assert!(!result.is_empty());
-    }
-
-    #[test]
-    fn test_compress_rice_u16() {
-        let data = vec![1u16, 2, 3, 4, 5];
-        let result = u16::compress(&data, 32).unwrap();
         assert!(!result.is_empty());
     }
 
@@ -408,5 +403,20 @@ mod tests {
             map_signed_to_unsigned(i32::MAX),
             (i32::MAX as u32).wrapping_mul(2)
         );
+    }
+
+    // For a block of 3 the mean subtracts 3 / 2 = 1 in integer arithmetic.
+    // A mapped sum of 8 gives (8 - 1 - 1) / 3 = 2 and split level 1, where
+    // subtracting 1.5 gives 1.83 and split level 0.
+    #[test]
+    fn split_level_of_an_odd_block_halves_its_length_as_an_integer() {
+        assert_eq!(calculate_split_level(8.0, 3), 1);
+
+        // Mapped differences 0, 8, 0. After the 32-bit first value, the five
+        // FS bits hold the split level plus one.
+        let data = [0i32, 4, 4];
+        let compressed = compress_rice(&data, 32).unwrap();
+        assert_eq!(compressed[4] >> 3, 2);
+        assert_eq!(i32::decompress(&compressed, 3, 32).unwrap(), data);
     }
 }

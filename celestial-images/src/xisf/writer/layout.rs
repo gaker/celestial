@@ -1,16 +1,12 @@
 use super::{ImageData, PropertyDataBlock, XisfWriter, HEADER_ALIGNMENT, XISF_SIGNATURE};
-use crate::xisf::header::{DataLocation, XisfCompression};
-use crate::xisf::{Result, XisfError};
+use crate::xisf::errors::{Result, XisfError};
+use crate::xisf::header::checksum::Checksum;
+use crate::xisf::header::compression::XisfCompression;
+use crate::xisf::header::location::DataLocation;
 use byteorder::{LittleEndian, WriteBytesExt};
+use flate2::write::ZlibEncoder;
+use flate2::Compression;
 use std::io::{Seek, Write};
-
-pub(super) fn build_geometry(width: usize, height: usize, channels: usize) -> Vec<usize> {
-    if channels > 1 {
-        vec![width, height, channels]
-    } else {
-        vec![width, height]
-    }
-}
 
 pub(super) fn pad_to_alignment(data: &[u8], alignment: usize) -> Vec<u8> {
     let mut padded = data.to_vec();
@@ -30,39 +26,52 @@ pub(super) fn align_to(size: usize, alignment: usize) -> usize {
     }
 }
 
+// Largest input of the reference codecs: LZ4_MAX_INPUT_SIZE, and the 32-bit
+// length of zlib. A larger block would need subblocks (XISF 1.0 section
+// 10.6), so the writer stores it uncompressed instead.
+const LZ4_MAX_INPUT: usize = 0x7E00_0000;
+const ZLIB_MAX_INPUT: u64 = u32::MAX as u64;
+
+// Returns the bytes to store and the codec they are stored with. A block
+// that the codec does not make smaller is stored uncompressed. The writer
+// has no zstd encoder, so zstd is an error.
 pub(super) fn compress_data(
     compression: XisfCompression,
     data: &[u8],
-) -> (Vec<u8>, XisfCompression) {
+) -> Result<(Vec<u8>, XisfCompression)> {
+    if compression == XisfCompression::Zstd {
+        return Err(XisfError::UnsupportedCodec(
+            compression.as_str().to_string(),
+        ));
+    }
+    Ok(match encode(compression, data) {
+        Some(compressed) if compressed.len() < data.len() => (compressed, compression),
+        _ => (data.to_vec(), XisfCompression::None),
+    })
+}
+
+// None for no compression, or when the block is too large for the codec.
+fn encode(compression: XisfCompression, data: &[u8]) -> Option<Vec<u8>> {
     match compression {
-        XisfCompression::None => (data.to_vec(), XisfCompression::None),
-        XisfCompression::Lz4 | XisfCompression::Lz4Hc => {
-            let compressed = lz4_flex::compress_prepend_size(data);
-            if compressed.len() < data.len() {
-                (compressed, compression)
-            } else {
-                (data.to_vec(), XisfCompression::None)
-            }
-        }
-        XisfCompression::Zlib => {
-            use flate2::write::ZlibEncoder;
-            use flate2::Compression;
-            let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
-            if encoder.write_all(data).is_ok() {
-                if let Ok(compressed) = encoder.finish() {
-                    if compressed.len() < data.len() {
-                        return (compressed, XisfCompression::Zlib);
-                    }
-                }
-            }
-            (data.to_vec(), XisfCompression::None)
-        }
-        XisfCompression::Zstd => (data.to_vec(), XisfCompression::None),
+        XisfCompression::None | XisfCompression::Zstd => None,
+        XisfCompression::Lz4 | XisfCompression::Lz4Hc if data.len() > LZ4_MAX_INPUT => None,
+        XisfCompression::Zlib if data.len() as u64 > ZLIB_MAX_INPUT => None,
+        // XISF stores raw LZ4 blocks; the size is in the compression attribute.
+        XisfCompression::Lz4 | XisfCompression::Lz4Hc => Some(lz4_flex::block::compress(data)),
+        XisfCompression::Zlib => zlib(data),
     }
 }
 
+// The encoder writes to a Vec, which does not fail, so an error here stores
+// the block uncompressed.
+fn zlib(data: &[u8]) -> Option<Vec<u8>> {
+    let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
+    encoder.write_all(data).ok()?;
+    encoder.finish().ok()
+}
+
 pub(super) fn build_property_blocks(
-    properties: &[crate::xisf::header::XisfProperty],
+    properties: &[crate::xisf::header::property::XisfProperty],
 ) -> Vec<PropertyDataBlock> {
     let mut blocks = Vec::new();
     for (index, property) in properties.iter().enumerate() {
@@ -72,6 +81,7 @@ pub(super) fn build_property_blocks(
                     property_index: index,
                     data,
                     location: DataLocation::new(0, 0),
+                    checksum: None,
                 });
             }
         }
@@ -79,11 +89,14 @@ pub(super) fn build_property_blocks(
     blocks
 }
 
-pub(super) fn set_placeholder_offsets(
+// Places the property blocks, then the image blocks, one after another
+// from `first_offset`.
+pub(super) fn assign_offsets(
     property_blocks: &mut [PropertyDataBlock],
     images: &mut [ImageData],
+    first_offset: u64,
 ) {
-    let mut offset = 0u64;
+    let mut offset = first_offset;
     for block in property_blocks.iter_mut() {
         let size = block.data.len() as u64;
         block.location = DataLocation::new(offset, size);
@@ -95,25 +108,33 @@ pub(super) fn set_placeholder_offsets(
     }
 }
 
-pub(super) fn calculate_final_offsets(
+// Attached blocks follow the signature, the 8-byte header length field and
+// the padded XML header.
+fn first_block_offset(padded_xml_size: usize) -> u64 {
+    (XISF_SIGNATURE.len() + 8 + padded_xml_size) as u64
+}
+
+// XISF 1.0 section 10.5: the digest covers the block as stored, so a
+// compressed block is hashed compressed (section 10.6.2).
+pub(super) fn add_sha1_checksums(
     property_blocks: &mut [PropertyDataBlock],
     images: &mut [ImageData],
-    padded_xml_size: usize,
 ) {
-    let header_size = XISF_SIGNATURE.len() + 8 + padded_xml_size;
-    let mut offset = header_size as u64;
     for block in property_blocks.iter_mut() {
-        let size = block.data.len() as u64;
-        block.location = DataLocation::new(offset, size);
-        offset += size;
+        block.checksum = Some(Checksum::sha1(&block.data));
     }
     for image in images.iter_mut() {
-        image.info.location = DataLocation::new(offset, image.data.len() as u64);
-        offset += image.data.len() as u64;
+        image.info.checksum = Some(Checksum::sha1(&image.data));
     }
 }
 
-pub(super) fn write_header_length<W: Write>(writer: &mut W, length: u32) -> Result<()> {
+pub(super) fn write_header_length<W: Write>(writer: &mut W, length: usize) -> Result<()> {
+    let length = u32::try_from(length).map_err(|_| {
+        XisfError::InvalidFormat(format!(
+            "The XML header is {length} bytes; its length field holds at most {}",
+            u32::MAX
+        ))
+    })?;
     writer.write_u32::<LittleEndian>(length)?;
     writer.write_u32::<LittleEndian>(0)?;
     Ok(())
@@ -136,14 +157,23 @@ pub(super) fn write_image_data<W: Write>(writer: &mut W, images: &[ImageData]) -
     Ok(())
 }
 
-pub(super) fn generate_final_xml<W: Write + Seek>(writer: &mut XisfWriter<W>) -> Result<Vec<u8>> {
-    set_placeholder_offsets(&mut writer.property_blocks, &mut writer.images);
-    let first_pass = super::xml::generate_xml_content(writer)?;
+// `created` is the XISF:CreationTime value.
+pub(super) fn generate_final_xml<W: Write + Seek>(
+    writer: &mut XisfWriter<W>,
+    created: &str,
+) -> Result<Vec<u8>> {
+    assign_offsets(&mut writer.property_blocks, &mut writer.images, 0);
+    let first_pass = super::xml::generate_xml_content(writer, created)?;
     let mut padded_size = align_to(first_pass.len(), HEADER_ALIGNMENT);
 
     loop {
-        calculate_final_offsets(&mut writer.property_blocks, &mut writer.images, padded_size);
-        let final_xml = super::xml::generate_xml_content(writer)?;
+        let first_offset = first_block_offset(padded_size);
+        assign_offsets(
+            &mut writer.property_blocks,
+            &mut writer.images,
+            first_offset,
+        );
+        let final_xml = super::xml::generate_xml_content(writer, created)?;
         let actual_padded = align_to(final_xml.len(), HEADER_ALIGNMENT);
 
         if actual_padded <= padded_size {
@@ -154,8 +184,10 @@ pub(super) fn generate_final_xml<W: Write + Seek>(writer: &mut XisfWriter<W>) ->
 }
 
 pub(super) fn validate_data_length(data_len: usize, geometry: &[usize]) -> Result<()> {
-    let expected_pixels: usize = geometry.iter().product();
-    if data_len != expected_pixels {
+    let expected_pixels = geometry
+        .iter()
+        .try_fold(1usize, |acc, &d| acc.checked_mul(d));
+    if expected_pixels != Some(data_len) {
         return Err(XisfError::InvalidFormat(format!(
             "Data length {} does not match geometry {:?}",
             data_len, geometry
@@ -167,19 +199,25 @@ pub(super) fn validate_data_length(data_len: usize, geometry: &[usize]) -> Resul
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::xisf::header::{ImageInfo, XisfProperty, XisfPropertyValue};
+    use crate::xisf::header::image_info::ImageInfo;
+    use crate::xisf::header::property::{XisfProperty, XisfPropertyValue};
 
     fn make_image(size: u64) -> ImageData {
         ImageData {
             info: ImageInfo {
                 geometry: vec![10, 10],
-                sample_format: crate::xisf::header::SampleFormat::UInt8,
+                sample_format: crate::xisf::header::sample_format::SampleFormat::UInt8,
                 bounds: (0.0, 255.0),
-                color_space: crate::xisf::header::ColorSpace::Gray,
-                pixel_storage: crate::xisf::header::PixelStorage::Planar,
+                color_space: crate::xisf::header::color_space::ColorSpace::Gray,
+                pixel_storage: crate::xisf::header::pixel_storage::PixelStorage::Planar,
                 location: DataLocation::new(0, 0),
                 compression: XisfCompression::None,
                 uncompressed_size: None,
+                shuffle_item_size: None,
+                subblocks: Vec::new(),
+                byte_order: crate::core::types::ByteOrder::LittleEndian,
+                checksum: None,
+                block_defect: None,
             },
             data: vec![0u8; size as usize],
         }
@@ -190,19 +228,8 @@ mod tests {
             property_index,
             data: vec![0u8; size],
             location: DataLocation::new(0, 0),
+            checksum: None,
         }
-    }
-
-    #[test]
-    fn build_geometry_single_channel_is_two_dim() {
-        assert_eq!(build_geometry(1920, 1080, 1), vec![1920, 1080]);
-        assert_eq!(build_geometry(100, 50, 0), vec![100, 50]);
-    }
-
-    #[test]
-    fn build_geometry_multi_channel_is_three_dim() {
-        assert_eq!(build_geometry(1920, 1080, 3), vec![1920, 1080, 3]);
-        assert_eq!(build_geometry(64, 64, 4), vec![64, 64, 4]);
     }
 
     #[test]
@@ -250,7 +277,7 @@ mod tests {
     #[test]
     fn compress_data_none_returns_passthrough() {
         let data = vec![1u8, 2, 3, 4];
-        let (out, used) = compress_data(XisfCompression::None, &data);
+        let (out, used) = compress_data(XisfCompression::None, &data).unwrap();
         assert_eq!(out, data);
         assert_eq!(used, XisfCompression::None);
     }
@@ -258,7 +285,7 @@ mod tests {
     #[test]
     fn compress_data_lz4_shrinks_compressible_data() {
         let data = vec![0u8; 4096];
-        let (out, used) = compress_data(XisfCompression::Lz4, &data);
+        let (out, used) = compress_data(XisfCompression::Lz4, &data).unwrap();
         assert!(out.len() < data.len());
         assert_eq!(used, XisfCompression::Lz4);
     }
@@ -266,7 +293,7 @@ mod tests {
     #[test]
     fn compress_data_lz4_hc_preserves_variant_on_success() {
         let data = vec![42u8; 2048];
-        let (out, used) = compress_data(XisfCompression::Lz4Hc, &data);
+        let (out, used) = compress_data(XisfCompression::Lz4Hc, &data).unwrap();
         assert!(out.len() < data.len());
         assert_eq!(used, XisfCompression::Lz4Hc);
     }
@@ -274,15 +301,25 @@ mod tests {
     #[test]
     fn compress_data_lz4_falls_back_when_output_not_smaller() {
         let data = vec![7u8, 42, 99];
-        let (out, used) = compress_data(XisfCompression::Lz4, &data);
+        let (out, used) = compress_data(XisfCompression::Lz4, &data).unwrap();
         assert_eq!(out, data);
         assert_eq!(used, XisfCompression::None);
     }
 
     #[test]
+    fn compress_data_lz4_writes_a_raw_lz4_block() {
+        let data: Vec<u8> = (0..4096u32).map(|i| (i % 7) as u8).collect();
+        for codec in [XisfCompression::Lz4, XisfCompression::Lz4Hc] {
+            let (out, used) = compress_data(codec, &data).unwrap();
+            assert_eq!(used, codec);
+            assert_eq!(lz4_flex::block::decompress(&out, data.len()).unwrap(), data);
+        }
+    }
+
+    #[test]
     fn compress_data_zlib_shrinks_compressible_data() {
         let data = vec![5u8; 4096];
-        let (out, used) = compress_data(XisfCompression::Zlib, &data);
+        let (out, used) = compress_data(XisfCompression::Zlib, &data).unwrap();
         assert!(out.len() < data.len());
         assert_eq!(used, XisfCompression::Zlib);
     }
@@ -290,17 +327,19 @@ mod tests {
     #[test]
     fn compress_data_zlib_falls_back_when_not_smaller() {
         let data = vec![1u8, 2];
-        let (out, used) = compress_data(XisfCompression::Zlib, &data);
+        let (out, used) = compress_data(XisfCompression::Zlib, &data).unwrap();
         assert_eq!(out, data);
         assert_eq!(used, XisfCompression::None);
     }
 
     #[test]
-    fn compress_data_zstd_always_falls_back() {
+    fn compress_data_rejects_zstd() {
         let data = vec![0u8; 1024];
-        let (out, used) = compress_data(XisfCompression::Zstd, &data);
-        assert_eq!(out, data);
-        assert_eq!(used, XisfCompression::None);
+        let err = compress_data(XisfCompression::Zstd, &data).unwrap_err();
+        assert!(
+            matches!(&err, XisfError::UnsupportedCodec(codec) if codec == "zstd"),
+            "{err}"
+        );
     }
 
     #[test]
@@ -342,10 +381,10 @@ mod tests {
     }
 
     #[test]
-    fn set_placeholder_offsets_chains_across_blocks_and_images() {
+    fn assign_offsets_chains_across_blocks_and_images() {
         let mut blocks = vec![make_block(0, 16), make_block(1, 32)];
         let mut images = vec![make_image(100), make_image(200)];
-        set_placeholder_offsets(&mut blocks, &mut images);
+        assign_offsets(&mut blocks, &mut images, 0);
         assert_eq!(blocks[0].location.offset, 0);
         assert_eq!(blocks[0].location.size, 16);
         assert_eq!(blocks[1].location.offset, 16);
@@ -357,21 +396,22 @@ mod tests {
     }
 
     #[test]
-    fn calculate_final_offsets_starts_after_signature_and_xml() {
+    fn first_block_offset_starts_after_signature_and_xml() {
         let mut blocks = vec![make_block(0, 10)];
         let mut images = vec![make_image(20)];
         let padded_xml_size = 64;
-        calculate_final_offsets(&mut blocks, &mut images, padded_xml_size);
+        let first_offset = first_block_offset(padded_xml_size);
+        assign_offsets(&mut blocks, &mut images, first_offset);
         let header_size = XISF_SIGNATURE.len() + 8 + padded_xml_size;
         assert_eq!(blocks[0].location.offset, header_size as u64);
         assert_eq!(images[0].info.location.offset, (header_size + 10) as u64);
     }
 
     #[test]
-    fn calculate_final_offsets_with_no_blocks_places_image_at_header_end() {
+    fn assign_offsets_with_no_blocks_places_image_at_header_end() {
         let mut blocks: Vec<PropertyDataBlock> = Vec::new();
         let mut images = vec![make_image(50)];
-        calculate_final_offsets(&mut blocks, &mut images, 32);
+        assign_offsets(&mut blocks, &mut images, first_block_offset(32));
         let header_size = XISF_SIGNATURE.len() + 8 + 32;
         assert_eq!(images[0].info.location.offset, header_size as u64);
     }
@@ -386,17 +426,37 @@ mod tests {
     }
 
     #[test]
+    fn write_header_length_rejects_a_length_past_u32() {
+        let mut buf = Vec::new();
+        write_header_length(&mut buf, u32::MAX as usize).unwrap();
+        assert_eq!(&buf[..4], &[0xFF; 4]);
+
+        let error = write_header_length(&mut buf, 1 << 32)
+            .err()
+            .map(|e| e.to_string());
+        assert_eq!(
+            error.as_deref(),
+            Some(
+                "Invalid XISF format: The XML header is 4294967296 bytes; \
+                 its length field holds at most 4294967295"
+            )
+        );
+    }
+
+    #[test]
     fn write_property_data_concatenates_block_bytes() {
         let blocks = vec![
             PropertyDataBlock {
                 property_index: 0,
                 data: vec![1, 2, 3],
                 location: DataLocation::new(0, 3),
+                checksum: None,
             },
             PropertyDataBlock {
                 property_index: 1,
                 data: vec![4, 5],
                 location: DataLocation::new(3, 2),
+                checksum: None,
             },
         ];
         let mut buf = Vec::new();
@@ -426,6 +486,12 @@ mod tests {
         assert!(validate_data_length(100, &[10, 10]).is_ok());
         assert!(validate_data_length(300, &[10, 10, 3]).is_ok());
         assert!(validate_data_length(0, &[0, 5]).is_ok());
+    }
+
+    #[test]
+    fn validate_data_length_rejects_overflowing_geometry() {
+        assert!(validate_data_length(0, &[usize::MAX, 2]).is_err());
+        assert!(validate_data_length(0, &[usize::MAX / 2, 2, 3]).is_err());
     }
 
     #[test]

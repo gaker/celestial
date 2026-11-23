@@ -1,4 +1,4 @@
-use celestial_images::formats::Image;
+use celestial_images::formats::image::Image;
 
 /// Reads the raw `DATE-OBS` string from image headers.
 ///
@@ -11,7 +11,7 @@ use celestial_images::formats::Image;
 /// ```rust,ignore
 /// use celestial_solver::observation::date_obs_from_image;
 ///
-/// # let img = celestial_images::formats::Image::open("f.fits")?;
+/// # let img = celestial_images::formats::image::Image::open("f.fits")?;
 /// let label = date_obs_from_image(&img).unwrap_or_default();
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
@@ -22,8 +22,8 @@ pub fn date_obs_from_image(img: &Image) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use celestial_images::fits::header::Keyword;
-    use celestial_images::formats::PixelData;
+    use celestial_images::fits::header::keywords::Keyword;
+    use celestial_images::formats::pixel_data::PixelData;
 
     fn stub_image() -> Image {
         Image::new(PixelData::F32(vec![0.0; 4]), [2, 2])

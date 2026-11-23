@@ -6,23 +6,29 @@ pub enum ImageError {
     #[error("Format detection failed: {0}")]
     FormatDetectionFailed(String),
 
-    #[error("Data type mismatch: expected {expected:?}, got {actual:?}")]
-    TypeMismatch {
-        expected: crate::core::BitPix,
-        actual: crate::core::BitPix,
-    },
-
-    #[error("Invalid BITPIX value: {0}")]
-    InvalidBitPix(i32),
-
     #[error("FITS error: {0}")]
-    Fits(#[from] crate::fits::FitsError),
+    Fits(#[from] crate::fits::errors::FitsError),
 
     #[error("XISF error: {0}")]
-    Xisf(#[from] crate::xisf::XisfError),
+    Xisf(#[from] crate::xisf::errors::XisfError),
 
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
+
+    #[error("Pixel conversion: {0}")]
+    PixelConversion(String),
+
+    #[error("Invalid dimensions: {0}")]
+    InvalidDimensions(String),
+
+    #[error("Invalid input: {0}")]
+    InvalidInput(String),
+
+    #[error("PNG error: {0}")]
+    Png(String),
+
+    #[error("TIFF error: {0}")]
+    Tiff(String),
 }
 
 pub type Result<T> = std::result::Result<T, ImageError>;
@@ -30,7 +36,6 @@ pub type Result<T> = std::result::Result<T, ImageError>;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::BitPix;
     use std::io::{Error, ErrorKind};
 
     #[test]
@@ -49,20 +54,14 @@ mod tests {
     }
 
     #[test]
-    fn type_mismatch_error_display() {
-        let error = ImageError::TypeMismatch {
-            expected: BitPix::F32,
-            actual: BitPix::I16,
-        };
-        assert!(error.to_string().contains("Data type mismatch"));
-        assert!(error.to_string().contains("F32"));
-        assert!(error.to_string().contains("I16"));
-    }
-
-    #[test]
-    fn invalid_bitpix_error_display() {
-        let error = ImageError::InvalidBitPix(99);
-        assert_eq!(error.to_string(), "Invalid BITPIX value: 99");
+    fn invalid_dimensions_and_input_display() {
+        let error = ImageError::InvalidDimensions("width must be nonzero".to_string());
+        assert_eq!(
+            error.to_string(),
+            "Invalid dimensions: width must be nonzero"
+        );
+        let error = ImageError::InvalidInput("no finite samples".to_string());
+        assert_eq!(error.to_string(), "Invalid input: no finite samples");
     }
 
     #[test]
@@ -100,16 +99,6 @@ mod tests {
         let error_chain = image_error.to_string();
         assert!(error_chain.contains("I/O error"));
         assert!(error_chain.contains("Access denied"));
-    }
-
-    #[test]
-    fn extreme_bitpix_values() {
-        let extreme_values = [i32::MIN, i32::MAX, 0, -1, 1, 999999, -999999];
-
-        for &value in &extreme_values {
-            let error = ImageError::InvalidBitPix(value);
-            assert!(error.to_string().contains(&value.to_string()));
-        }
     }
 
     #[test]

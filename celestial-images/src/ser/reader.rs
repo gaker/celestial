@@ -1,72 +1,39 @@
-use crate::ser::{Result, SerError, SerFrame, SerFrameId, SerHeader, SerTimestamp};
+use crate::core::types::ByteOrder;
+use crate::ser::error::{Result, SerError};
+use crate::ser::header::{SerHeader, HEADER_SIZE, TIMESTAMP_SIZE};
+use crate::ser::timestamp::SerTimestamp;
+use crate::ser::types::{SerFrame, SerFrameId};
 use memmap2::Mmap;
 use std::fs::File;
-use std::io::Read;
+use std::ops::Range;
 use std::path::Path;
 
 pub struct SerReader {
     header: SerHeader,
-    mmap: Option<Mmap>,
-    _file: Option<File>, // Kept to maintain mmap validity
-    frame_data_offset: u64,
-    trailer_offset: Option<u64>,
+    mmap: Mmap,
+    has_trailer: bool,
 }
 
 impl SerReader {
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Self> {
         let file = File::open(path)?;
-        let metadata = file.metadata()?;
+        let length = file.metadata()?.len();
 
-        if metadata.len() < 178 {
+        if length < HEADER_SIZE as u64 {
             return Err(SerError::FileTruncated {
-                expected: 178,
-                actual: metadata.len(),
+                expected: HEADER_SIZE as u64,
+                actual: length,
             });
         }
 
         let mmap = unsafe { Mmap::map(&file)? };
-        let header = SerHeader::from_bytes(&mmap[0..178])?;
-
-        let expected_size = Self::calculate_expected_file_size(&header);
-        if metadata.len() < expected_size {
-            return Err(SerError::FileTruncated {
-                expected: expected_size,
-                actual: metadata.len(),
-            });
-        }
-
-        let trailer_offset = if header.has_trailer() {
-            Some(crate::ser::types::SerFile::calculate_trailer_offset(
-                header.frame_count,
-                header.image_width,
-                header.image_height,
-                header.bytes_per_pixel(),
-            ))
-        } else {
-            None
-        };
+        let header = SerHeader::from_bytes(&mmap)?;
+        let has_trailer = trailer_present(&header, length)?;
 
         Ok(Self {
             header,
-            mmap: Some(mmap),
-            _file: Some(file),
-            frame_data_offset: 178,
-            trailer_offset,
-        })
-    }
-
-    pub fn from_reader<R: Read>(mut reader: R) -> Result<Self> {
-        let mut header_bytes = [0u8; 178];
-        reader.read_exact(&mut header_bytes)?;
-
-        let header = SerHeader::from_bytes(&header_bytes)?;
-
-        Ok(Self {
-            header,
-            mmap: None,
-            _file: None,
-            frame_data_offset: 178,
-            trailer_offset: None,
+            mmap,
+            has_trailer,
         })
     }
 
@@ -76,6 +43,10 @@ impl SerReader {
 
     pub fn frame_count(&self) -> u32 {
         self.header.frame_count
+    }
+
+    pub fn has_timestamps(&self) -> bool {
+        self.has_trailer
     }
 
     pub fn is_color(&self) -> bool {
@@ -91,483 +62,283 @@ impl SerReader {
     }
 
     pub fn read_frame(&self, frame_id: SerFrameId) -> Result<SerFrame<'_>> {
-        if frame_id >= self.header.frame_count {
-            return Err(SerError::FrameOutOfBounds {
-                frame: frame_id,
-                total: self.header.frame_count,
-            });
-        }
-
-        let frame_size = self.header.frame_size();
-        let frame_offset = self.frame_data_offset + (frame_id as u64 * frame_size);
-
-        if let Some(ref mmap) = self.mmap {
-            let end_offset = frame_offset + frame_size;
-            if end_offset > mmap.len() as u64 {
-                return Err(SerError::FileTruncated {
-                    expected: end_offset,
-                    actual: mmap.len() as u64,
-                });
-            }
-
-            let data = &mmap[frame_offset as usize..end_offset as usize];
-            let timestamp = self.read_timestamp(frame_id)?;
-
-            Ok(SerFrame::new(frame_id, data, timestamp))
-        } else {
-            Err(SerError::InvalidHeader(
-                "No memory map available".to_string(),
-            ))
-        }
+        Ok(SerFrame {
+            id: frame_id,
+            data: self.frame_slice(frame_id)?,
+            timestamp: self.read_timestamp(frame_id)?,
+        })
     }
 
     pub fn read_frame_data(&self, frame_id: SerFrameId) -> Result<Vec<u8>> {
-        let frame = self.read_frame(frame_id)?;
-        Ok(frame.data.to_vec())
+        Ok(self.frame_slice(frame_id)?.to_vec())
+    }
+
+    // Samples of depth 9 to 15 are returned as stored, in the low bits.
+    pub fn read_frame_u16(&self, frame_id: SerFrameId) -> Result<Vec<u16>> {
+        let depth = self.header.pixel_depth_per_plane;
+        if depth <= 8 {
+            return Err(SerError::NotSixteenBit { depth });
+        }
+        let (samples, _) = self.frame_slice(frame_id)?.as_chunks::<2>();
+        let decode = match self.header.byte_order {
+            ByteOrder::LittleEndian => u16::from_le_bytes,
+            ByteOrder::BigEndian => u16::from_be_bytes,
+        };
+        Ok(samples.iter().map(|&sample| decode(sample)).collect())
     }
 
     pub fn read_timestamp(&self, frame_id: SerFrameId) -> Result<Option<SerTimestamp>> {
-        if !self.header.has_trailer() {
+        self.check_frame_id(frame_id)?;
+        if !self.has_trailer {
             return Ok(None);
         }
-
-        if frame_id >= self.header.frame_count {
-            return Err(SerError::FrameOutOfBounds {
-                frame: frame_id,
-                total: self.header.frame_count,
-            });
-        }
-
-        if let (Some(ref mmap), Some(trailer_offset)) = (&self.mmap, self.trailer_offset) {
-            let timestamp_offset = trailer_offset + (frame_id as u64 * 8);
-            let end_offset = timestamp_offset + 8;
-
-            if end_offset > mmap.len() as u64 {
-                return Err(SerError::FileTruncated {
-                    expected: end_offset,
-                    actual: mmap.len() as u64,
-                });
-            }
-
-            let timestamp_bytes = &mmap[timestamp_offset as usize..end_offset as usize];
-            Ok(Some(SerTimestamp::from_bytes(timestamp_bytes)))
-        } else {
-            Ok(None)
-        }
+        let start = self.header.timestamp_offset(frame_id)?;
+        let bytes = self.mapped_bytes(start, TIMESTAMP_SIZE)?;
+        let mut ticks = [0u8; 8];
+        ticks.copy_from_slice(bytes);
+        Ok(Some(SerTimestamp::from_le_bytes(ticks)))
     }
 
     pub fn iter_frames(&self) -> FrameIterator<'_> {
-        FrameIterator::new(self, 0, self.header.frame_count)
+        FrameIterator {
+            reader: self,
+            ids: 0..self.header.frame_count,
+        }
     }
 
-    pub fn iter_frames_range(&self, start: SerFrameId, count: u32) -> FrameIterator<'_> {
-        let end = (start + count).min(self.header.frame_count);
-        FrameIterator::new(self, start, end)
+    pub fn iter_frames_range(&self, start: SerFrameId, count: u32) -> Result<FrameIterator<'_>> {
+        Ok(FrameIterator {
+            reader: self,
+            ids: self.frame_ids(start, count)?,
+        })
     }
 
     pub fn frame_slice(&self, frame_id: SerFrameId) -> Result<&[u8]> {
+        self.check_frame_id(frame_id)?;
+        let start = self.header.frame_offset(frame_id)?;
+        self.mapped_bytes(start, self.header.frame_size()?)
+    }
+
+    pub fn frame_slices(&self, start: SerFrameId, count: u32) -> Result<Vec<(SerFrameId, &[u8])>> {
+        self.frame_ids(start, count)?
+            .map(|frame_id| Ok((frame_id, self.frame_slice(frame_id)?)))
+            .collect()
+    }
+
+    // `count` is cut to the frames that exist; a start past the last frame is an error.
+    fn frame_ids(&self, start: SerFrameId, count: u32) -> Result<Range<SerFrameId>> {
+        let total = self.header.frame_count;
+        if start > total {
+            return Err(SerError::FrameOutOfBounds {
+                frame: start,
+                total,
+            });
+        }
+        Ok(start..start.saturating_add(count).min(total))
+    }
+
+    fn check_frame_id(&self, frame_id: SerFrameId) -> Result<()> {
         if frame_id >= self.header.frame_count {
             return Err(SerError::FrameOutOfBounds {
                 frame: frame_id,
                 total: self.header.frame_count,
             });
         }
-
-        let mmap = self
-            .mmap
-            .as_ref()
-            .ok_or_else(|| SerError::InvalidHeader("No memory map available".to_string()))?;
-
-        let frame_size = self.header.frame_size();
-        let start = self.frame_data_offset + (frame_id as u64 * frame_size);
-        let end = start + frame_size;
-
-        if end > mmap.len() as u64 {
-            return Err(SerError::FileTruncated {
-                expected: end,
-                actual: mmap.len() as u64,
-            });
-        }
-
-        Ok(&mmap[start as usize..end as usize])
+        Ok(())
     }
 
-    pub fn frame_slices(&self, start: SerFrameId, count: u32) -> Result<Vec<(SerFrameId, &[u8])>> {
-        let end = (start + count).min(self.header.frame_count);
-        let mut slices = Vec::with_capacity((end - start) as usize);
-
-        for frame_id in start..end {
-            slices.push((frame_id, self.frame_slice(frame_id)?));
-        }
-
-        Ok(slices)
-    }
-
-    fn calculate_expected_file_size(header: &SerHeader) -> u64 {
-        let header_size = 178u64;
-        let data_size = header.frame_count as u64 * header.frame_size();
-        let trailer_size = if header.has_trailer() {
-            header.frame_count as u64 * 8
-        } else {
-            0
+    fn mapped_bytes(&self, start: u64, length: u64) -> Result<&[u8]> {
+        let end = start.saturating_add(length);
+        let truncated = SerError::FileTruncated {
+            expected: end,
+            actual: self.mmap.len() as u64,
         };
-
-        header_size + data_size + trailer_size
+        match (usize::try_from(start), usize::try_from(end)) {
+            (Ok(start), Ok(end)) => self.mmap.get(start..end).ok_or(truncated),
+            _ => Err(truncated),
+        }
     }
+}
+
+// The frames must all be present. A trailer is read only when it holds a
+// timestamp for every frame, and bytes after the frames or the trailer are
+// ignored. The header's DateTime does not decide this.
+fn trailer_present(header: &SerHeader, length: u64) -> Result<bool> {
+    let frames_end = header.frames_end()?;
+    if length < frames_end {
+        return Err(SerError::FileTruncated {
+            expected: frames_end,
+            actual: length,
+        });
+    }
+    Ok(header.frame_count > 0 && length >= header.trailer_end()?)
 }
 
 pub struct FrameIterator<'a> {
     reader: &'a SerReader,
-    current: SerFrameId,
-    end: SerFrameId,
-}
-
-impl<'a> FrameIterator<'a> {
-    fn new(reader: &'a SerReader, start: SerFrameId, end: SerFrameId) -> Self {
-        Self {
-            reader,
-            current: start,
-            end,
-        }
-    }
+    ids: Range<SerFrameId>,
 }
 
 impl<'a> Iterator for FrameIterator<'a> {
     type Item = Result<SerFrame<'a>>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.current >= self.end {
-            return None;
-        }
+        self.ids
+            .next()
+            .map(|frame_id| self.reader.read_frame(frame_id))
+    }
 
-        let frame_id = self.current;
-        self.current += 1;
-
-        Some(self.reader.read_frame(frame_id))
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.ids.size_hint()
     }
 }
 
-impl<'a> ExactSizeIterator for FrameIterator<'a> {
-    fn len(&self) -> usize {
-        (self.end - self.current) as usize
-    }
-}
+impl ExactSizeIterator for FrameIterator<'_> {}
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ser::SerHeader;
-    use std::io::Cursor;
+    use crate::ser::types::ColorId;
     use std::io::Write;
+    use tempfile::NamedTempFile;
 
+    // 2024-06-01T12:34:56.1234567 in .NET ticks.
+    const T1: u64 = 638_528_420_961_234_567;
+
+    fn shown<T>(result: Result<T>) -> std::result::Result<T, String> {
+        result.map_err(|e| e.to_string())
+    }
+
+    fn error_text<T>(result: Result<T>) -> Option<String> {
+        result.err().map(|e| e.to_string())
+    }
+
+    fn test_header(frame_count: u32, date_time: i64) -> SerHeader {
+        SerHeader {
+            lu_id: 123,
+            byte_order: ByteOrder::BigEndian,
+            image_width: 10,
+            image_height: 10,
+            pixel_depth_per_plane: 16,
+            frame_count,
+            observer: "Observer".to_string(),
+            instrument: "Instrument".to_string(),
+            telescope: "Telescope".to_string(),
+            date_time,
+            date_time_utc: date_time,
+            ..SerHeader::default()
+        }
+    }
+
+    // Frame i holds bytes (i * 200 + offset) % 256.
+    fn ser_bytes(header: &SerHeader, frames: u32, trailer: &[u64]) -> Vec<u8> {
+        let mut data = header.to_bytes().to_vec();
+        let frame_size = header.frame_size().unwrap() as usize;
+        let pixels = frames as usize * frame_size;
+        data.extend((0..pixels).map(|i| (i % 256) as u8));
+        for ticks in trailer {
+            data.extend_from_slice(&ticks.to_le_bytes());
+        }
+        data
+    }
+
+    // 2 frames of 10x10 16-bit mono with a timestamp trailer.
     fn create_test_ser_file() -> Vec<u8> {
-        let mut data = vec![0u8; 1000];
-
-        data[0..14].copy_from_slice(b"LUCAM-RECORDER");
-        data[14..18].copy_from_slice(&123u32.to_le_bytes());
-        data[18..22].copy_from_slice(&0u32.to_le_bytes()); // ColorId::Mono
-        data[22..26].copy_from_slice(&1u32.to_le_bytes());
-        data[26..30].copy_from_slice(&10u32.to_le_bytes()); // width
-        data[30..34].copy_from_slice(&10u32.to_le_bytes()); // height
-        data[34..38].copy_from_slice(&16u32.to_le_bytes()); // pixel depth
-        data[38..42].copy_from_slice(&2u32.to_le_bytes()); // frame count
-        data[42..50].copy_from_slice(b"Observer");
-        data[82..92].copy_from_slice(b"Instrument");
-        data[122..131].copy_from_slice(b"Telescope");
-        data[162..170].copy_from_slice(&1234567890i64.to_le_bytes());
-        data[170..178].copy_from_slice(&1234567891i64.to_le_bytes());
-
-        // Add frame data (2 frames * 10*10*2 bytes = 400 bytes)
-        for (offset, byte) in data[178..578].iter_mut().enumerate() {
-            *byte = (offset % 256) as u8;
-        }
-
-        // Add trailer (2 frames * 8 bytes = 16 bytes)
-        for (i, byte) in data[578..594].iter_mut().enumerate() {
-            *byte = ((578 + i) % 256) as u8;
-        }
-
-        data.truncate(594);
-        data
+        ser_bytes(&test_header(2, T1 as i64), 2, &[T1, T1 + 1])
     }
 
+    // 1 frame and no trailer.
     fn create_minimal_ser_file() -> Vec<u8> {
-        let mut data = vec![0u8; 378];
+        ser_bytes(&test_header(1, 0), 1, &[])
+    }
 
-        data[0..14].copy_from_slice(b"LUCAM-RECORDER");
-        data[14..18].copy_from_slice(&0u32.to_le_bytes());
-        data[18..22].copy_from_slice(&0u32.to_le_bytes());
-        data[22..26].copy_from_slice(&1u32.to_le_bytes());
-        data[26..30].copy_from_slice(&10u32.to_le_bytes());
-        data[30..34].copy_from_slice(&10u32.to_le_bytes());
-        data[34..38].copy_from_slice(&16u32.to_le_bytes());
-        data[38..42].copy_from_slice(&1u32.to_le_bytes());
-        data[162..170].copy_from_slice(&0i64.to_le_bytes()); // No trailer
+    fn write_temp(data: &[u8]) -> NamedTempFile {
+        let mut file = NamedTempFile::new().unwrap();
+        file.write_all(data).unwrap();
+        file.flush().unwrap();
+        file
+    }
 
-        data
+    fn open_bytes(data: &[u8]) -> Result<SerReader> {
+        SerReader::open(write_temp(data).path())
     }
 
     #[test]
-    fn from_reader_success() {
-        // Lines 59-71: Test successful reader creation
-        let data = create_minimal_ser_file();
-        let cursor = Cursor::new(data);
-        let reader = SerReader::from_reader(cursor).unwrap();
-
-        assert_eq!(reader.header.frame_count, 1);
-        assert_eq!(reader.frame_data_offset, 178);
-        assert!(reader.trailer_offset.is_none());
-        assert!(reader.mmap.is_none());
-        assert!(reader._file.is_none());
-    }
-
-    #[test]
-    fn from_reader_header_parse_error() {
-        // Line 63: Test header parsing failure
-        let mut data = vec![0u8; 178];
+    fn open_rejects_a_bad_file_id() {
+        let mut data = create_minimal_ser_file();
         data[0..14].copy_from_slice(b"INVALID-HEADER");
-        let cursor = Cursor::new(data);
-        let result = SerReader::from_reader(cursor);
-        assert!(result.is_err());
+        let result = open_bytes(&data);
+        assert!(matches!(result, Err(SerError::InvalidFileId { .. })));
     }
 
     #[test]
-    fn header_accessor() {
-        // Lines 74-75: Test header accessor
-        let data = create_minimal_ser_file();
-        let cursor = Cursor::new(data);
-        let reader = SerReader::from_reader(cursor).unwrap();
-        let header = reader.header();
-        assert_eq!(header.frame_count, 1);
-    }
-
-    #[test]
-    fn frame_count_accessor() {
-        // Lines 78-79: Test frame count accessor
-        let data = create_minimal_ser_file();
-        let cursor = Cursor::new(data);
-        let reader = SerReader::from_reader(cursor).unwrap();
+    fn header_and_frame_count_accessors() {
+        let reader = open_bytes(&create_minimal_ser_file()).unwrap();
+        assert_eq!(reader.header().frame_count, 1);
+        assert_eq!(reader.header().observer, "Observer");
         assert_eq!(reader.frame_count(), 1);
     }
 
     #[test]
-    fn read_frame_out_of_bounds() {
-        // Lines 82-87: Test frame out of bounds error
-        let data = create_minimal_ser_file();
-        let cursor = Cursor::new(data);
-        let reader = SerReader::from_reader(cursor).unwrap();
-
-        let result = reader.read_frame(999);
-        assert!(matches!(
-            result,
-            Err(SerError::FrameOutOfBounds {
-                frame: 999,
-                total: 1
-            })
-        ));
-    }
-
-    #[test]
-    fn read_frame_no_mmap_error() {
-        // Lines 90-91, 106-107: Test reading frame without memory map
-        let data = create_minimal_ser_file();
-        let cursor = Cursor::new(data);
-        let reader = SerReader::from_reader(cursor).unwrap();
-
-        let result = reader.read_frame(0);
-        assert!(matches!(result, Err(SerError::InvalidHeader(_))));
-    }
-
-    #[test]
-    fn read_frame_data_delegates() {
-        // Lines 111-113: Test read_frame_data delegation
-        let data = create_minimal_ser_file();
-        let cursor = Cursor::new(data);
-        let reader = SerReader::from_reader(cursor).unwrap();
-
-        let result = reader.read_frame_data(0);
-        assert!(result.is_err()); // Should fail because no mmap
-    }
-
-    #[test]
-    fn read_timestamp_no_trailer() {
-        // Lines 116-118: Test reading timestamp when no trailer
-        let data = create_minimal_ser_file();
-        let cursor = Cursor::new(data);
-        let reader = SerReader::from_reader(cursor).unwrap();
-
-        let timestamp = reader.read_timestamp(0).unwrap();
-        assert!(timestamp.is_none());
-    }
-
-    #[test]
-    fn read_timestamp_frame_out_of_bounds() {
-        // Lines 121-124: Test timestamp read with frame out of bounds
-        let data = create_test_ser_file();
-        let cursor = Cursor::new(data);
-        let reader = SerReader::from_reader(cursor).unwrap();
-
-        let result = reader.read_timestamp(999);
-        assert!(matches!(
-            result,
-            Err(SerError::FrameOutOfBounds {
-                frame: 999,
-                total: 2
-            })
-        ));
-    }
-
-    #[test]
-    fn read_timestamp_no_mmap() {
-        // Lines 141-142: Test timestamp read without mmap
-        let data = create_test_ser_file();
-        let cursor = Cursor::new(data);
-        let reader = SerReader::from_reader(cursor).unwrap();
-
-        let timestamp = reader.read_timestamp(0).unwrap();
-        assert!(timestamp.is_none());
-    }
-
-    #[test]
-    fn iter_frames() {
-        // Lines 146-147: Test frame iterator creation
-        let data = create_minimal_ser_file();
-        let cursor = Cursor::new(data);
-        let reader = SerReader::from_reader(cursor).unwrap();
-
-        let iter = reader.iter_frames();
-        assert_eq!(iter.len(), 1);
-    }
-
-    #[test]
-    fn iter_frames_range() {
-        // Lines 150-152: Test frame range iterator
-        let data = create_test_ser_file();
-        let cursor = Cursor::new(data);
-        let reader = SerReader::from_reader(cursor).unwrap();
-
-        let iter = reader.iter_frames_range(0, 1);
-        assert_eq!(iter.len(), 1);
-
-        let iter = reader.iter_frames_range(1, 5);
-        assert_eq!(iter.len(), 1); // Should be clamped to available frames
-    }
-
-    #[test]
-    fn calculate_expected_file_size_with_trailer() {
-        let header = SerHeader {
-            frame_count: 10,
-            image_width: 100,
-            image_height: 100,
-            pixel_depth_per_plane: 16,
-            date_time: 1, // Has trailer
-            ..Default::default()
-        };
-
-        let size = SerReader::calculate_expected_file_size(&header);
-        let expected = 178 + (10 * 100 * 100 * 2) + (10 * 8); // header + data + trailer
-        assert_eq!(size, expected);
-    }
-
-    #[test]
-    fn calculate_expected_file_size_no_trailer() {
-        let header = SerHeader {
-            frame_count: 5,
-            image_width: 50,
-            image_height: 50,
-            pixel_depth_per_plane: 8,
-            date_time: 0, // No trailer
-            ..Default::default()
-        };
-
-        let size = SerReader::calculate_expected_file_size(&header);
-        let expected = 178 + (5 * 50 * 50); // header + data only
-        assert_eq!(size, expected);
-    }
-
-    #[test]
-    fn frame_iterator_new() {
-        // Line 175: Test FrameIterator creation
-        let data = create_test_ser_file();
-        let cursor = Cursor::new(data);
-        let reader = SerReader::from_reader(cursor).unwrap();
-
-        let iter = FrameIterator::new(&reader, 0, 2);
-        assert_eq!(iter.current, 0);
-        assert_eq!(iter.end, 2);
-    }
-
-    #[test]
-    fn frame_iterator_next() {
-        // Lines 187-195: Test iterator next functionality
-        let data = create_test_ser_file();
-        let cursor = Cursor::new(data);
-        let reader = SerReader::from_reader(cursor).unwrap();
-
-        let mut iter = FrameIterator::new(&reader, 0, 1);
-        assert!(iter.next().is_some()); // Should have one item
-        assert!(iter.next().is_none()); // Should be exhausted
-    }
-
-    #[test]
-    fn frame_iterator_exact_size() {
-        // Lines 200-201: Test ExactSizeIterator implementation
-        let data = create_test_ser_file();
-        let cursor = Cursor::new(data);
-        let reader = SerReader::from_reader(cursor).unwrap();
-
-        let iter = FrameIterator::new(&reader, 0, 2);
-        assert_eq!(iter.len(), 2);
-
-        let iter = FrameIterator::new(&reader, 1, 2);
-        assert_eq!(iter.len(), 1);
-    }
-
-    fn write_test_file() -> std::io::Result<std::path::PathBuf> {
-        let temp_dir = std::env::temp_dir();
-        let unique_name = format!(
-            "test_ser_file_{}_{}.ser",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        );
-        let temp_path = temp_dir.join(unique_name);
-
-        let mut file = File::create(&temp_path)?;
-        let data = create_test_ser_file();
-        file.write_all(&data)?;
-
-        Ok(temp_path)
-    }
-
-    #[test]
-    fn open_file_success() {
-        // Lines 17-56: Test successful file opening with memory mapping
-        if let Ok(temp_path) = write_test_file() {
-            if let Ok(reader) = SerReader::open(&temp_path) {
-                assert_eq!(reader.header.frame_count, 2);
-                assert_eq!(reader.frame_data_offset, 178);
-                assert!(reader.trailer_offset.is_some());
-                assert!(reader.mmap.is_some());
-                assert!(reader._file.is_some());
-            }
-
-            std::fs::remove_file(temp_path).ok();
+    fn color_kind_accessors() {
+        let cases = [
+            (ColorId::Mono, (false, true, false)),
+            (ColorId::BayerGbrg, (false, false, true)),
+            (ColorId::Bgr, (true, false, false)),
+        ];
+        for (color_id, kinds) in cases {
+            let header = SerHeader {
+                color_id,
+                ..test_header(0, 0)
+            };
+            let reader = open_bytes(&header.to_bytes()).unwrap();
+            assert_eq!(
+                (reader.is_color(), reader.is_mono(), reader.is_bayer()),
+                kinds,
+                "{color_id}"
+            );
         }
     }
 
     #[test]
+    fn frame_out_of_bounds() {
+        let file = write_temp(&create_test_ser_file());
+        let reader = SerReader::open(file.path()).unwrap();
+        let out_of_bounds = |frame| {
+            Some(format!(
+                "Frame index {frame} out of bounds (total frames: 2)"
+            ))
+        };
+
+        assert_eq!(error_text(reader.read_frame(2)), out_of_bounds(2));
+        assert_eq!(error_text(reader.frame_slice(999)), out_of_bounds(999));
+        assert_eq!(error_text(reader.read_timestamp(999)), out_of_bounds(999));
+    }
+
+    #[test]
+    fn open_file_success() {
+        let data = create_test_ser_file();
+        let reader = open_bytes(&data).unwrap();
+
+        assert_eq!(reader.frame_count(), 2);
+        assert_eq!(reader.header().instrument, "Instrument");
+        assert!(reader.has_timestamps());
+        assert_eq!(reader.mmap.len(), data.len());
+    }
+
+    #[test]
+    fn open_file_no_trailer() {
+        let file = write_temp(&create_minimal_ser_file());
+        let reader = SerReader::open(file.path()).unwrap();
+
+        assert_eq!(reader.frame_count(), 1);
+        assert!(!reader.has_timestamps());
+        assert_eq!(shown(reader.read_timestamp(0)), Ok(None));
+    }
+
+    #[test]
     fn open_file_too_short() {
-        let temp_dir = std::env::temp_dir();
-        let temp_path = temp_dir.join("short_ser_file.ser");
-
-        let mut file = File::create(&temp_path).unwrap();
-        let short_data = vec![0u8; 100]; // Too short
-        file.write_all(&short_data).unwrap();
-
-        let result = SerReader::open(&temp_path);
+        let result = open_bytes(&[0u8; 100]);
         assert!(matches!(
             result,
             Err(SerError::FileTruncated {
@@ -575,250 +346,301 @@ mod tests {
                 actual: 100
             })
         ));
-
-        std::fs::remove_file(temp_path).ok();
     }
 
     #[test]
-    fn open_file_truncated() {
-        let temp_dir = std::env::temp_dir();
-        let temp_path = temp_dir.join("truncated_ser_file.ser");
-
-        let mut file = File::create(&temp_path).unwrap();
+    fn frames_cut_short_are_truncated() {
         let mut data = create_test_ser_file();
-        data.truncate(300); // Truncate to be shorter than expected
-        file.write_all(&data).unwrap();
+        data.truncate(300);
+        assert!(matches!(
+            open_bytes(&data),
+            Err(SerError::FileTruncated {
+                expected: 578,
+                actual: 300
+            })
+        ));
+    }
 
-        let result = SerReader::open(&temp_path);
-        assert!(result.is_err());
-
-        std::fs::remove_file(temp_path).ok();
+    fn timestamps(reader: &SerReader) -> Vec<Option<SerTimestamp>> {
+        (0..reader.frame_count())
+            .map(|id| reader.read_timestamp(id).unwrap())
+            .collect()
     }
 
     #[test]
-    fn trailer_offset_calculation() {
-        // Lines 39-47: Test trailer offset calculation
-        if let Ok(temp_path) = write_test_file() {
-            let reader = SerReader::open(&temp_path).unwrap();
-            assert!(reader.trailer_offset.is_some());
-
-            std::fs::remove_file(temp_path).ok();
-        }
+    fn partial_trailer_opens_without_timestamps() {
+        let full = create_test_ser_file();
+        let reader = open_bytes(&full[..590]).unwrap();
+        assert_eq!(reader.frame_count(), 2);
+        assert!(!reader.has_timestamps());
+        assert_eq!(timestamps(&reader), [None, None]);
+        assert_eq!(reader.read_frame_data(1).unwrap(), &full[378..578]);
     }
 
     #[test]
-    fn read_frame_with_mmap() {
-        // Lines 93-105: Test successful frame reading with memory map
-        if let Ok(temp_path) = write_test_file() {
-            if let Ok(reader) = SerReader::open(&temp_path) {
-                if let Ok(frame) = reader.read_frame(0) {
-                    assert_eq!(frame.id, 0);
-                    assert_eq!(frame.data.len(), 200); // 10*10*2 bytes
-                }
-            }
-
-            std::fs::remove_file(temp_path).ok();
-        }
-    }
-
-    #[test]
-    fn read_frame_truncated_data() {
-        let temp_dir = std::env::temp_dir();
-        let temp_path = temp_dir.join("truncated_frame_file.ser");
-
-        let mut file = File::create(&temp_path).unwrap();
+    fn bytes_after_the_trailer_are_ignored() {
         let mut data = create_test_ser_file();
-        data.truncate(400); // Truncate frames
-        file.write_all(&data).unwrap();
-
-        if let Ok(reader) = SerReader::open(&temp_path) {
-            let result = reader.read_frame(1);
-            assert!(result.is_err());
-        }
-
-        std::fs::remove_file(temp_path).ok();
+        data.extend([0xAB; 9]);
+        let reader = open_bytes(&data).unwrap();
+        assert_eq!(reader.frame_count(), 2);
+        let expected = [Some(SerTimestamp::new(T1)), Some(SerTimestamp::new(T1 + 1))];
+        assert_eq!(timestamps(&reader), expected);
     }
 
     #[test]
-    fn read_timestamp_with_mmap() {
-        // Lines 128-140: Test timestamp reading with memory map
-        if let Ok(temp_path) = write_test_file() {
-            if let Ok(reader) = SerReader::open(&temp_path) {
-                if let Ok(timestamp) = reader.read_timestamp(0) {
-                    assert!(timestamp.is_some());
-                }
-            }
-
-            std::fs::remove_file(temp_path).ok();
+    fn bytes_after_the_frames_are_ignored() {
+        let frames = ser_bytes(&test_header(2, 0), 2, &[]);
+        for extra in [1, 9, 15] {
+            let mut data = frames.clone();
+            data.extend(vec![0xAB; extra]);
+            let reader = open_bytes(&data).unwrap();
+            assert_eq!(reader.frame_count(), 2, "{extra}");
+            assert_eq!(timestamps(&reader), [None, None], "{extra}");
+            assert_eq!(reader.read_frame_data(1).unwrap(), &frames[378..578]);
         }
     }
 
     #[test]
-    fn read_timestamp_truncated_trailer() {
-        let temp_dir = std::env::temp_dir();
-        let temp_path = temp_dir.join("truncated_trailer_file.ser");
-
-        let mut file = File::create(&temp_path).unwrap();
-        let mut data = create_test_ser_file();
-        data.truncate(590); // Truncate trailer
-        file.write_all(&data).unwrap();
-
-        if let Ok(reader) = SerReader::open(&temp_path) {
-            let result = reader.read_timestamp(1);
-            assert!(result.is_err());
-        }
-
-        std::fs::remove_file(temp_path).ok();
+    fn zero_frame_count_with_frame_data_opens_empty() {
+        let mut data = ser_bytes(&test_header(2, 0), 2, &[T1, T1 + 1]);
+        data[38..42].copy_from_slice(&0u32.to_le_bytes());
+        let reader = open_bytes(&data).unwrap();
+        assert_eq!(reader.frame_count(), 0);
+        assert!(!reader.has_timestamps());
+        assert_eq!(reader.iter_frames().count(), 0);
+        assert_eq!(
+            error_text(reader.read_frame(0)),
+            Some("Frame index 0 out of bounds (total frames: 0)".to_string())
+        );
     }
 
     #[test]
-    fn from_reader_read_error() {
-        // Lines 60-61: Test read error during header reading
-        use std::io::{Error, ErrorKind};
-
-        struct FailingReader;
-        impl std::io::Read for FailingReader {
-            fn read(&mut self, _buf: &mut [u8]) -> std::io::Result<usize> {
-                Err(Error::new(ErrorKind::UnexpectedEof, "read failed"))
-            }
-        }
-
-        let result = SerReader::from_reader(FailingReader);
-        assert!(result.is_err());
-    }
-
-    fn write_minimal_file() -> std::io::Result<std::path::PathBuf> {
-        let temp_dir = std::env::temp_dir();
-        let temp_path = temp_dir.join("minimal_ser_file.ser");
-
-        let mut file = File::create(&temp_path)?;
-        let data = create_minimal_ser_file();
-        file.write_all(&data)?;
-
-        Ok(temp_path)
+    fn positive_date_time_without_a_trailer_opens() {
+        let data = ser_bytes(&test_header(3, T1 as i64), 3, &[]);
+        let reader = open_bytes(&data).unwrap();
+        assert!(!reader.has_timestamps());
+        assert_eq!(shown(reader.read_timestamp(2)), Ok(None));
     }
 
     #[test]
-    fn open_file_no_trailer_path() {
-        if let Ok(temp_path) = write_minimal_file() {
-            if let Ok(reader) = SerReader::open(&temp_path) {
-                assert_eq!(reader.header.frame_count, 1);
-                assert_eq!(reader.frame_data_offset, 178);
-                assert!(reader.trailer_offset.is_none());
-                assert!(reader.mmap.is_some());
-                assert!(reader._file.is_some());
-            }
-
-            std::fs::remove_file(temp_path).ok();
-        }
+    fn zero_date_time_with_a_trailer_reads_it() {
+        let data = ser_bytes(&test_header(2, 0), 2, &[T1, T1 + 7]);
+        let reader = open_bytes(&data).unwrap();
+        assert!(reader.has_timestamps());
+        assert_eq!(
+            shown(reader.read_timestamp(1)),
+            Ok(Some(SerTimestamp::new(T1 + 7)))
+        );
     }
 
     #[test]
-    fn read_frame_mmap_bounds_check() {
-        let temp_dir = std::env::temp_dir();
-        let temp_path = temp_dir.join("bounds_test_file.ser");
-
-        let mut file = File::create(&temp_path).unwrap();
-        let mut data = create_test_ser_file();
-        data.truncate(300); // Make it just barely long enough for header but not frame
-        file.write_all(&data).unwrap();
-
-        if let Ok(reader) = SerReader::open(&temp_path) {
-            let result = reader.read_frame(0);
-            assert!(matches!(result, Err(SerError::FileTruncated { .. })));
-        }
-
-        std::fs::remove_file(temp_path).ok();
+    fn local_kind_date_time_still_reads_the_trailer() {
+        let data = ser_bytes(&test_header(2, (T1 | 1 << 63) as i64), 2, &[T1, T1 + 1]);
+        let reader = open_bytes(&data).unwrap();
+        assert_eq!(reader.header().date_time, T1 as i64);
+        assert_eq!(
+            shown(reader.read_timestamp(1)),
+            Ok(Some(SerTimestamp::new(T1 + 1)))
+        );
     }
 
     #[test]
-    fn read_timestamp_mmap_bounds_check() {
-        let temp_dir = std::env::temp_dir();
-        let temp_path = temp_dir.join("timestamp_bounds_test.ser");
-
-        let mut file = File::create(&temp_path).unwrap();
-        let mut data = create_test_ser_file();
-        data.truncate(580); // Truncate just before trailer
-        file.write_all(&data).unwrap();
-
-        if let Ok(reader) = SerReader::open(&temp_path) {
-            let result = reader.read_timestamp(0);
-            assert!(matches!(result, Err(SerError::FileTruncated { .. })));
-        }
-
-        std::fs::remove_file(temp_path).ok();
+    fn trailer_ticks_have_the_kind_bits_masked() {
+        let data = ser_bytes(&test_header(1, T1 as i64), 1, &[T1 | 1 << 62]);
+        let reader = open_bytes(&data).unwrap();
+        let ts = reader.read_timestamp(0).unwrap().unwrap();
+        assert_eq!(ts.ticks(), T1);
     }
 
     #[test]
-    fn frame_slice_success() {
-        if let Ok(temp_path) = write_test_file() {
-            let reader = SerReader::open(&temp_path).unwrap();
-            let slice = reader.frame_slice(0).unwrap();
-            assert_eq!(slice.len(), 200); // 10*10*2 bytes
-            std::fs::remove_file(temp_path).ok();
-        }
+    fn zero_frames_has_no_trailer() {
+        let reader = open_bytes(&test_header(0, T1 as i64).to_bytes()).unwrap();
+        assert_eq!(reader.frame_count(), 0);
+        assert!(!reader.has_timestamps());
+        assert_eq!(reader.iter_frames().len(), 0);
     }
 
     #[test]
-    fn frame_slice_out_of_bounds() {
-        if let Ok(temp_path) = write_test_file() {
-            let reader = SerReader::open(&temp_path).unwrap();
-            let result = reader.frame_slice(999);
-            assert!(matches!(
-                result,
-                Err(SerError::FrameOutOfBounds {
-                    frame: 999,
-                    total: 2
-                })
-            ));
-            std::fs::remove_file(temp_path).ok();
-        }
+    fn frames_wider_than_65535_are_read() {
+        let header = SerHeader {
+            image_width: 70_000,
+            image_height: 1,
+            pixel_depth_per_plane: 8,
+            frame_count: 1,
+            ..SerHeader::default()
+        };
+        let data = ser_bytes(&header, 1, &[]);
+        let reader = open_bytes(&data).unwrap();
+        assert_eq!(shown(reader.frame_slice(0)), Ok(&data[HEADER_SIZE..]));
     }
 
     #[test]
-    fn frame_slice_no_mmap() {
-        let data = create_minimal_ser_file();
-        let cursor = Cursor::new(data);
-        let reader = SerReader::from_reader(cursor).unwrap();
+    fn overflowing_header_is_rejected() {
+        let header = SerHeader {
+            image_width: 65535,
+            image_height: 65535,
+            color_id: ColorId::Rgb,
+            frame_count: u32::MAX,
+            ..SerHeader::default()
+        };
+        assert_eq!(
+            shown(open_bytes(&header.to_bytes()).map(|_| ())),
+            Err(
+                "Invalid SER header: 4294967295 frames of 65535x65535 RGB at depth 16 \
+                 overflow a 64-bit file size"
+                    .to_string()
+            )
+        );
+    }
 
-        let result = reader.frame_slice(0);
-        assert!(matches!(result, Err(SerError::InvalidHeader(_))));
+    #[test]
+    fn read_frame_returns_data_and_timestamp() {
+        let data = create_test_ser_file();
+        let reader = open_bytes(&data).unwrap();
+
+        let frame = reader.read_frame(1).unwrap();
+        assert_eq!(frame.id, 1);
+        assert_eq!(frame.data, &data[378..578]);
+        assert_eq!(frame.timestamp, Some(SerTimestamp::new(T1 + 1)));
+        assert_eq!(
+            shown(reader.read_frame_data(0)),
+            Ok(data[178..378].to_vec())
+        );
+    }
+
+    #[test]
+    fn read_frame_u16_applies_the_byte_order() {
+        let data = create_test_ser_file();
+        let reader = open_bytes(&data).unwrap();
+        let big: Vec<u16> = (0..100u16)
+            .map(|i| u16::from_be_bytes([(2 * i % 256) as u8, (2 * i % 256 + 1) as u8]))
+            .collect();
+        assert_eq!(shown(reader.read_frame_u16(0)), Ok(big));
+
+        let mut little_file = data;
+        little_file[22..26].copy_from_slice(&0u32.to_le_bytes());
+        let reader = open_bytes(&little_file).unwrap();
+        let little: Vec<u16> = (0..100u16)
+            .map(|i| u16::from_le_bytes([(2 * i % 256) as u8, (2 * i % 256 + 1) as u8]))
+            .collect();
+        assert_eq!(shown(reader.read_frame_u16(0)), Ok(little));
+    }
+
+    #[test]
+    fn read_frame_u16_keeps_low_depth_samples_as_stored() {
+        let header = SerHeader {
+            pixel_depth_per_plane: 12,
+            byte_order: ByteOrder::LittleEndian,
+            image_width: 2,
+            image_height: 1,
+            frame_count: 1,
+            ..SerHeader::default()
+        };
+        let mut data = header.to_bytes().to_vec();
+        data.extend_from_slice(&[0xFF, 0x0F, 0x01, 0x00]);
+        let reader = open_bytes(&data).unwrap();
+        assert_eq!(shown(reader.read_frame_u16(0)), Ok(vec![4095, 1]));
+        assert_eq!(reader.header().pixel_depth_per_plane, 12);
+    }
+
+    #[test]
+    fn read_frame_u16_rejects_8_bit_frames() {
+        let header = SerHeader {
+            pixel_depth_per_plane: 8,
+            frame_count: 1,
+            ..SerHeader::default()
+        };
+        let mut data = header.to_bytes().to_vec();
+        data.push(9);
+        let reader = open_bytes(&data).unwrap();
+        assert!(matches!(
+            reader.read_frame_u16(0),
+            Err(SerError::NotSixteenBit { depth: 8 })
+        ));
+        assert_eq!(shown(reader.frame_slice(0)), Ok(&[9u8][..]));
     }
 
     #[test]
     fn frame_slices_success() {
-        if let Ok(temp_path) = write_test_file() {
-            let reader = SerReader::open(&temp_path).unwrap();
-            let slices = reader.frame_slices(0, 2).unwrap();
+        let data = create_test_ser_file();
+        let reader = open_bytes(&data).unwrap();
+        let slices = reader.frame_slices(0, 2).unwrap();
 
-            assert_eq!(slices.len(), 2);
-            assert_eq!(slices[0].0, 0);
-            assert_eq!(slices[0].1.len(), 200);
-            assert_eq!(slices[1].0, 1);
-            assert_eq!(slices[1].1.len(), 200);
-            std::fs::remove_file(temp_path).ok();
-        }
+        assert_eq!(slices.len(), 2);
+        assert_eq!(slices[0], (0, &data[178..378]));
+        assert_eq!(slices[1], (1, &data[378..578]));
     }
 
     #[test]
     fn frame_slices_clamped_to_available() {
-        if let Ok(temp_path) = write_test_file() {
-            let reader = SerReader::open(&temp_path).unwrap();
-            let slices = reader.frame_slices(1, 100).unwrap();
+        let data = create_test_ser_file();
+        let reader = open_bytes(&data).unwrap();
 
-            assert_eq!(slices.len(), 1); // Only 1 frame available starting from index 1
-            assert_eq!(slices[0].0, 1);
-            std::fs::remove_file(temp_path).ok();
-        }
+        let slices = reader.frame_slices(1, 100).unwrap();
+        assert_eq!(slices, vec![(1, &data[378..578])]);
+        assert_eq!(
+            shown(reader.frame_slices(1, u32::MAX).map(|s| s.len())),
+            Ok(1)
+        );
+        assert_eq!(shown(reader.frame_slices(2, 5).map(|s| s.len())), Ok(0));
     }
 
     #[test]
-    fn frame_slices_no_mmap() {
-        let data = create_minimal_ser_file();
-        let cursor = Cursor::new(data);
-        let reader = SerReader::from_reader(cursor).unwrap();
+    fn frame_slices_past_the_end_is_an_error() {
+        let reader = open_bytes(&create_test_ser_file()).unwrap();
+        assert_eq!(
+            shown(reader.frame_slices(5, 1).map(|s| s.len())),
+            Err("Frame index 5 out of bounds (total frames: 2)".to_string())
+        );
+    }
 
-        let result = reader.frame_slices(0, 1);
-        assert!(matches!(result, Err(SerError::InvalidHeader(_))));
+    #[test]
+    fn iter_frames_reads_every_frame() {
+        let data = create_test_ser_file();
+        let reader = open_bytes(&data).unwrap();
+        let mut iter = reader.iter_frames();
+        assert_eq!(iter.len(), 2);
+
+        let first = iter.next().unwrap().unwrap();
+        assert_eq!((first.id, first.data), (0, &data[178..378]));
+        assert_eq!(iter.len(), 1);
+        let second = iter.next().unwrap().unwrap();
+        assert_eq!(second.timestamp, Some(SerTimestamp::new(T1 + 1)));
+        assert!(iter.next().is_none());
+        assert_eq!(iter.len(), 0);
+    }
+
+    #[test]
+    fn iter_frames_range() {
+        let reader = open_bytes(&create_test_ser_file()).unwrap();
+        let ids = |start, count| {
+            shown(
+                reader
+                    .iter_frames_range(start, count)
+                    .map(|iter| iter.map(|frame| frame.unwrap().id).collect::<Vec<_>>()),
+            )
+        };
+
+        assert_eq!(ids(0, 1), Ok(vec![0]));
+        assert_eq!(ids(1, 5), Ok(vec![1]));
+        assert_eq!(ids(0, u32::MAX), Ok(vec![0, 1]));
+        assert_eq!(ids(2, 1), Ok(vec![]));
+        assert_eq!(
+            shown(reader.iter_frames_range(1, 5).map(|i| i.len())),
+            Ok(1)
+        );
+    }
+
+    #[test]
+    fn iter_frames_range_past_the_end_is_an_error() {
+        let reader = open_bytes(&create_test_ser_file()).unwrap();
+        for start in [3, 5, u32::MAX] {
+            assert_eq!(
+                shown(reader.iter_frames_range(start, 2).map(|i| i.len())),
+                Err(format!(
+                    "Frame index {start} out of bounds (total frames: 2)"
+                ))
+            );
+        }
     }
 }

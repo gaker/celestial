@@ -6,14 +6,14 @@ pub enum PixelStorage {
 }
 
 impl PixelStorage {
-    pub fn parse(s: &str) -> Self {
+    pub(crate) fn parse(s: &str) -> Self {
         match s {
             "Normal" => Self::Normal,
             _ => Self::Planar,
         }
     }
 
-    pub fn as_str(&self) -> &str {
+    pub(crate) fn as_str(&self) -> &str {
         match self {
             Self::Planar => "Planar",
             Self::Normal => "Normal",

@@ -1,13 +1,13 @@
-use crate::fits::{FitsError, Result};
+use crate::fits::errors::{FitsError, Result};
 
-pub struct BitWriter {
+pub(super) struct BitWriter {
     buffer: Vec<u8>,
     bit_buffer: u32,
     bits_to_go: u8,
 }
 
 impl BitWriter {
-    pub fn with_capacity(capacity: usize) -> Self {
+    pub(super) fn with_capacity(capacity: usize) -> Self {
         Self {
             buffer: Vec::with_capacity(capacity),
             bit_buffer: 0,
@@ -15,70 +15,51 @@ impl BitWriter {
         }
     }
 
-    pub fn output_nbits(&mut self, bits: u32, n: usize) -> Result<()> {
+    // `bit_buffer` holds the 8 - `bits_to_go` bits of the partial byte. Those
+    // bits and `n` <= 32 new bits fit 40 bits, so a 64-bit buffer takes the
+    // whole value in one shift.
+    pub(super) fn output_nbits(&mut self, bits: u32, n: usize) -> Result<()> {
         if n > 32 {
             return Err(FitsError::InvalidFormat(
                 "Cannot output more than 32 bits at once".to_string(),
             ));
         }
-
-        const MASK: [u32; 33] = [
-            0, 0x1, 0x3, 0x7, 0xf, 0x1f, 0x3f, 0x7f, 0xff, 0x1ff, 0x3ff, 0x7ff, 0xfff, 0x1fff,
-            0x3fff, 0x7fff, 0xffff, 0x1ffff, 0x3ffff, 0x7ffff, 0xfffff, 0x1fffff, 0x3fffff,
-            0x7fffff, 0xffffff, 0x1ffffff, 0x3ffffff, 0x7ffffff, 0xfffffff, 0x1fffffff, 0x3fffffff,
-            0x7fffffff, 0xffffffff,
-        ];
-
-        let mut local_bit_buffer = self.bit_buffer;
-        let mut local_bits_to_go = self.bits_to_go as i8;
-        let mut remaining_bits = n as i8;
-
-        if local_bits_to_go + remaining_bits > 32 {
-            local_bit_buffer <<= local_bits_to_go;
-            local_bit_buffer |=
-                (bits >> (remaining_bits - local_bits_to_go)) & MASK[local_bits_to_go as usize];
-            self.buffer.push((local_bit_buffer & 0xff) as u8);
-            remaining_bits -= local_bits_to_go;
-            local_bits_to_go = 8;
+        let value = u64::from(bits) & ((1u64 << n) - 1);
+        let buffer = (u64::from(self.bit_buffer) << n) | value;
+        let mut bits_to_go = i32::from(self.bits_to_go) - n as i32;
+        while bits_to_go <= 0 {
+            self.buffer.push((buffer >> -bits_to_go) as u8);
+            bits_to_go += 8;
         }
-
-        local_bit_buffer <<= remaining_bits;
-        local_bit_buffer |= bits & MASK[remaining_bits as usize];
-        local_bits_to_go -= remaining_bits;
-
-        while local_bits_to_go <= 0 {
-            self.buffer
-                .push(((local_bit_buffer >> (-local_bits_to_go)) & 0xff) as u8);
-            local_bits_to_go += 8;
-        }
-
-        self.bit_buffer = local_bit_buffer;
-        self.bits_to_go = local_bits_to_go as u8;
-
+        self.bit_buffer = (buffer & 0xff) as u32;
+        self.bits_to_go = bits_to_go as u8;
         Ok(())
     }
 
-    pub fn flush(&mut self) {
+    pub(super) fn flush(&mut self) {
         if self.bits_to_go < 8 {
             self.buffer.push((self.bit_buffer << self.bits_to_go) as u8);
         }
     }
 
-    pub fn finish(mut self) -> Vec<u8> {
+    pub(super) fn finish(mut self) -> Vec<u8> {
         self.flush();
         self.buffer
     }
 }
 
-pub struct BitReader<'a> {
+// `bit_buffer` holds the `bits_remaining` unread bits of the bytes read so
+// far, at most 8 between reads. A read of up to 32 bits fills it to at most
+// 39 bits, so it is 64 bits wide.
+pub(super) struct BitReader<'a> {
     data: &'a [u8],
     position: usize,
-    bit_buffer: u32,
+    bit_buffer: u64,
     bits_remaining: u8,
 }
 
 impl<'a> BitReader<'a> {
-    pub fn new(data: &'a [u8]) -> Self {
+    pub(super) fn new(data: &'a [u8]) -> Self {
         let mut reader = Self {
             data,
             position: 0,
@@ -88,7 +69,7 @@ impl<'a> BitReader<'a> {
 
         // Initialize with first byte if available
         if !data.is_empty() {
-            reader.bit_buffer = data[0] as u32;
+            reader.bit_buffer = u64::from(data[0]);
             reader.position = 1;
             reader.bits_remaining = 8;
         }
@@ -96,81 +77,27 @@ impl<'a> BitReader<'a> {
         reader
     }
 
-    pub fn read_bits(&mut self, n: usize) -> Result<u32> {
+    pub(super) fn read_bits(&mut self, n: usize) -> Result<u32> {
         if n > 32 {
             return Err(FitsError::InvalidFormat(
                 "Cannot read more than 32 bits at once".to_string(),
             ));
         }
-
-        if n == 0 {
-            return Ok(0);
-        }
-
-        // For large reads (like 32 bits), use incremental approach to avoid buffer overflow issues
-        if n > 24 {
-            return self.read_bits_incremental(n);
-        }
-
-        // Ensure we have enough bits
-        while self.bits_remaining < n as u8 {
-            if self.position >= self.data.len() {
-                return Err(FitsError::InvalidFormat(
-                    "Unexpected end of compressed data".to_string(),
-                ));
-            }
-
-            self.bit_buffer = (self.bit_buffer << 8) | (self.data[self.position] as u32);
+        while usize::from(self.bits_remaining) < n {
+            let byte = self.data.get(self.position).ok_or_else(|| {
+                FitsError::InvalidFormat("Unexpected end of compressed data".to_string())
+            })?;
+            self.bit_buffer = (self.bit_buffer << 8) | u64::from(*byte);
             self.position += 1;
             self.bits_remaining += 8;
         }
-
-        // Extract the bits we need (high-order n bits)
-        let mask = if n == 32 { 0xFFFFFFFF } else { (1u32 << n) - 1 };
         self.bits_remaining -= n as u8;
-        let result = (self.bit_buffer >> self.bits_remaining) & mask;
-        self.bit_buffer &= (1 << self.bits_remaining) - 1;
-
-        Ok(result)
+        let result = (self.bit_buffer >> self.bits_remaining) & ((1u64 << n) - 1);
+        self.bit_buffer &= (1u64 << self.bits_remaining) - 1;
+        Ok(result as u32)
     }
 
-    // CFITSIO-style incremental bit reading for large values
-    fn read_bits_incremental(&mut self, n: usize) -> Result<u32> {
-        let mut result = 0u32;
-        let mut bits_needed = n;
-
-        while bits_needed > 0 {
-            let chunk_size = bits_needed.min(8);
-            let bits = self.read_bits_small(chunk_size)?;
-            result = (result << chunk_size) | bits;
-            bits_needed -= chunk_size;
-        }
-
-        Ok(result)
-    }
-
-    // Read small number of bits (<=8) using the original logic
-    fn read_bits_small(&mut self, n: usize) -> Result<u32> {
-        if self.bits_remaining < n as u8 {
-            if self.position >= self.data.len() {
-                return Err(FitsError::InvalidFormat(
-                    "Unexpected end of compressed data".to_string(),
-                ));
-            }
-
-            self.bit_buffer = (self.bit_buffer << 8) | (self.data[self.position] as u32);
-            self.position += 1;
-            self.bits_remaining += 8;
-        }
-
-        self.bits_remaining -= n as u8;
-        let result = self.bit_buffer >> self.bits_remaining;
-        self.bit_buffer &= (1 << self.bits_remaining) - 1;
-
-        Ok(result & ((1u32 << n) - 1))
-    }
-
-    pub fn count_leading_zeros(&mut self) -> Result<usize> {
+    pub(super) fn count_leading_zeros(&mut self) -> Result<usize> {
         let mut count = 0;
 
         while self.read_bits(1)? == 0 {
@@ -218,6 +145,23 @@ mod tests {
         assert!(writer.output_nbits(0x12345678, 32).is_ok());
         let result = writer.finish();
         assert_eq!(result, vec![0x12, 0x34, 0x56, 0x78]);
+    }
+
+    // Pending bits of a partial byte plus a wide value can exceed 32 bits.
+    #[test]
+    fn bit_writer_keeps_pending_bits_before_a_wide_value() {
+        for pending in 1..8 {
+            for n in 25..=32 {
+                let mut writer = BitWriter::with_capacity(8);
+                writer.output_nbits(u32::MAX, pending).unwrap();
+                writer.output_nbits(1, n).unwrap();
+                let total = pending + n;
+                let expected = ((1u64 << pending) - 1) << n | 1;
+                let expected = expected << (64 - total);
+                let bytes = expected.to_be_bytes()[..total.div_ceil(8)].to_vec();
+                assert_eq!(writer.finish(), bytes, "{pending} then {n}");
+            }
+        }
     }
 
     #[test]

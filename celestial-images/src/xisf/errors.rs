@@ -6,17 +6,39 @@ pub enum XisfError {
     #[error("XML parsing error: {0}")]
     XmlParse(String),
 
-    #[error("Missing required element: {0}")]
-    MissingElement(String),
-
     #[error("Invalid geometry: {0}")]
     InvalidGeometry(String),
 
     #[error("Unsupported sample format: {0}")]
     UnsupportedFormat(String),
 
-    #[error("Data not found at specified location")]
-    DataNotFound,
+    #[error("Unsupported compression codec: {0}")]
+    UnsupportedCodec(String),
+
+    #[error("Unsupported checksum algorithm: {0}")]
+    UnsupportedChecksum(String),
+
+    #[error("Checksum mismatch: the {algorithm} digest of the data block is {actual}, the checksum attribute gives {expected}")]
+    ChecksumMismatch {
+        algorithm: &'static str,
+        expected: String,
+        actual: String,
+    },
+
+    #[error("Sample format mismatch: the image holds {stored} samples, {requested} requested")]
+    SampleFormatMismatch {
+        stored: &'static str,
+        requested: &'static str,
+    },
+
+    #[error("FITSKeyword cannot hold the keyword: {0}")]
+    Keyword(#[source] crate::fits::errors::FitsError),
+
+    #[error("Astrometric solution: {0}")]
+    AstrometricSolution(String),
+
+    #[error("XISF:CreationTime: {0}")]
+    CreationTime(String),
 
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
@@ -42,12 +64,6 @@ mod tests {
     }
 
     #[test]
-    fn missing_element_error_display() {
-        let error = XisfError::MissingElement("Image".to_string());
-        assert_eq!(error.to_string(), "Missing required element: Image");
-    }
-
-    #[test]
     fn invalid_geometry_error_display() {
         let error = XisfError::InvalidGeometry("Not a number".to_string());
         assert_eq!(error.to_string(), "Invalid geometry: Not a number");
@@ -57,12 +73,6 @@ mod tests {
     fn unsupported_format_error_display() {
         let error = XisfError::UnsupportedFormat("Complex64".to_string());
         assert_eq!(error.to_string(), "Unsupported sample format: Complex64");
-    }
-
-    #[test]
-    fn data_not_found_error_display() {
-        let error = XisfError::DataNotFound;
-        assert_eq!(error.to_string(), "Data not found at specified location");
     }
 
     #[test]
@@ -77,7 +87,7 @@ mod tests {
     #[test]
     fn result_type_alias() {
         let success_result: Result<i32> = Ok(42);
-        let error_result: Result<i32> = Err(XisfError::DataNotFound);
+        let error_result: Result<i32> = Err(XisfError::InvalidFormat(String::new()));
 
         assert!(success_result.is_ok());
         if let Ok(value) = success_result {
@@ -118,7 +128,7 @@ mod tests {
     #[test]
     fn unicode_in_error_messages() {
         let unicode_message = "файл не найден 🚫";
-        let error = XisfError::MissingElement(unicode_message.to_string());
+        let error = XisfError::InvalidFormat(unicode_message.to_string());
         assert!(error.to_string().contains(unicode_message));
     }
 }

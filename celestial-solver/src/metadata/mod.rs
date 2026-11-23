@@ -8,7 +8,7 @@
 //! For images without FITS headers, construct [`ImageMetadata`] directly and pass it
 //! to [`crate::Solver::with_metadata`].
 //!
-//! [`Image`]: celestial_images::formats::Image
+//! [`Image`]: celestial_images::formats::image::Image
 
 mod error;
 mod hint;

@@ -1,4 +1,4 @@
-use celestial_images::formats::Image;
+use celestial_images::formats::image::Image;
 
 use super::error::MetadataError;
 
@@ -12,7 +12,7 @@ use super::error::MetadataError;
 /// ```rust,ignore
 /// use celestial_solver::metadata::plate_scale_from_image;
 ///
-/// # let img = celestial_images::formats::Image::open("f.fits")?;
+/// # let img = celestial_images::formats::image::Image::open("f.fits")?;
 /// let scale = plate_scale_from_image(&img, None, None)?;
 /// println!("{:.3} arcsec/px", scale.arcsec_per_pixel);
 /// # Ok::<(), Box<dyn std::error::Error>>(())
@@ -43,7 +43,7 @@ pub struct PlateScale {
 /// ```rust,ignore
 /// use celestial_solver::metadata::plate_scale_from_image;
 ///
-/// # let img = celestial_images::formats::Image::open("f.fits")?;
+/// # let img = celestial_images::formats::image::Image::open("f.fits")?;
 /// // Use FOCALLEN and XPIXSZ from headers:
 /// let scale = plate_scale_from_image(&img, None, None)?;
 ///
@@ -85,8 +85,8 @@ pub fn plate_scale_from_image(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use celestial_images::fits::header::Keyword;
-    use celestial_images::formats::PixelData;
+    use celestial_images::fits::header::keywords::Keyword;
+    use celestial_images::formats::pixel_data::PixelData;
 
     fn stub_image() -> Image {
         Image::new(PixelData::F32(vec![0.0; 4]), [2, 2])

@@ -3,18 +3,22 @@ pub mod binary_table;
 pub mod image;
 pub mod primary;
 pub mod random_groups;
+pub mod table;
+#[cfg(test)]
+mod table_tests;
 
-pub use ascii_table::{AsciiTableHdu, AsciiTableRowIterator};
-pub use binary_table::{BinaryTableHdu, BinaryTableRowIterator};
-pub use image::ImageHdu;
-pub use primary::PrimaryHdu;
-pub use random_groups::RandomGroupsHdu;
+use ascii_table::AsciiTableHdu;
+use binary_table::BinaryTableHdu;
+use image::ImageHdu;
+use primary::PrimaryHdu;
+use random_groups::RandomGroupsHdu;
 
-use crate::core::{BitPix, ByteOrder};
-use crate::fits::data::DataArray;
-use crate::fits::header::Header;
+use crate::core::types::{BitPix, ByteOrder};
+use crate::fits::data::array::DataArray;
+use crate::fits::errors::{FitsError, Result};
+use crate::fits::header::parser::Header;
+use crate::fits::io::reader::data_size::data_unit_len;
 use crate::fits::io::reader::HduInfo;
-use crate::fits::{FitsError, Result};
 use std::io::{Read, Seek, SeekFrom};
 
 #[derive(Debug, Clone, PartialEq)]
@@ -34,7 +38,7 @@ pub struct ColumnInfo {
 }
 
 impl ColumnInfo {
-    pub fn new(index: usize, format: String) -> Self {
+    pub(crate) fn new(index: usize, format: String) -> Self {
         Self {
             index,
             name: None,
@@ -50,90 +54,49 @@ impl ColumnInfo {
             coordinate_increment: None,
         }
     }
-
-    pub fn with_name(mut self, name: String) -> Self {
-        self.name = Some(name);
-        self
-    }
-
-    pub fn with_unit(mut self, unit: String) -> Self {
-        self.unit = Some(unit);
-        self
-    }
-
-    pub fn with_null_value(mut self, null_value: String) -> Self {
-        self.null_value = Some(null_value);
-        self
-    }
-
-    pub fn with_scale(mut self, scale: f64) -> Self {
-        self.scale = Some(scale);
-        self
-    }
-
-    pub fn with_zero_offset(mut self, zero: f64) -> Self {
-        self.zero_offset = Some(zero);
-        self
-    }
 }
 
-pub trait HduTrait: std::fmt::Debug {
+pub(crate) trait HduTrait: std::fmt::Debug {
     fn header(&self) -> &Header;
     fn info(&self) -> &HduInfo;
     fn hdu_type(&self) -> HduType;
-
-    fn bzero(&self) -> f64 {
-        self.header().get("BZERO").as_f64().unwrap_or(0.0)
-    }
-
-    fn bscale(&self) -> f64 {
-        self.header().get("BSCALE").as_f64().unwrap_or(1.0)
-    }
-
-    fn needs_scaling(&self) -> bool {
-        let bzero = self.bzero();
-        let bscale = self.bscale();
-        bzero != 0.0 || bscale != 1.0
-    }
 
     fn has_data(&self) -> bool {
         self.header().get("NAXIS").as_i64().unwrap_or(0) > 0
     }
 
-    fn data_dimensions(&self) -> Vec<usize> {
-        let naxis = self.header().get("NAXIS").as_i64().unwrap_or(0) as usize;
-
-        let mut dims = Vec::with_capacity(naxis);
-        for i in 1..=naxis {
-            let axis_name = format!("NAXIS{}", i);
-            let axis_size = self.header().get(&axis_name).as_i64().unwrap_or(0) as usize;
-            dims.push(axis_size);
+    // A missing NAXIS or NAXISn reads as 0. NAXIS outside 0..=999 and
+    // negative axis lengths are errors (FITS 4.0 §4.4.1.1).
+    fn data_dimensions(&self) -> Result<Vec<usize>> {
+        let naxis = self.header().get("NAXIS").as_i64().unwrap_or(0);
+        if !(0..=999).contains(&naxis) {
+            return Err(invalid_value("NAXIS", naxis));
         }
-        dims
+        (1..=naxis)
+            .map(|i| {
+                let name = format!("NAXIS{i}");
+                let length = self.header().get(&name).as_i64().unwrap_or(0);
+                usize::try_from(length).map_err(|_| invalid_value(&name, length))
+            })
+            .collect()
     }
 
     fn bitpix(&self) -> Option<BitPix> {
         self.header()
             .get("BITPIX")
             .as_i64()
-            .and_then(|i| BitPix::from_value(i as i32))
+            .and_then(|i| i32::try_from(i).ok())
+            .and_then(BitPix::from_value)
     }
 
+    // The whole data unit before padding, with PCOUNT and GCOUNT (FITS 4.0
+    // eq. 2): a binary table's heap, and every random group.
     fn calculate_data_size(&self) -> Result<usize> {
-        let dimensions = self.data_dimensions();
-        if dimensions.is_empty() {
-            return Ok(0);
-        }
+        data_unit_len(self.header())
+    }
 
-        let total_pixels = dimensions
-            .iter()
-            .try_fold(1usize, |acc, &dim| acc.checked_mul(dim))
-            .ok_or_else(|| FitsError::InvalidFormat("Data dimensions too large".to_string()))?;
-        let bitpix = self.bitpix().ok_or_else(|| FitsError::KeywordNotFound {
-            keyword: "BITPIX".to_string(),
-        })?;
-
-        Ok(total_pixels * bitpix.bytes_per_pixel())
+    fn checked_data_size(&self) -> Result<usize> {
+        within_data_unit(self, self.calculate_data_size()?)
     }
 
     fn read_raw_data<R>(&self, reader: &mut R) -> Result<Vec<u8>>
@@ -143,24 +106,13 @@ pub trait HduTrait: std::fmt::Debug {
         if !self.has_data() {
             return Ok(Vec::new());
         }
-
-        let data_size = self.calculate_data_size()?;
-
-        reader.seek(SeekFrom::Start(self.info().data_start))?;
-
-        let mut buffer = vec![0u8; data_size];
-        reader.read_exact(&mut buffer)?;
-        Ok(buffer)
+        read_bytes(self, reader, self.checked_data_size()?)
     }
 
-    fn write_raw_data<W>(&self, writer: &mut W, data: &[u8]) -> Result<()>
-    where
-        W: std::io::Write,
-    {
-        writer.write_all(data)?;
-        Ok(())
-    }
-
+    // Stored values for every BITPIX: the image array of a primary or IMAGE
+    // HDU, and the whole data unit of other HDUs. BSCALE and BZERO are
+    // applied by the caller, which can pick a type that holds the physical
+    // values.
     fn read_data<T, R>(&self, reader: &mut R) -> Result<Vec<T>>
     where
         T: DataArray,
@@ -169,33 +121,75 @@ pub trait HduTrait: std::fmt::Debug {
         if !self.has_data() {
             return Ok(Vec::new());
         }
+        stored_as(self, T::BITPIX)?;
+        let bytes = match self.hdu_type() {
+            HduType::Primary | HduType::Image => read_array(self, reader)?,
+            _ => self.read_raw_data(reader)?,
+        };
+        T::from_bytes(&bytes, ByteOrder::BigEndian)
+    }
+}
 
-        let expected_bitpix = T::BITPIX;
-        let actual_bitpix = self.bitpix().ok_or_else(|| FitsError::KeywordNotFound {
-            keyword: "BITPIX".to_string(),
-        })?;
+// The image array at the start of a primary or IMAGE data unit: NAXIS1 x
+// ... x NAXISn values of |BITPIX|/8 bytes (FITS 4.0 eq. 1). PCOUNT and
+// GCOUNT do not change it.
+pub(crate) fn read_array<H, R>(hdu: &H, reader: &mut R) -> Result<Vec<u8>>
+where
+    H: HduTrait + ?Sized,
+    R: Read + Seek,
+{
+    if !hdu.has_data() {
+        return Ok(Vec::new());
+    }
+    let bitpix = hdu.bitpix().ok_or_else(|| FitsError::KeywordNotFound {
+        keyword: "BITPIX".to_string(),
+    })?;
+    let size = hdu
+        .data_dimensions()?
+        .iter()
+        .try_fold(bitpix.bytes_per_pixel(), |n, &d| n.checked_mul(d))
+        .ok_or_else(|| FitsError::InvalidFormat("Data dimensions too large".to_string()))?;
+    read_bytes(hdu, reader, within_data_unit(hdu, size)?)
+}
 
-        if expected_bitpix != actual_bitpix {
-            return Err(FitsError::TypeMismatch {
-                expected: expected_bitpix,
-                actual: actual_bitpix,
-            });
-        }
+// The scan checked `info().data_size` against the file length, so a larger
+// size here comes from a header that does not match the scan.
+fn within_data_unit<H: HduTrait + ?Sized>(hdu: &H, size: usize) -> Result<usize> {
+    let info = hdu.info();
+    if size > info.data_size {
+        return Err(FitsError::InvalidFormat(format!(
+            "HDU {} needs {} data bytes, but its data unit holds {}",
+            info.index, size, info.data_size
+        )));
+    }
+    Ok(size)
+}
 
-        let data_size = self.calculate_data_size()?;
+fn read_bytes<H, R>(hdu: &H, reader: &mut R, size: usize) -> Result<Vec<u8>>
+where
+    H: HduTrait + ?Sized,
+    R: Read + Seek,
+{
+    reader.seek(SeekFrom::Start(hdu.info().data_start))?;
+    let mut buffer = vec![0u8; size];
+    reader.read_exact(&mut buffer)?;
+    Ok(buffer)
+}
 
-        reader.seek(SeekFrom::Start(self.info().data_start))?;
+fn stored_as<H: HduTrait + ?Sized>(hdu: &H, expected: BitPix) -> Result<()> {
+    let actual = hdu.bitpix().ok_or_else(|| FitsError::KeywordNotFound {
+        keyword: "BITPIX".to_string(),
+    })?;
+    if actual != expected {
+        return Err(FitsError::TypeMismatch { expected, actual });
+    }
+    Ok(())
+}
 
-        let mut buffer = vec![0u8; data_size];
-        reader.read_exact(&mut buffer)?;
-
-        let mut data = T::from_bytes(&buffer, ByteOrder::BigEndian)?;
-
-        if self.needs_scaling() && (T::BITPIX == BitPix::F32 || T::BITPIX == BitPix::F64) {
-            T::apply_scaling(&mut data, self.bscale(), self.bzero());
-        }
-
-        Ok(data)
+fn invalid_value(keyword: &str, value: i64) -> FitsError {
+    FitsError::InvalidKeywordValue {
+        keyword: keyword.to_string(),
+        value: value.to_string(),
     }
 }
 
@@ -278,7 +272,8 @@ impl Hdu {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::fits::header::{Header, Keyword};
+    use crate::fits::header::keywords::Keyword;
+    use crate::fits::header::parser::Header;
     use crate::fits::io::reader::HduInfo;
     use std::io::Cursor;
 
@@ -328,6 +323,8 @@ mod tests {
         header.add_keyword(Keyword::integer("NAXIS1", 20));
         header.add_keyword(Keyword::integer("NAXIS2", 100));
         header.add_keyword(Keyword::integer("TFIELDS", 2));
+        header.add_keyword(Keyword::string("TFORM1", "1J"));
+        header.add_keyword(Keyword::string("TFORM2", "4E"));
 
         if compressed {
             header.add_keyword(Keyword::logical("ZIMAGE", true));
@@ -342,7 +339,7 @@ mod tests {
             data_size: 2000,
         };
 
-        BinaryTableHdu::new(header, info)
+        BinaryTableHdu::new(header, info).unwrap()
     }
 
     fn create_ascii_table_hdu() -> AsciiTableHdu {
@@ -352,6 +349,10 @@ mod tests {
         header.add_keyword(Keyword::integer("NAXIS1", 80));
         header.add_keyword(Keyword::integer("NAXIS2", 50));
         header.add_keyword(Keyword::integer("TFIELDS", 3));
+        for (n, col) in [(1, 1), (2, 21), (3, 41)] {
+            header.add_keyword(Keyword::string(format!("TFORM{n}"), "A20".to_string()));
+            header.add_keyword(Keyword::integer(format!("TBCOL{n}"), col));
+        }
 
         let info = HduInfo {
             index: 3,
@@ -361,7 +362,7 @@ mod tests {
             data_size: 4000,
         };
 
-        AsciiTableHdu::new(header, info)
+        AsciiTableHdu::new(header, info).unwrap()
     }
 
     fn create_random_groups_hdu() -> RandomGroupsHdu {
@@ -573,7 +574,7 @@ mod tests {
     #[test]
     fn hdu_trait_data_dimensions_returns_correct_values() {
         let primary = create_primary_hdu();
-        assert_eq!(primary.data_dimensions(), vec![10, 10]);
+        assert_eq!(primary.data_dimensions().unwrap(), vec![10, 10]);
     }
 
     #[test]
@@ -592,13 +593,13 @@ mod tests {
         };
 
         let primary = PrimaryHdu::new(header, info);
-        assert_eq!(primary.data_dimensions(), vec![]);
+        assert_eq!(primary.data_dimensions().unwrap(), vec![]);
     }
 
     #[test]
     fn hdu_trait_bitpix_returns_correct_value() {
         let primary = create_primary_hdu();
-        assert_eq!(primary.bitpix(), Some(crate::core::BitPix::I16));
+        assert_eq!(primary.bitpix(), Some(crate::core::types::BitPix::I16));
     }
 
     #[test]
@@ -689,114 +690,6 @@ mod tests {
     }
 
     #[test]
-    fn hdu_trait_write_raw_data_success() {
-        let primary = create_primary_hdu();
-        let mut buffer = Vec::new();
-        let data = vec![0x01, 0x02, 0x03, 0x04];
-
-        primary.write_raw_data(&mut buffer, &data).unwrap();
-        assert_eq!(buffer, data);
-    }
-
-    #[test]
-    fn hdu_trait_bzero_default_value() {
-        let primary = create_primary_hdu();
-        assert_eq!(primary.bzero(), 0.0);
-    }
-
-    #[test]
-    fn hdu_trait_bzero_from_header() {
-        let mut header = Header::new();
-        header.add_keyword(Keyword::logical("SIMPLE", true));
-        header.add_keyword(Keyword::integer("NAXIS", 0));
-        header.add_keyword(Keyword::integer("BITPIX", 16));
-        header.add_keyword(Keyword::real("BZERO", 32768.0));
-
-        let info = HduInfo {
-            index: 0,
-            header_start: 0,
-            header_size: 2880,
-            data_start: 2880,
-            data_size: 0,
-        };
-
-        let primary = PrimaryHdu::new(header, info);
-        assert_eq!(primary.bzero(), 32768.0);
-    }
-
-    #[test]
-    fn hdu_trait_bscale_default_value() {
-        let primary = create_primary_hdu();
-        assert_eq!(primary.bscale(), 1.0);
-    }
-
-    #[test]
-    fn hdu_trait_bscale_from_header() {
-        let mut header = Header::new();
-        header.add_keyword(Keyword::logical("SIMPLE", true));
-        header.add_keyword(Keyword::integer("NAXIS", 0));
-        header.add_keyword(Keyword::integer("BITPIX", 16));
-        header.add_keyword(Keyword::real("BSCALE", 2.5));
-
-        let info = HduInfo {
-            index: 0,
-            header_start: 0,
-            header_size: 2880,
-            data_start: 2880,
-            data_size: 0,
-        };
-
-        let primary = PrimaryHdu::new(header, info);
-        assert_eq!(primary.bscale(), 2.5);
-    }
-
-    #[test]
-    fn hdu_trait_needs_scaling_false_default() {
-        let primary = create_primary_hdu();
-        assert!(!primary.needs_scaling());
-    }
-
-    #[test]
-    fn hdu_trait_needs_scaling_true_with_bzero() {
-        let mut header = Header::new();
-        header.add_keyword(Keyword::logical("SIMPLE", true));
-        header.add_keyword(Keyword::integer("NAXIS", 0));
-        header.add_keyword(Keyword::integer("BITPIX", 16));
-        header.add_keyword(Keyword::real("BZERO", 32768.0));
-
-        let info = HduInfo {
-            index: 0,
-            header_start: 0,
-            header_size: 2880,
-            data_start: 2880,
-            data_size: 0,
-        };
-
-        let primary = PrimaryHdu::new(header, info);
-        assert!(primary.needs_scaling());
-    }
-
-    #[test]
-    fn hdu_trait_needs_scaling_true_with_bscale() {
-        let mut header = Header::new();
-        header.add_keyword(Keyword::logical("SIMPLE", true));
-        header.add_keyword(Keyword::integer("NAXIS", 0));
-        header.add_keyword(Keyword::integer("BITPIX", 16));
-        header.add_keyword(Keyword::real("BSCALE", 2.0));
-
-        let info = HduInfo {
-            index: 0,
-            header_start: 0,
-            header_size: 2880,
-            data_start: 2880,
-            data_size: 0,
-        };
-
-        let primary = PrimaryHdu::new(header, info);
-        assert!(primary.needs_scaling());
-    }
-
-    #[test]
     fn hdu_trait_read_data_with_scaling_integer_returns_raw() {
         let mut header = Header::new();
         header.add_keyword(Keyword::logical("SIMPLE", true));
@@ -822,6 +715,34 @@ mod tests {
     }
 
     #[test]
+    fn hdu_trait_read_data_with_scaling_float_returns_stored_values() {
+        let mut header = Header::new();
+        header.add_keyword(Keyword::logical("SIMPLE", true));
+        header.add_keyword(Keyword::integer("NAXIS", 1));
+        header.add_keyword(Keyword::integer("NAXIS1", 2));
+        header.add_keyword(Keyword::integer("BITPIX", -32));
+        header.add_keyword(Keyword::real("BSCALE", 2.0));
+        header.add_keyword(Keyword::real("BZERO", 1.0));
+
+        let info = HduInfo {
+            index: 0,
+            header_start: 0,
+            header_size: 2880,
+            data_start: 0,
+            data_size: 8,
+        };
+
+        let primary = PrimaryHdu::new(header, info);
+        let data: Vec<u8> = [2.5f32, -1.0]
+            .iter()
+            .flat_map(|v| v.to_be_bytes())
+            .collect();
+        let mut cursor = Cursor::new(data);
+        let result: Vec<f32> = primary.read_data(&mut cursor).unwrap();
+        assert_eq!(result, vec![2.5, -1.0]);
+    }
+
+    #[test]
     fn hdu_trait_read_data_without_scaling() {
         let mut header = Header::new();
         header.add_keyword(Keyword::logical("SIMPLE", true));
@@ -844,14 +765,38 @@ mod tests {
         assert_eq!(result, vec![10, 20]);
     }
 
-    #[test]
-    fn hdu_trait_bzero_integer_value_converted_to_real() {
+    fn huge_primary_hdu() -> PrimaryHdu {
         let mut header = Header::new();
         header.add_keyword(Keyword::logical("SIMPLE", true));
-        header.add_keyword(Keyword::integer("NAXIS", 0));
         header.add_keyword(Keyword::integer("BITPIX", 16));
-        header.add_keyword(Keyword::integer("BZERO", 32768));
+        header.add_keyword(Keyword::integer("NAXIS", 2));
+        header.add_keyword(Keyword::integer("NAXIS1", 1_000_000_000));
+        header.add_keyword(Keyword::integer("NAXIS2", 1_000_000_000));
+        let info = HduInfo {
+            index: 0,
+            header_start: 0,
+            header_size: 2880,
+            data_start: 0,
+            data_size: 2880,
+        };
+        PrimaryHdu::new(header, info)
+    }
 
+    #[test]
+    fn hdu_trait_read_data_rejects_size_beyond_data_unit() {
+        let primary = huge_primary_hdu();
+        let result: Result<Vec<i16>> = primary.read_data(&mut Cursor::new(vec![0u8; 2880]));
+        assert!(matches!(result, Err(FitsError::InvalidFormat(_))));
+        let result = primary.read_raw_data(&mut Cursor::new(vec![0u8; 2880]));
+        assert!(matches!(result, Err(FitsError::InvalidFormat(_))));
+    }
+
+    fn primary_with(cards: &[(&str, i64)]) -> PrimaryHdu {
+        let mut header = Header::new();
+        header.add_keyword(Keyword::logical("SIMPLE", true));
+        for &(name, value) in cards {
+            header.add_keyword(Keyword::integer(name, value));
+        }
         let info = HduInfo {
             index: 0,
             header_start: 0,
@@ -859,8 +804,42 @@ mod tests {
             data_start: 2880,
             data_size: 0,
         };
+        PrimaryHdu::new(header, info)
+    }
 
+    #[test]
+    fn hdu_trait_data_dimensions_rejects_a_negative_axis_length() {
+        let cards = [("BITPIX", 16), ("NAXIS", 2), ("NAXIS1", 3), ("NAXIS2", -1)];
+        assert!(matches!(
+            primary_with(&cards).data_dimensions(),
+            Err(FitsError::InvalidKeywordValue { ref keyword, .. }) if keyword == "NAXIS2"
+        ));
+    }
+
+    #[test]
+    fn hdu_trait_data_dimensions_rejects_naxis_outside_0_to_999() {
+        for naxis in [-1, 1000] {
+            assert!(matches!(
+                primary_with(&[("BITPIX", 16), ("NAXIS", naxis)]).data_dimensions(),
+                Err(FitsError::InvalidKeywordValue { ref keyword, .. }) if keyword == "NAXIS"
+            ));
+        }
+    }
+
+    #[test]
+    fn hdu_trait_bitpix_rejects_value_outside_i32() {
+        let mut header = Header::new();
+        header.add_keyword(Keyword::logical("SIMPLE", true));
+        header.add_keyword(Keyword::integer("BITPIX", (1 << 32) + 8));
+        let info = HduInfo {
+            index: 0,
+            header_start: 0,
+            header_size: 2880,
+            data_start: 2880,
+            data_size: 0,
+        };
         let primary = PrimaryHdu::new(header, info);
-        assert_eq!(primary.bzero(), 32768.0);
+        assert_eq!(HduTrait::bitpix(&primary), None);
+        assert_eq!(primary.bitpix(), None);
     }
 }

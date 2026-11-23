@@ -1,17 +1,85 @@
-use crate::xisf::{Result, XisfError};
+use crate::xisf::errors::{Result, XisfError};
+use crate::xisf::header::text_encoding::TextEncoding;
+use std::fmt;
 
 #[derive(Debug, Clone)]
-pub struct DataLocation {
+pub(crate) struct DataLocation {
     pub offset: u64,
     pub size: u64,
+    pub(crate) header_block: Option<HeaderBlock>,
+}
+
+// The decoded bytes of an inline or embedded block (XISF 1.0 section 10.3),
+// with the location attribute that describes the block. The `offset` and
+// `size` of its DataLocation address these bytes, not the file.
+#[derive(Clone)]
+pub(crate) struct HeaderBlock {
+    location: &'static str,
+    bytes: Vec<u8>,
+}
+
+// The bytes can be as long as the header, so only their count is printed.
+impl fmt::Debug for HeaderBlock {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{} ({} bytes)", self.location, self.bytes.len())
+    }
+}
+
+// The value of a location attribute. Blocks in other files (`url(...)` and
+// `path(...)`) belong to distributed units and are not supported.
+#[derive(Debug, Clone)]
+pub(crate) enum LocationAttr {
+    Attachment(DataLocation),
+    Inline(TextEncoding),
+    Embedded,
+}
+
+impl LocationAttr {
+    pub(crate) fn parse(s: &str) -> Result<Self> {
+        if let Some(encoding) = s.strip_prefix("inline:") {
+            return TextEncoding::parse(encoding).map(Self::Inline);
+        }
+        if s == "embedded" {
+            return Ok(Self::Embedded);
+        }
+        DataLocation::parse(s).map(Self::Attachment)
+    }
 }
 
 impl DataLocation {
-    pub fn new(offset: u64, size: u64) -> Self {
-        Self { offset, size }
+    pub(crate) fn new(offset: u64, size: u64) -> Self {
+        Self {
+            offset,
+            size,
+            header_block: None,
+        }
     }
 
-    pub fn parse(s: &str) -> Result<Self> {
+    pub(crate) fn inline(encoding: TextEncoding, bytes: Vec<u8>) -> Self {
+        Self::in_header(encoding.inline_location(), bytes)
+    }
+
+    pub(crate) fn embedded(bytes: Vec<u8>) -> Self {
+        Self::in_header("embedded", bytes)
+    }
+
+    fn in_header(location: &'static str, bytes: Vec<u8>) -> Self {
+        Self {
+            offset: 0,
+            size: bytes.len() as u64,
+            header_block: Some(HeaderBlock { location, bytes }),
+        }
+    }
+
+    // The decoded bytes of an inline or embedded block, None for an
+    // attachment.
+    pub(crate) fn header_bytes(&self) -> Option<&[u8]> {
+        self.header_block
+            .as_ref()
+            .map(|block| block.bytes.as_slice())
+    }
+
+    pub(crate) fn parse(s: &str) -> Result<Self> {
         let parts: Vec<&str> = s.split(':').collect();
         if parts.len() != 3 || parts[0] != "attachment" {
             return Err(XisfError::InvalidFormat(format!(
@@ -28,11 +96,20 @@ impl DataLocation {
             .parse::<u64>()
             .map_err(|_| XisfError::InvalidFormat(format!("Invalid size: {}", parts[2])))?;
 
-        Ok(Self { offset, size })
+        Ok(Self::new(offset, size))
     }
 
-    pub fn format(&self) -> String {
-        format!("attachment:{}:{}", self.offset, self.size)
+    pub(crate) fn format(&self) -> String {
+        match &self.header_block {
+            Some(block) => block.location.to_string(),
+            None => format!("attachment:{}:{}", self.offset, self.size),
+        }
+    }
+
+    pub(crate) fn ends_within(&self, stream_len: u64) -> bool {
+        self.offset
+            .checked_add(self.size)
+            .is_some_and(|end| end <= stream_len)
     }
 }
 
@@ -125,6 +202,49 @@ mod tests {
             assert_eq!(reparsed.offset, offset);
             assert_eq!(reparsed.size, size);
         }
+    }
+
+    #[test]
+    fn location_attribute_forms_are_parsed() {
+        assert!(matches!(
+            LocationAttr::parse("inline:base64"),
+            Ok(LocationAttr::Inline(TextEncoding::Base64))
+        ));
+        assert!(matches!(
+            LocationAttr::parse("inline:hex"),
+            Ok(LocationAttr::Inline(TextEncoding::Hex))
+        ));
+        assert!(matches!(
+            LocationAttr::parse("embedded"),
+            Ok(LocationAttr::Embedded)
+        ));
+        assert!(matches!(
+            LocationAttr::parse("attachment:16:4"),
+            Ok(LocationAttr::Attachment(DataLocation {
+                offset: 16,
+                size: 4,
+                header_block: None
+            }))
+        ));
+        for rejected in [
+            "inline:",
+            "inline:Base64",
+            "embedded:1:2",
+            "url(a.xisb)",
+            "path(/a)",
+        ] {
+            assert!(LocationAttr::parse(rejected).is_err(), "{rejected}");
+        }
+    }
+
+    #[test]
+    fn header_blocks_address_the_decoded_bytes() {
+        let location = DataLocation::inline(TextEncoding::Hex, vec![1, 2, 3]);
+        assert_eq!((location.offset, location.size), (0, 3));
+        assert_eq!(location.header_bytes(), Some(&[1u8, 2, 3][..]));
+        assert_eq!(location.format(), "inline:hex");
+        assert_eq!(DataLocation::embedded(Vec::new()).format(), "embedded");
+        assert_eq!(DataLocation::new(4, 2).header_bytes(), None);
     }
 
     #[test]

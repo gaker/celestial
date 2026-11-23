@@ -1,55 +1,51 @@
 use super::Image;
-use crate::fits::header::Keyword;
+use crate::fits::header::keywords::Keyword;
+use crate::fits::header::metadata;
 
 impl Image {
     pub fn exposure(&mut self, seconds: f64) -> &mut Self {
-        self.set_keyword(Keyword::real("EXPTIME", seconds));
-        self
+        self.with(metadata::exposure(seconds))
     }
 
     pub fn temperature(&mut self, celsius: f64) -> &mut Self {
-        self.set_keyword(Keyword::real("CCD-TEMP", celsius));
-        self
+        self.with(metadata::temperature(celsius))
     }
 
     pub fn gain(&mut self, gain: f64) -> &mut Self {
-        self.set_keyword(Keyword::real("GAIN", gain));
-        self
+        self.with(metadata::gain(gain))
     }
 
     pub fn binning(&mut self, x: u32, y: u32) -> &mut Self {
-        self.set_keyword(Keyword::integer("XBINNING", x as i64));
-        self.set_keyword(Keyword::integer("YBINNING", y as i64));
-        self
+        let [x, y] = metadata::binning(x, y);
+        self.with(x).with(y)
     }
 
     pub fn filter(&mut self, name: &str) -> &mut Self {
-        self.set_keyword(Keyword::string("FILTER", name));
-        self
+        self.with(metadata::filter(name))
     }
 
     pub fn object(&mut self, name: &str) -> &mut Self {
-        self.set_keyword(Keyword::string("OBJECT", name));
-        self
+        self.with(metadata::object(name))
     }
 
     pub fn observer(&mut self, name: &str) -> &mut Self {
-        self.set_keyword(Keyword::string("OBSERVER", name));
-        self
+        self.with(metadata::observer(name))
     }
 
     pub fn telescope(&mut self, name: &str) -> &mut Self {
-        self.set_keyword(Keyword::string("TELESCOP", name));
-        self
+        self.with(metadata::telescope(name))
     }
 
     pub fn instrument(&mut self, name: &str) -> &mut Self {
-        self.set_keyword(Keyword::string("INSTRUME", name));
-        self
+        self.with(metadata::instrument(name))
     }
 
     pub fn date_obs(&mut self, iso8601: &str) -> &mut Self {
-        self.set_keyword(Keyword::string("DATE-OBS", iso8601));
+        self.with(metadata::date_obs(iso8601))
+    }
+
+    fn with(&mut self, kw: Keyword) -> &mut Self {
+        self.set_keyword(kw);
         self
     }
 }
@@ -57,7 +53,7 @@ impl Image {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::fits::header::KeywordValue;
+    use crate::fits::header::keywords::KeywordValue;
     use crate::formats::pixel_data::PixelData;
 
     fn img() -> Image {
@@ -150,6 +146,34 @@ mod tests {
         let ret = i.exposure(10.0).filter("R").gain(2.0).binning(1, 1);
         // Chaining compiles and returns an &mut Image — no need to assert the address.
         let _: &mut Image = ret;
+    }
+
+    #[test]
+    fn get_last_returns_the_last_of_a_repeated_name() {
+        let mut i = img();
+        i.keywords.push(Keyword::real("CRVAL1", 83.6));
+        i.keywords.push(Keyword::real("HIERARCH ESO DET", 1.0));
+        i.keywords.push(Keyword::real("CRVAL1", 84.0));
+        i.keywords.push(Keyword::real("ESO DET", 2.0));
+        assert_eq!(i.get("CRVAL1").as_f64(), Some(83.6));
+        assert_eq!(i.get_last("CRVAL1").as_f64(), Some(84.0));
+        assert_eq!(i.get_last("ESO DET").as_f64(), Some(2.0));
+        assert_eq!(i.get_last("HIERARCH ESO DET").as_f64(), Some(1.0));
+        assert!(!i.get_last("CRVAL2").exists());
+    }
+
+    #[test]
+    fn set_keyword_appends_commentary_cards() {
+        let mut i = img();
+        i.set_keyword(Keyword::history("a"));
+        i.set_keyword(Keyword::history("b"));
+        let history: Vec<_> = i
+            .keywords
+            .iter()
+            .filter(|k| k.name == "HISTORY")
+            .map(|k| k.comment.as_deref())
+            .collect();
+        assert_eq!(history, [Some("a"), Some("b")]);
     }
 
     #[test]

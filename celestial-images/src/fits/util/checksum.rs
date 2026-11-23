@@ -1,6 +1,4 @@
-const FITS_BLOCK_SIZE: usize = 2880;
-
-pub fn ones_complement_sum(data: &[u8]) -> u32 {
+pub(crate) fn ones_complement_sum(data: &[u8]) -> u32 {
     let mut sum: u64 = 0;
     let mut i = 0;
 
@@ -26,14 +24,14 @@ fn fold_to_ones_complement(mut sum: u64) -> u32 {
     sum as u32
 }
 
-pub fn calculate_datasum(data: &[u8]) -> u32 {
+pub(crate) fn calculate_datasum(data: &[u8]) -> u32 {
     if data.is_empty() {
         return 0;
     }
     ones_complement_sum(data)
 }
 
-pub fn verify_datasum(data: &[u8], expected_str: &str) -> bool {
+pub(crate) fn verify_datasum(data: &[u8], expected_str: &str) -> bool {
     let expected = match expected_str.trim().parse::<u32>() {
         Ok(v) => v,
         Err(_) => return false,
@@ -41,77 +39,34 @@ pub fn verify_datasum(data: &[u8], expected_str: &str) -> bool {
     calculate_datasum(data) == expected
 }
 
-pub fn encode_checksum(sum: u32) -> String {
-    let bytes = sum.to_be_bytes();
-    let mut encoded = [b'0'; 16];
+// Encoding from the FITS checksum convention: each byte becomes four
+// characters offset by '0' whose sum is the byte, then the 16 characters
+// rotate right by one so they align with 32-bit words at card column 12.
+const CHECKSUM_OFFSET: u8 = 0x30;
 
-    for (i, &byte) in bytes.iter().enumerate() {
-        let quotient = byte / 4;
-        let remainder = byte % 4;
-        let ch = [
-            quotient + remainder,
-            quotient + (4 - remainder),
-            quotient,
-            quotient + 4,
-        ];
-
+pub(crate) fn encode_checksum(sum: u32) -> String {
+    let mut unrotated = [0u8; 16];
+    for (i, byte) in sum.to_be_bytes().into_iter().enumerate() {
+        let quotient = byte / 4 + CHECKSUM_OFFSET;
+        let mut ch = [quotient; 4];
+        ch[0] += byte % 4;
+        for pair in ch.as_chunks_mut::<2>().0 {
+            // Moving one unit between the pair keeps the sum and avoids the
+            // punctuation between '9' and 'A' and between 'Z' and 'a'.
+            while is_checksum_punctuation(pair[0]) || is_checksum_punctuation(pair[1]) {
+                pair[0] += 1;
+                pair[1] -= 1;
+            }
+        }
         for (j, &c) in ch.iter().enumerate() {
-            let pos = (4 * j + i) % 16;
-            encoded[pos] = ascii_encode(c + b'0');
+            unrotated[4 * j + i] = c;
         }
     }
-
-    String::from_utf8(encoded.to_vec()).unwrap()
+    (0..16).map(|i| unrotated[(i + 15) % 16] as char).collect()
 }
 
-fn ascii_encode(val: u8) -> u8 {
-    if val > b'Z' {
-        val + 10
-    } else if val > b'9' {
-        val + 7
-    } else {
-        val
-    }
-}
-
-pub fn decode_checksum(encoded: &str) -> Option<u32> {
-    if encoded.len() != 16 {
-        return None;
-    }
-
-    let chars: &[u8] = encoded.as_bytes();
-    let mut bytes = [0u8; 4];
-
-    for (i, byte) in bytes.iter_mut().enumerate() {
-        let mut ch = [0u8; 4];
-        for (j, c) in ch.iter_mut().enumerate() {
-            let pos = (4 * j + i) % 16;
-            *c = ascii_decode(chars[pos])? - b'0';
-        }
-
-        let quotient = ch[2];
-        let remainder = ch[0].wrapping_sub(quotient);
-        *byte = quotient * 4 + remainder;
-    }
-
-    Some(u32::from_be_bytes(bytes))
-}
-
-fn ascii_decode(c: u8) -> Option<u8> {
-    if c >= b'a' {
-        Some(c - 10)
-    } else if c >= b'A' {
-        Some(c - 7)
-    } else if c.is_ascii_digit() {
-        Some(c)
-    } else {
-        None
-    }
-}
-
-pub fn calculate_hdu_checksum(header_bytes: &[u8], data_sum: u32) -> u32 {
-    let header_sum = ones_complement_sum(header_bytes);
-    add_ones_complement(header_sum, data_sum)
+fn is_checksum_punctuation(c: u8) -> bool {
+    (b':'..=b'@').contains(&c) || (b'['..=b'`').contains(&c)
 }
 
 fn add_ones_complement(a: u32, b: u32) -> u32 {
@@ -119,44 +74,32 @@ fn add_ones_complement(a: u32, b: u32) -> u32 {
     fold_to_ones_complement(sum)
 }
 
-pub fn checksum_complement(sum: u32) -> u32 {
+pub(crate) fn checksum_complement(sum: u32) -> u32 {
     !sum
 }
 
-pub fn verify_hdu_checksum(header_bytes: &[u8], data_bytes: &[u8]) -> bool {
+pub(crate) fn verify_hdu_checksum(header_bytes: &[u8], data_bytes: &[u8]) -> bool {
     let total_sum = ones_complement_sum(header_bytes);
     let data_sum = ones_complement_sum(data_bytes);
     let combined = add_ones_complement(total_sum, data_sum);
     combined == 0xFFFF_FFFF || combined == 0
 }
 
-pub fn format_datasum(sum: u32) -> String {
+pub(crate) fn format_datasum(sum: u32) -> String {
     sum.to_string()
 }
 
-pub fn create_checksum_card_value(header_bytes: &[u8], data_sum: u32) -> String {
+pub(crate) fn create_checksum_card_value(header_bytes: &[u8], data_sum: u32) -> String {
     let header_sum = ones_complement_sum(header_bytes);
     let combined = add_ones_complement(header_sum, data_sum);
     let complement = checksum_complement(combined);
     encode_checksum(complement)
 }
 
-pub fn pad_to_block(data: &[u8]) -> Vec<u8> {
-    let remainder = data.len() % FITS_BLOCK_SIZE;
-    if remainder == 0 {
-        return data.to_vec();
-    }
-
-    let padding_needed = FITS_BLOCK_SIZE - remainder;
-    let mut padded = Vec::with_capacity(data.len() + padding_needed);
-    padded.extend_from_slice(data);
-    padded.resize(padded.len() + padding_needed, 0);
-    padded
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::fits::block::FITS_BLOCK_SIZE;
 
     #[test]
     fn ones_complement_sum_empty() {
@@ -187,30 +130,6 @@ mod tests {
         let data = [0x00, 0x00, 0x00, 0x01, 0x02];
         let sum = ones_complement_sum(&data);
         assert_eq!(sum, 1 + 0x02000000);
-    }
-
-    #[test]
-    fn encode_decode_roundtrip() {
-        let test_values = [0u32, 1, 0xFFFF_FFFF, 0x12345678, 0xDEADBEEF];
-
-        for value in test_values {
-            let encoded = encode_checksum(value);
-            assert_eq!(encoded.len(), 16);
-
-            let decoded = decode_checksum(&encoded);
-            assert_eq!(decoded, Some(value));
-        }
-    }
-
-    #[test]
-    fn decode_invalid_length() {
-        assert_eq!(decode_checksum("short"), None);
-        assert_eq!(decode_checksum("toolongstringhere!"), None);
-    }
-
-    #[test]
-    fn decode_invalid_chars() {
-        assert_eq!(decode_checksum("!@#$%^&*(){}[]<>"), None);
     }
 
     #[test]
@@ -267,40 +186,47 @@ mod tests {
     }
 
     #[test]
-    fn pad_to_block_already_aligned() {
-        let data = vec![0u8; FITS_BLOCK_SIZE];
-        let padded = pad_to_block(&data);
-        assert_eq!(padded.len(), FITS_BLOCK_SIZE);
-    }
-
-    #[test]
-    fn pad_to_block_needs_padding() {
-        let data = vec![0u8; 100];
-        let padded = pad_to_block(&data);
-        assert_eq!(padded.len(), FITS_BLOCK_SIZE);
-        assert_eq!(padded.len() % FITS_BLOCK_SIZE, 0);
-    }
-
-    #[test]
-    fn pad_to_block_empty() {
-        let data: Vec<u8> = vec![];
-        let padded = pad_to_block(&data);
-        assert!(padded.is_empty());
-    }
-
-    #[test]
     fn verify_hdu_checksum_all_zeros() {
         let header = vec![0u8; FITS_BLOCK_SIZE];
         let data = vec![0u8; FITS_BLOCK_SIZE];
         assert!(verify_hdu_checksum(&header, &data));
     }
 
+    // Values and CHECKSUM strings from files written by astropy 6.0.1 with
+    // checksum=True. Each value is the complement of the HDU sum taken with
+    // the CHECKSUM string replaced by sixteen '0' characters.
+    const ASTROPY_CHECKSUMS: [(u32, &str); 4] = [
+        (0x062F_CDF7, "m3Adp18cm1Acm15c"),
+        (0xA87E_9F12, "4ZQZ6ZOW4ZOW4ZOW"),
+        (0xC4B1_053B, "9aa2FaX19aa1CaW1"),
+        (0xCA29_EDF0, "ldAllb4klbAklb3k"),
+    ];
+
     #[test]
-    fn calculate_hdu_checksum_combines_correctly() {
-        let header = [0x00, 0x00, 0x00, 0x05];
-        let data_sum = 10u32;
-        let result = calculate_hdu_checksum(&header, data_sum);
-        assert_eq!(result, 15);
+    fn encode_checksum_matches_astropy() {
+        for (value, expected) in ASTROPY_CHECKSUMS {
+            assert_eq!(encode_checksum(value), expected, "0x{:08X}", value);
+        }
+    }
+
+    #[test]
+    fn encoded_checksum_has_no_punctuation() {
+        for value in [
+            0u32,
+            0xFFFF_FFFF,
+            0x0A0A_0A0A,
+            0x2B2B_2B2B,
+            0xEDED_EDED,
+            0x1234_5678,
+        ] {
+            let encoded = encode_checksum(value);
+            assert!(
+                encoded.bytes().all(|b| b.is_ascii_alphanumeric()),
+                "0x{:08X} encoded as {}",
+                value,
+                encoded
+            );
+        }
     }
 
     #[test]

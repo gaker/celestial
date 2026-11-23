@@ -1,1143 +1,388 @@
-use super::{ColumnInfo, HduTrait, HduType};
-use crate::core::ByteOrder;
-use crate::fits::data::{DataArray, DataValue, TableValue};
-use crate::fits::header::Header;
-use crate::fits::io::reader::HduInfo;
-use crate::fits::{FitsError, Result};
-use std::io::{Read, Seek, SeekFrom};
-use std::marker::PhantomData;
+use super::table::cell::{CellFormat, Heap};
+use super::table::layout::{last_count, Column};
+use super::table::rows::TableRows;
+use super::table::values::{integer, real, text};
+use super::table::TableHdu;
+use super::HduType;
+use crate::fits::data::value::TableValue;
+use crate::fits::errors::{FitsError, Result};
+use crate::fits::header::parser::Header;
+use std::io::{Read, Seek};
+use std::ops::Range;
 
-#[derive(Debug)]
-pub struct AsciiTableHdu {
-    header: Header,
-    info: HduInfo,
+pub type AsciiTableHdu = TableHdu<AsciiForm>;
+pub type AsciiTableRowIterator<'a, R> = TableRows<'a, R, AsciiForm>;
+
+// The field formats of FITS 4.0 Table 15. `decimals` is the d of Fw.d,
+// Ew.d and Dw.d.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AsciiForm {
+    Char,
+    Integer,
+    Real { decimals: usize },
 }
 
-impl AsciiTableHdu {
-    pub fn new(header: Header, info: HduInfo) -> Self {
-        Self { header, info }
-    }
+impl CellFormat for AsciiForm {
+    const PACKED: bool = false;
 
-    pub fn number_of_fields(&self) -> Option<i64> {
-        self.header.get("TFIELDS").as_i64()
-    }
-
-    pub fn number_of_rows(&self) -> Option<i64> {
-        self.header.get("NAXIS2").as_i64()
-    }
-
-    pub fn extension_name(&self) -> Option<&str> {
-        self.header.get("EXTNAME").as_str()
-    }
-
-    pub fn extension_version(&self) -> Option<i64> {
-        self.header.get("EXTVER").as_i64()
-    }
-
-    pub fn column_count(&self) -> Result<usize> {
-        self.header
-            .get("TFIELDS")
-            .as_i64()
-            .map(|n| n as usize)
-            .ok_or_else(|| FitsError::KeywordNotFound {
-                keyword: "TFIELDS".to_string(),
-            })
-    }
-
-    pub fn column_info(&self, column: usize) -> Result<ColumnInfo> {
-        let column_count = self.column_count()?;
-        if column >= column_count {
-            return Err(FitsError::InvalidFormat(format!(
-                "Column index {} out of range (0..{})",
-                column, column_count
-            )));
-        }
-
-        let column_index = column + 1;
-
-        let format_key = format!("TFORM{}", column_index);
-        let format = self
-            .header
-            .get(&format_key)
-            .as_str()
-            .ok_or(FitsError::KeywordNotFound {
-                keyword: format_key,
-            })?;
-
-        let mut info = ColumnInfo::new(column, format.to_string());
-
-        if let Some(name) = self.header.get(&format!("TTYPE{}", column_index)).as_str() {
-            info = info.with_name(name.to_string());
-        }
-
-        if let Some(unit) = self.header.get(&format!("TUNIT{}", column_index)).as_str() {
-            info = info.with_unit(unit.to_string());
-        }
-
-        if let Some(null_val) = self.header.get(&format!("TNULL{}", column_index)).as_str() {
-            info = info.with_null_value(null_val.to_string());
-        }
-
-        if let Some(scale) = self.header.get(&format!("TSCAL{}", column_index)).as_f64() {
-            info = info.with_scale(scale);
-        }
-
-        if let Some(zero) = self.header.get(&format!("TZERO{}", column_index)).as_f64() {
-            info = info.with_zero_offset(zero);
-        }
-
-        if let Some(disp) = self.header.get(&format!("TDISP{}", column_index)).as_str() {
-            info.display_format = Some(disp.to_string());
-        }
-
-        Ok(info)
-    }
-
-    pub fn column_by_name(&self, name: &str) -> Result<usize> {
-        let column_count = self.column_count()?;
-
-        for i in 0..column_count {
-            if let Ok(info) = self.column_info(i) {
-                if let Some(col_name) = &info.name {
-                    if col_name == name {
-                        return Ok(i);
-                    }
-                }
-            }
-        }
-
-        Err(FitsError::InvalidFormat(format!(
-            "Column '{}' not found",
-            name
-        )))
-    }
-
-    pub fn all_column_info(&self) -> Result<Vec<ColumnInfo>> {
-        let column_count = self.column_count()?;
-        let mut columns = Vec::with_capacity(column_count);
-
-        for i in 0..column_count {
-            columns.push(self.column_info(i)?);
-        }
-
-        Ok(columns)
-    }
-
-    pub fn read_column_raw<R>(&self, reader: &mut R, column: usize) -> Result<Vec<u8>>
-    where
-        R: Read + Seek,
-    {
-        let info = self.column_info(column)?;
-        let row_count = self.number_of_rows().unwrap_or(0) as usize;
-
-        if row_count == 0 {
-            return Ok(Vec::new());
-        }
-
-        let (_data_type, width) = self.parse_ascii_format(&info.format)?;
-        let total_bytes = row_count * width;
-
-        let column_offset = self.calculate_column_offset(column)?;
-        let row_size = self.get_row_size()?;
-
-        let data_start = self.info.data_start;
-        let mut result = Vec::with_capacity(total_bytes);
-
-        for row in 0..row_count {
-            let row_start = data_start + (row * row_size) as u64;
-            let column_position = row_start + column_offset as u64;
-
-            reader.seek(SeekFrom::Start(column_position))?;
-
-            let mut column_data = vec![0u8; width];
-            reader.read_exact(&mut column_data)?;
-
-            result.extend_from_slice(&column_data);
-        }
-
-        Ok(result)
-    }
-
-    fn calculate_column_offset(&self, column: usize) -> Result<usize> {
-        let column_count = self.column_count()?;
-        if column >= column_count {
-            return Err(FitsError::InvalidFormat(format!(
-                "Column index {} out of range (0..{})",
-                column, column_count
-            )));
-        }
-
-        if column == 0 {
-            return Ok(0);
-        }
-
-        let mut offset = 0;
-        for i in 0..column {
-            let info = self.column_info(i)?;
-            let (_, width) = self.parse_ascii_format(&info.format)?;
-            offset += width + 1;
-        }
-
-        Ok(offset)
-    }
-
-    fn get_row_size(&self) -> Result<usize> {
-        let column_count = self.column_count()?;
-        let mut row_size = 0;
-
-        for i in 0..column_count {
-            let info = self.column_info(i)?;
-            let (_, width) = self.parse_ascii_format(&info.format)?;
-            row_size += width;
-            if i < column_count - 1 {
-                row_size += 1;
-            }
-        }
-
-        row_size += 1;
-        Ok(row_size)
-    }
-
-    fn parse_ascii_format(&self, format: &str) -> Result<(String, usize)> {
-        if format.is_empty() {
-            return Err(FitsError::InvalidFormat("Empty column format".to_string()));
-        }
-
-        let mut data_type = String::new();
-        let mut width_str = String::new();
-        let mut in_width = false;
-
-        for ch in format.chars() {
-            if ch.is_ascii_alphabetic() && !in_width {
-                data_type.push(ch);
-                in_width = true;
-            } else if ch.is_ascii_digit() && in_width {
-                width_str.push(ch);
-            } else if ch == '.' {
-                break;
-            }
-        }
-
-        let width = if width_str.is_empty() {
-            1
-        } else {
-            width_str.parse().unwrap_or(1)
-        };
-
-        Ok((data_type, width))
-    }
-
-    pub fn read_column_with_nulls<T, R>(
-        &self,
-        reader: &mut R,
-        column: usize,
-    ) -> Result<Vec<DataValue<T>>>
-    where
-        T: DataArray,
-        R: Read + Seek,
-    {
-        let column_info = self.column_info(column)?;
-        let raw_data = self.read_column_raw(reader, column)?;
-
-        let null_value = match &column_info.null_value {
-            Some(null_str) => Some(T::parse_null_value(null_str)?),
-            None => None,
-        };
-
-        T::from_bytes_with_null(&raw_data, ByteOrder::BigEndian, null_value)
-    }
-
-    pub fn get_row<R>(&self, reader: &mut R, row_index: usize) -> Result<Vec<TableValue>>
-    where
-        R: Read + Seek,
-    {
-        let row_count = self.number_of_rows().unwrap_or(0) as usize;
-        if row_index >= row_count {
-            return Err(FitsError::InvalidFormat(format!(
-                "Row index {} out of range (0..{})",
-                row_index, row_count
-            )));
-        }
-
-        let column_count = self.column_count()?;
-        let row_bytes = self.read_row_raw(reader, row_index)?;
-        self.parse_row_values(&row_bytes, column_count)
-    }
-
-    fn read_row_raw<R>(&self, reader: &mut R, row_index: usize) -> Result<Vec<u8>>
-    where
-        R: Read + Seek,
-    {
-        let row_size = self.get_row_size()?;
-        let data_start = self.info.data_start;
-        let row_offset = row_index * row_size;
-
-        reader.seek(SeekFrom::Start(data_start + row_offset as u64))?;
-
-        let mut row_buffer = vec![0u8; row_size];
-        reader.read_exact(&mut row_buffer)?;
-        Ok(row_buffer)
-    }
-
-    fn parse_row_values(&self, row_bytes: &[u8], column_count: usize) -> Result<Vec<TableValue>> {
-        let mut values = Vec::with_capacity(column_count);
-        let mut offset = 0;
-
-        for col_idx in 0..column_count {
-            let info = self.column_info(col_idx)?;
-            let (data_type, width) = self.parse_ascii_format(&info.format)?;
-            let col_data = &row_bytes[offset..offset + width];
-            let value = self.parse_ascii_value(&data_type, col_data)?;
-            values.push(value);
-            offset += width;
-            if col_idx < column_count - 1 {
-                offset += 1;
-            }
-        }
-
-        Ok(values)
-    }
-
-    fn parse_ascii_value(&self, data_type: &str, bytes: &[u8]) -> Result<TableValue> {
-        let text = String::from_utf8_lossy(bytes).trim().to_string();
-        if text.is_empty() {
-            return Ok(TableValue::Null);
-        }
-
-        match data_type {
-            "A" => Ok(TableValue::String(text)),
-            "I" => self.parse_ascii_integer(&text),
-            "F" | "E" | "D" => self.parse_ascii_float(&text),
-            _ => Ok(TableValue::String(text)),
-        }
-    }
-
-    fn parse_ascii_integer(&self, text: &str) -> Result<TableValue> {
-        match text.parse::<i64>() {
-            Ok(v) => Ok(TableValue::I64(v)),
-            Err(_) => Ok(TableValue::Null),
-        }
-    }
-
-    fn parse_ascii_float(&self, text: &str) -> Result<TableValue> {
-        let normalized = text.replace('D', "E").replace('d', "e");
-        match normalized.parse::<f64>() {
-            Ok(v) => Ok(TableValue::F64(v)),
-            Err(_) => Ok(TableValue::Null),
-        }
-    }
-
-    pub fn get_column_by_name<R>(&self, reader: &mut R, name: &str) -> Result<Vec<TableValue>>
-    where
-        R: Read + Seek,
-    {
-        let col_idx = self.column_by_name(name)?;
-        self.get_column_values(reader, col_idx)
-    }
-
-    pub fn get_column_values<R>(&self, reader: &mut R, column: usize) -> Result<Vec<TableValue>>
-    where
-        R: Read + Seek,
-    {
-        let row_count = self.number_of_rows().unwrap_or(0) as usize;
-        if row_count == 0 {
-            return Ok(Vec::new());
-        }
-
-        let info = self.column_info(column)?;
-        let (data_type, width) = self.parse_ascii_format(&info.format)?;
-        let raw_data = self.read_column_raw(reader, column)?;
-
-        self.convert_column_to_values(&data_type, &raw_data, width, row_count)
-    }
-
-    fn convert_column_to_values(
-        &self,
-        data_type: &str,
-        raw_data: &[u8],
-        width: usize,
-        row_count: usize,
-    ) -> Result<Vec<TableValue>> {
-        let mut values = Vec::with_capacity(row_count);
-
-        for row in 0..row_count {
-            let start = row * width;
-            let end = start + width;
-            let row_bytes = &raw_data[start..end];
-            let value = self.parse_ascii_value(data_type, row_bytes)?;
-            values.push(value);
-        }
-
-        Ok(values)
-    }
-
-    pub fn row_count(&self) -> usize {
-        self.number_of_rows().unwrap_or(0) as usize
-    }
-
-    pub fn iter_rows<'a, R>(&'a self, reader: &'a mut R) -> AsciiTableRowIterator<'a, R>
-    where
-        R: Read + Seek,
-    {
-        AsciiTableRowIterator::new(self, reader)
-    }
-}
-
-pub struct AsciiTableRowIterator<'a, R>
-where
-    R: Read + Seek,
-{
-    hdu: &'a AsciiTableHdu,
-    reader: &'a mut R,
-    current_row: usize,
-    row_count: usize,
-    _phantom: PhantomData<R>,
-}
-
-impl<'a, R> AsciiTableRowIterator<'a, R>
-where
-    R: Read + Seek,
-{
-    fn new(hdu: &'a AsciiTableHdu, reader: &'a mut R) -> Self {
-        let row_count = hdu.row_count();
-        Self {
-            hdu,
-            reader,
-            current_row: 0,
-            row_count,
-            _phantom: PhantomData,
-        }
-    }
-}
-
-impl<'a, R> Iterator for AsciiTableRowIterator<'a, R>
-where
-    R: Read + Seek,
-{
-    type Item = Result<Vec<TableValue>>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.current_row >= self.row_count {
-            return None;
-        }
-
-        let result = self.hdu.get_row(self.reader, self.current_row);
-        self.current_row += 1;
-        Some(result)
-    }
-
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        let remaining = self.row_count - self.current_row;
-        (remaining, Some(remaining))
-    }
-}
-
-impl<'a, R> ExactSizeIterator for AsciiTableRowIterator<'a, R> where R: Read + Seek {}
-
-impl HduTrait for AsciiTableHdu {
-    fn header(&self) -> &Header {
-        &self.header
-    }
-
-    fn info(&self) -> &HduInfo {
-        &self.info
-    }
-
-    fn hdu_type(&self) -> HduType {
+    fn hdu_type() -> HduType {
         HduType::AsciiTable
     }
+
+    // FITS 4.0 §7.2.1: field n starts at the 1-based column TBCOLn.
+    fn place(tform: &str, header: &Header, n: usize, _: usize) -> Result<(Self, Range<usize>)> {
+        let (form, width) = parse_tform(tform)?;
+        let start = last_count(header, &format!("TBCOL{n}"))?
+            .checked_sub(1)
+            .ok_or_else(|| invalid(format!("TBCOL{n} = 0; fields start at column 1")))?;
+        let end = start
+            .checked_add(width)
+            .ok_or_else(|| invalid(format!("field {n} ends past the largest row size")))?;
+        Ok((form, start..end))
+    }
+
+    fn decode<R: Read + Seek>(
+        column: &Column<Self>,
+        cell: &[u8],
+        _: &mut Heap<'_, R>,
+    ) -> Result<TableValue> {
+        if is_null(column, cell) {
+            return Ok(TableValue::Null);
+        }
+        Ok(match column.format {
+            AsciiForm::Char => text(cell),
+            AsciiForm::Integer => integer(column, integer_field(cell)?, TableValue::I64, None),
+            AsciiForm::Real { decimals } => {
+                let v = real_field(cell, decimals)?;
+                real(column, v, TableValue::F64(v))
+            }
+        })
+    }
+}
+
+// FITS 4.0 §7.2.2: TNULLn is space filled to the field width.
+fn is_null(column: &Column<AsciiForm>, cell: &[u8]) -> bool {
+    column
+        .info
+        .null_value
+        .as_ref()
+        .is_some_and(|null| cell.trim_ascii_end() == null.as_bytes().trim_ascii_end())
+}
+
+// Aw and Iw, or Fw.d, Ew.d and Dw.d. A real format without .d reads as d = 0.
+fn parse_tform(tform: &str) -> Result<(AsciiForm, usize)> {
+    let bad = || invalid(format!("TFORM '{tform}' is not Aw, Iw, Fw.d, Ew.d or Dw.d"));
+    let text = tform.trim();
+    let (code, rest) = text.split_at_checked(1).ok_or_else(bad)?;
+    let (width, decimals) = match rest.split_once('.') {
+        Some((w, d)) => (w, Some(d)),
+        None => (rest, None),
+    };
+    let width = digits(width).filter(|&w| w > 0).ok_or_else(bad)?;
+    let form = match (code, decimals) {
+        ("A", None) => AsciiForm::Char,
+        ("I", None) => AsciiForm::Integer,
+        ("F" | "E" | "D", None) => AsciiForm::Real { decimals: 0 },
+        ("F" | "E" | "D", Some(d)) => AsciiForm::Real {
+            decimals: digits(d).ok_or_else(bad)?,
+        },
+        _ => return Err(bad()),
+    };
+    Ok((form, width))
+}
+
+fn digits(text: &str) -> Option<usize> {
+    if text.is_empty() || !text.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    text.parse().ok()
+}
+
+// The field without the spaces around it.
+fn field_text(cell: &[u8]) -> Result<&str> {
+    let text = std::str::from_utf8(cell)
+        .map_err(|_| invalid("numeric field holds bytes that are not ASCII".to_string()))?;
+    Ok(text.trim_matches(' '))
+}
+
+// FITS 4.0 §7.2.5: an optional sign and decimal digits, with spaces
+// before and after. A blank field is 0.
+fn integer_field(cell: &[u8]) -> Result<i64> {
+    let text = field_text(cell)?;
+    if text.is_empty() {
+        return Ok(0);
+    }
+    let unsigned = text.strip_prefix(['+', '-']).unwrap_or(text);
+    if unsigned.is_empty() || !unsigned.bytes().all(|b| b.is_ascii_digit()) {
+        return Err(invalid(format!("integer field holds '{text}'")));
+    }
+    text.parse()
+        .map_err(|_| invalid(format!("integer field '{text}' does not fit 64 bits")))
+}
+
+// FITS 4.0 §7.2.5: [sign] digits [. digits] [exponent]. The exponent is E or
+// D and a signed integer, or a sign and an integer. Without a decimal
+// point, the last `decimals` digits are the fraction. A blank field is 0.
+// The value is the decimal text rounded once to f64.
+fn real_field(cell: &[u8], decimals: usize) -> Result<f64> {
+    let text = field_text(cell)?;
+    if text.is_empty() {
+        return Ok(0.0);
+    }
+    let bad = || invalid(format!("real field holds '{text}'"));
+    let (sign, unsigned) = match text.strip_prefix('-') {
+        Some(rest) => ("-", rest),
+        None => ("", text.strip_prefix('+').unwrap_or(text)),
+    };
+    let split = unsigned
+        .find(|c: char| !c.is_ascii_digit() && c != '.')
+        .unwrap_or(unsigned.len());
+    let (mantissa, exponent) = unsigned.split_at(split);
+    let (digits, shift) = mantissa_digits(mantissa, decimals).ok_or_else(bad)?;
+    let exponent = exponent_value(exponent).ok_or_else(bad)?;
+    let power = i64::try_from(shift)
+        .ok()
+        .and_then(|shift| exponent.checked_sub(shift))
+        .ok_or_else(bad)?;
+    format!("{sign}{digits}e{power}").parse().map_err(|_| bad())
+}
+
+// Returns the digits of a mantissa and how many of them follow the decimal
+// point, or `None` when the mantissa has no digits or a second point.
+fn mantissa_digits(mantissa: &str, decimals: usize) -> Option<(String, usize)> {
+    let (whole, fraction, shift) = match mantissa.split_once('.') {
+        Some((w, f)) => (w, f, f.len()),
+        None => (mantissa, "", decimals),
+    };
+    let all_digits = |s: &str| s.bytes().all(|b| b.is_ascii_digit());
+    if whole.len() + fraction.len() == 0 || !all_digits(fraction) {
+        return None;
+    }
+    Some((format!("{whole}{fraction}"), shift))
+}
+
+fn exponent_value(text: &str) -> Option<i64> {
+    let signed = match text.as_bytes().first() {
+        None => return Some(0),
+        Some(b'E' | b'D') => &text[1..],
+        Some(b'+' | b'-') => text,
+        Some(_) => return None,
+    };
+    let unsigned = signed.strip_prefix(['+', '-']).unwrap_or(signed);
+    if unsigned.is_empty() || !unsigned.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    signed.parse().ok()
+}
+
+fn invalid(message: String) -> FitsError {
+    FitsError::InvalidFormat(message)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::fits::header::{Header, Keyword};
+    use crate::fits::hdu::HduTrait;
+    use crate::fits::header::keywords::{set_keyword, Keyword};
     use crate::fits::io::reader::HduInfo;
+    use std::io::Cursor;
 
-    fn create_test_header(extname: Option<&str>) -> Header {
-        let mut header = Header::new();
-        header.add_keyword(Keyword::string("XTENSION", "TABLE"));
-        header.add_keyword(Keyword::integer("NAXIS", 2));
-        header.add_keyword(Keyword::integer("NAXIS1", 80));
-        header.add_keyword(Keyword::integer("NAXIS2", 100));
-        header.add_keyword(Keyword::integer("TFIELDS", 4));
-
-        if let Some(name) = extname {
-            header.add_keyword(Keyword::string("EXTNAME", name));
-            header.add_keyword(Keyword::integer("EXTVER", 1));
+    // Fields given as (TFORM, TBCOL) with `extra` cards after them.
+    fn table(
+        fields: &[(&str, i64)],
+        row_bytes: i64,
+        rows: i64,
+        extra: &[Keyword],
+    ) -> AsciiTableHdu {
+        let mut h = Header::new();
+        h.add_keyword(Keyword::string("XTENSION", "TABLE"));
+        h.add_keyword(Keyword::integer("BITPIX", 8));
+        h.add_keyword(Keyword::integer("NAXIS", 2));
+        h.add_keyword(Keyword::integer("NAXIS1", row_bytes));
+        h.add_keyword(Keyword::integer("NAXIS2", rows));
+        h.add_keyword(Keyword::integer("TFIELDS", fields.len() as i64));
+        for (i, (form, col)) in fields.iter().enumerate() {
+            h.add_keyword(Keyword::string(format!("TFORM{}", i + 1), form.to_string()));
+            h.add_keyword(Keyword::integer(format!("TBCOL{}", i + 1), *col));
         }
-
-        header
+        for card in extra {
+            h.add_keyword(card.clone());
+        }
+        let info = HduInfo {
+            index: 1,
+            header_start: 0,
+            header_size: 0,
+            data_start: 0,
+            data_size: (row_bytes * rows) as usize,
+        };
+        AsciiTableHdu::new(h, info).unwrap()
     }
 
-    fn create_test_hdu_info() -> HduInfo {
-        HduInfo {
-            index: 2,
-            header_start: 5760,
-            header_size: 2880,
-            data_start: 8640,
-            data_size: 8000,
+    fn real(text: &str, decimals: usize) -> Result<f64> {
+        real_field(text.as_bytes(), decimals)
+    }
+
+    #[test]
+    fn tforms_follow_table_15() {
+        assert_eq!(parse_tform("A12").unwrap(), (AsciiForm::Char, 12));
+        assert_eq!(parse_tform("I6").unwrap(), (AsciiForm::Integer, 6));
+        assert_eq!(
+            parse_tform("F8.3").unwrap(),
+            (AsciiForm::Real { decimals: 3 }, 8)
+        );
+        assert_eq!(
+            parse_tform("E15.7").unwrap(),
+            (AsciiForm::Real { decimals: 7 }, 15)
+        );
+        assert_eq!(
+            parse_tform("D25.17").unwrap(),
+            (AsciiForm::Real { decimals: 17 }, 25)
+        );
+        assert_eq!(
+            parse_tform("E10").unwrap(),
+            (AsciiForm::Real { decimals: 0 }, 10)
+        );
+        for bad in [
+            "", "A", "A0", "I4.2", "X4", "a4", "F.3", "F8.x", "I-4", "B4",
+        ] {
+            assert!(parse_tform(bad).is_err(), "{bad}");
         }
     }
 
     #[test]
-    fn new_creates_ascii_table_hdu() {
-        let header = create_test_header(Some("CATALOG"));
-        let info = create_test_hdu_info();
-        let hdu = AsciiTableHdu::new(header, info);
-
-        assert_eq!(hdu.info.index, 2);
-        assert_eq!(hdu.number_of_fields(), Some(4));
+    fn integers_allow_spaces_and_a_sign() {
+        assert_eq!(integer_field(b"  42 ").unwrap(), 42);
+        assert_eq!(integer_field(b"+0003").unwrap(), 3);
+        assert_eq!(integer_field(b"   -7").unwrap(), -7);
+        assert_eq!(integer_field(b"     ").unwrap(), 0);
+        for bad in [
+            &b"4 2"[..],
+            b"1.0",
+            b"--1",
+            b"+",
+            b"x",
+            b"99999999999999999999",
+        ] {
+            assert!(integer_field(bad).is_err());
+        }
     }
 
     #[test]
-    fn header_returns_header_reference() {
-        let header = create_test_header(None);
-        let info = create_test_hdu_info();
-        let hdu = AsciiTableHdu::new(header, info);
-
-        let header_ref = hdu.header();
-        assert_eq!(header_ref.get("XTENSION").as_str().unwrap(), "TABLE");
+    fn reals_follow_the_fortran_input_rules() {
+        assert_eq!(real("1.5E3", 1).unwrap(), 1500.0);
+        assert_eq!(real("2.5D2", 1).unwrap(), 250.0);
+        assert_eq!(real("1.5-3", 1).unwrap(), 0.0015);
+        assert_eq!(real("1.5+3", 1).unwrap(), 1500.0);
+        assert_eq!(real("  .5 ", 2).unwrap(), 0.5);
+        assert_eq!(real("-1.", 2).unwrap(), -1.0);
+        assert_eq!(real("     ", 2).unwrap(), 0.0);
+        assert_eq!(real("0.1", 0).unwrap(), 0.1);
+        let long = "1.23456789012345678";
+        assert_eq!(real(long, 0).unwrap(), long.parse::<f64>().unwrap());
     }
 
     #[test]
-    fn info_returns_info_reference() {
-        let header = create_test_header(None);
-        let info = create_test_hdu_info();
-        let hdu = AsciiTableHdu::new(header, info);
-
-        let info_ref = hdu.info();
-        assert_eq!(info_ref.index, 2);
-        assert_eq!(info_ref.data_start, 8640);
+    fn reals_without_a_point_take_an_implicit_one() {
+        assert_eq!(real("12345", 2).unwrap(), 123.45);
+        assert_eq!(real("    1", 1).unwrap(), 0.1);
+        assert_eq!(real("1E+02", 1).unwrap(), 10.0);
+        assert_eq!(real("-5", 0).unwrap(), -5.0);
     }
 
     #[test]
-    fn hdu_type_returns_ascii_table() {
-        let header = create_test_header(None);
-        let info = create_test_hdu_info();
-        let hdu = AsciiTableHdu::new(header, info);
+    fn bad_reals_are_errors() {
+        for bad in [
+            "1 2", ".", "+", "1.2.3", "1E", "1E+", "1Q3", "abc", "1.5E3x", "NaN",
+        ] {
+            assert!(real(bad, 1).is_err(), "{bad}");
+        }
+    }
 
-        assert_eq!(hdu.hdu_type(), HduType::AsciiTable);
+    // FITS 4.0 §7.2.5 names only the upper-case exponent letters.
+    #[test]
+    fn lower_case_exponents_are_errors() {
+        for bad in ["1.5e3", "2.5d2", "1e-2"] {
+            assert!(real(bad, 1).is_err(), "{bad}");
+        }
     }
 
     #[test]
-    fn number_of_fields_returns_tfields_value() {
-        let header = create_test_header(None);
-        let info = create_test_hdu_info();
-        let hdu = AsciiTableHdu::new(header, info);
-
-        assert_eq!(hdu.number_of_fields(), Some(4));
-    }
-
-    #[test]
-    fn number_of_fields_returns_none_when_missing() {
-        let mut header = Header::new();
-        header.add_keyword(Keyword::string("XTENSION", "TABLE"));
-        let info = create_test_hdu_info();
-        let hdu = AsciiTableHdu::new(header, info);
-
-        assert_eq!(hdu.number_of_fields(), None);
-    }
-
-    #[test]
-    fn number_of_rows_returns_naxis2_value() {
-        let header = create_test_header(None);
-        let info = create_test_hdu_info();
-        let hdu = AsciiTableHdu::new(header, info);
-
-        assert_eq!(hdu.number_of_rows(), Some(100));
-    }
-
-    #[test]
-    fn number_of_rows_returns_none_when_missing() {
-        let mut header = Header::new();
-        header.add_keyword(Keyword::string("XTENSION", "TABLE"));
-        let info = create_test_hdu_info();
-        let hdu = AsciiTableHdu::new(header, info);
-
-        assert_eq!(hdu.number_of_rows(), None);
-    }
-
-    #[test]
-    fn extension_name_returns_extname_value() {
-        let header = create_test_header(Some("PHOTOMETRY"));
-        let info = create_test_hdu_info();
-        let hdu = AsciiTableHdu::new(header, info);
-
-        assert_eq!(hdu.extension_name(), Some("PHOTOMETRY"));
-    }
-
-    #[test]
-    fn extension_name_returns_none_when_missing() {
-        let header = create_test_header(None);
-        let info = create_test_hdu_info();
-        let hdu = AsciiTableHdu::new(header, info);
-
-        assert_eq!(hdu.extension_name(), None);
-    }
-
-    #[test]
-    fn extension_version_returns_extver_value() {
-        let header = create_test_header(Some("TEST"));
-        let info = create_test_hdu_info();
-        let hdu = AsciiTableHdu::new(header, info);
-
-        assert_eq!(hdu.extension_version(), Some(1));
-    }
-
-    #[test]
-    fn extension_version_returns_none_when_missing() {
-        let header = create_test_header(None);
-        let info = create_test_hdu_info();
-        let hdu = AsciiTableHdu::new(header, info);
-
-        assert_eq!(hdu.extension_version(), None);
-    }
-
-    #[test]
-    fn all_methods_work_together() {
-        let mut header = Header::new();
-        header.add_keyword(Keyword::string("XTENSION", "TABLE"));
-        header.add_keyword(Keyword::integer("NAXIS", 2));
-        header.add_keyword(Keyword::integer("NAXIS1", 120));
-        header.add_keyword(Keyword::integer("NAXIS2", 500));
-        header.add_keyword(Keyword::integer("TFIELDS", 6));
-        header.add_keyword(Keyword::string("EXTNAME", "STARCAT"));
-        header.add_keyword(Keyword::integer("EXTVER", 3));
-        let info = create_test_hdu_info();
-        let hdu = AsciiTableHdu::new(header, info);
-
-        assert_eq!(hdu.hdu_type(), HduType::AsciiTable);
-        assert_eq!(hdu.number_of_fields(), Some(6));
-        assert_eq!(hdu.number_of_rows(), Some(500));
-        assert_eq!(hdu.extension_name(), Some("STARCAT"));
-        assert_eq!(hdu.extension_version(), Some(3));
-    }
-
-    #[test]
-    fn minimal_valid_ascii_table() {
-        let mut header = Header::new();
-        header.add_keyword(Keyword::string("XTENSION", "TABLE"));
-        header.add_keyword(Keyword::integer("NAXIS", 2));
-        header.add_keyword(Keyword::integer("NAXIS1", 40));
-        header.add_keyword(Keyword::integer("NAXIS2", 0));
-        header.add_keyword(Keyword::integer("TFIELDS", 1));
-        let info = create_test_hdu_info();
-        let hdu = AsciiTableHdu::new(header, info);
-
-        assert_eq!(hdu.hdu_type(), HduType::AsciiTable);
-        assert_eq!(hdu.number_of_fields(), Some(1));
-        assert_eq!(hdu.number_of_rows(), Some(0));
-        assert_eq!(hdu.extension_name(), None);
-        assert_eq!(hdu.extension_version(), None);
-    }
-
-    #[test]
-    fn parse_ascii_format_handles_types() {
-        let header = create_test_header(None);
-        let info = create_test_hdu_info();
-        let hdu = AsciiTableHdu::new(header, info);
-
-        assert_eq!(
-            hdu.parse_ascii_format("A10").unwrap(),
-            ("A".to_string(), 10)
-        );
-        assert_eq!(hdu.parse_ascii_format("I6").unwrap(), ("I".to_string(), 6));
-        assert_eq!(
-            hdu.parse_ascii_format("F12.3").unwrap(),
-            ("F".to_string(), 12)
-        );
-        assert_eq!(
-            hdu.parse_ascii_format("E15.7").unwrap(),
-            ("E".to_string(), 15)
-        );
-    }
-
-    #[test]
-    fn parse_ascii_format_fails_for_empty_string() {
-        let header = create_test_header(None);
-        let info = create_test_hdu_info();
-        let hdu = AsciiTableHdu::new(header, info);
-
-        assert!(matches!(
-            hdu.parse_ascii_format(""),
-            Err(FitsError::InvalidFormat(_))
-        ));
-    }
-
-    #[test]
-    fn read_column_raw_returns_ascii_data() {
-        let mut header = create_test_header(None);
-        header.add_keyword(Keyword::integer("TFIELDS", 1));
-        header.add_keyword(Keyword::string("TFORM1", "A10"));
-        let info = create_test_hdu_info();
-        let hdu = AsciiTableHdu::new(header, info);
-
-        let file_data = vec![0u8; 10000];
-        let mut cursor = std::io::Cursor::new(file_data);
-        let result = hdu.read_column_raw(&mut cursor, 0).unwrap();
-
-        assert_eq!(result.len(), 100 * 10);
-        assert!(result.iter().all(|&b| b == 0));
-    }
-
-    #[test]
-    fn read_column_raw_returns_empty_for_zero_rows() {
-        let mut header = create_test_header(None);
-        header.add_keyword(Keyword::integer("TFIELDS", 1));
-        header.add_keyword(Keyword::string("TFORM1", "A10"));
-        header.add_keyword(Keyword::integer("NAXIS2", 0));
-        let info = create_test_hdu_info();
-        let hdu = AsciiTableHdu::new(header, info);
-
-        let mut cursor = std::io::Cursor::new(vec![]);
-        let result = hdu.read_column_raw(&mut cursor, 0).unwrap();
-
-        assert_eq!(result.len(), 0);
-    }
-
-    #[test]
-    fn column_info_with_all_metadata() {
-        let mut header = create_test_header(None);
-        header.add_keyword(Keyword::integer("TFIELDS", 1));
-        header.add_keyword(Keyword::string("TFORM1", "A10"));
-        header.add_keyword(Keyword::string("TTYPE1", "NAME"));
-        header.add_keyword(Keyword::string("TUNIT1", "meter"));
-        header.add_keyword(Keyword::string("TNULL1", "NULL"));
-        header.add_keyword(Keyword::real("TSCAL1", 2.5));
-        header.add_keyword(Keyword::real("TZERO1", 100.0));
-        header.add_keyword(Keyword::string("TDISP1", "A8"));
-        let info = create_test_hdu_info();
-        let hdu = AsciiTableHdu::new(header, info);
-
-        let col_info = hdu.column_info(0).unwrap();
-        assert_eq!(col_info.index, 0);
-        assert_eq!(col_info.name, Some("NAME".to_string()));
-        assert_eq!(col_info.format, "A10");
-        assert_eq!(col_info.unit, Some("meter".to_string()));
-        assert_eq!(col_info.null_value, Some("NULL".to_string()));
-        assert_eq!(col_info.scale, Some(2.5));
-        assert_eq!(col_info.zero_offset, Some(100.0));
-        assert_eq!(col_info.display_format, Some("A8".to_string()));
-    }
-
-    #[test]
-    fn column_info_minimal_metadata() {
-        let mut header = create_test_header(None);
-        header.add_keyword(Keyword::integer("TFIELDS", 1));
-        header.add_keyword(Keyword::string("TFORM1", "I6"));
-        let info = create_test_hdu_info();
-        let hdu = AsciiTableHdu::new(header, info);
-
-        let col_info = hdu.column_info(0).unwrap();
-        assert_eq!(col_info.index, 0);
-        assert_eq!(col_info.name, None);
-        assert_eq!(col_info.format, "I6");
-        assert_eq!(col_info.unit, None);
-        assert_eq!(col_info.null_value, None);
-        assert_eq!(col_info.scale, None);
-        assert_eq!(col_info.zero_offset, None);
-        assert_eq!(col_info.display_format, None);
-    }
-
-    #[test]
-    fn column_by_name_success() {
-        let mut header = create_test_header(None);
-        header.add_keyword(Keyword::integer("TFIELDS", 3));
-        header.add_keyword(Keyword::string("TFORM1", "I6"));
-        header.add_keyword(Keyword::string("TTYPE1", "ID"));
-        header.add_keyword(Keyword::string("TFORM2", "F12.3"));
-        header.add_keyword(Keyword::string("TTYPE2", "FLUX"));
-        header.add_keyword(Keyword::string("TFORM3", "A20"));
-        header.add_keyword(Keyword::string("TTYPE3", "NAME"));
-        let info = create_test_hdu_info();
-        let hdu = AsciiTableHdu::new(header, info);
-
-        assert_eq!(hdu.column_by_name("ID").unwrap(), 0);
-        assert_eq!(hdu.column_by_name("FLUX").unwrap(), 1);
-        assert_eq!(hdu.column_by_name("NAME").unwrap(), 2);
-    }
-
-    #[test]
-    fn column_by_name_not_found() {
-        let mut header = create_test_header(None);
-        header.add_keyword(Keyword::integer("TFIELDS", 1));
-        header.add_keyword(Keyword::string("TFORM1", "I6"));
-        header.add_keyword(Keyword::string("TTYPE1", "ID"));
-        let info = create_test_hdu_info();
-        let hdu = AsciiTableHdu::new(header, info);
-
-        let result = hdu.column_by_name("NONEXISTENT");
-        assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), FitsError::InvalidFormat(_)));
-    }
-
-    #[test]
-    fn column_by_name_no_column_names() {
-        let mut header = create_test_header(None);
-        header.add_keyword(Keyword::integer("TFIELDS", 2));
-        header.add_keyword(Keyword::string("TFORM1", "I6"));
-        header.add_keyword(Keyword::string("TFORM2", "F12.3"));
-        let info = create_test_hdu_info();
-        let hdu = AsciiTableHdu::new(header, info);
-
-        let result = hdu.column_by_name("ANYTHING");
-        assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), FitsError::InvalidFormat(_)));
-    }
-
-    #[test]
-    fn all_column_info_success() {
-        let mut header = create_test_header(None);
-        header.add_keyword(Keyword::integer("TFIELDS", 2));
-        header.add_keyword(Keyword::string("TFORM1", "I6"));
-        header.add_keyword(Keyword::string("TTYPE1", "ID"));
-        header.add_keyword(Keyword::string("TFORM2", "F12.3"));
-        header.add_keyword(Keyword::string("TTYPE2", "FLUX"));
-        let info = create_test_hdu_info();
-        let hdu = AsciiTableHdu::new(header, info);
-
-        let columns = hdu.all_column_info().unwrap();
-        assert_eq!(columns.len(), 2);
-        assert_eq!(columns[0].index, 0);
-        assert_eq!(columns[0].name, Some("ID".to_string()));
-        assert_eq!(columns[0].format, "I6");
-        assert_eq!(columns[1].index, 1);
-        assert_eq!(columns[1].name, Some("FLUX".to_string()));
-        assert_eq!(columns[1].format, "F12.3");
-    }
-
-    #[test]
-    fn parse_ascii_format() {
-        let header = create_test_header(None);
-        let info = create_test_hdu_info();
-        let hdu = AsciiTableHdu::new(header, info);
-
-        assert_eq!(hdu.parse_ascii_format("A").unwrap(), ("A".to_string(), 1));
-        assert_eq!(hdu.parse_ascii_format("A1").unwrap(), ("A".to_string(), 1));
-        assert_eq!(
-            hdu.parse_ascii_format("A10").unwrap(),
-            ("A".to_string(), 10)
-        );
-        assert_eq!(hdu.parse_ascii_format("I6").unwrap(), ("I".to_string(), 6));
-        assert_eq!(
-            hdu.parse_ascii_format("F12.3").unwrap(),
-            ("F".to_string(), 12)
-        );
-        assert_eq!(
-            hdu.parse_ascii_format("E15.7").unwrap(),
-            ("E".to_string(), 15)
-        );
-        assert_eq!(
-            hdu.parse_ascii_format("D25.17").unwrap(),
-            ("D".to_string(), 25)
-        );
-    }
-
-    #[test]
-    fn calculate_column_offset_first_column() {
-        let mut header = create_test_header(None);
-        header.add_keyword(Keyword::integer("TFIELDS", 3));
-        header.add_keyword(Keyword::string("TFORM1", "A10"));
-        header.add_keyword(Keyword::string("TFORM2", "I6"));
-        header.add_keyword(Keyword::string("TFORM3", "F12.3"));
-        let info = create_test_hdu_info();
-        let hdu = AsciiTableHdu::new(header, info);
-
-        assert_eq!(hdu.calculate_column_offset(0).unwrap(), 0);
-    }
-
-    #[test]
-    fn calculate_column_offset_subsequent_columns() {
-        let mut header = create_test_header(None);
-        header.add_keyword(Keyword::integer("TFIELDS", 3));
-        header.add_keyword(Keyword::string("TFORM1", "A10"));
-        header.add_keyword(Keyword::string("TFORM2", "I6"));
-        header.add_keyword(Keyword::string("TFORM3", "F12.3"));
-        let info = create_test_hdu_info();
-        let hdu = AsciiTableHdu::new(header, info);
-
-        assert_eq!(hdu.calculate_column_offset(1).unwrap(), 11);
-        assert_eq!(hdu.calculate_column_offset(2).unwrap(), 18);
-    }
-
-    #[test]
-    fn calculate_column_offset_out_of_range() {
-        let mut header = create_test_header(None);
-        header.add_keyword(Keyword::integer("TFIELDS", 2));
-        header.add_keyword(Keyword::string("TFORM1", "A10"));
-        header.add_keyword(Keyword::string("TFORM2", "I6"));
-        let info = create_test_hdu_info();
-        let hdu = AsciiTableHdu::new(header, info);
-
-        let result = hdu.calculate_column_offset(5);
-        assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), FitsError::InvalidFormat(_)));
-    }
-
-    #[test]
-    fn get_row_size_calculation() {
-        let mut header = create_test_header(None);
-        header.add_keyword(Keyword::integer("TFIELDS", 3));
-        header.add_keyword(Keyword::string("TFORM1", "A10"));
-        header.add_keyword(Keyword::string("TFORM2", "I6"));
-        header.add_keyword(Keyword::string("TFORM3", "F12.3"));
-        let info = create_test_hdu_info();
-        let hdu = AsciiTableHdu::new(header, info);
-
-        assert_eq!(hdu.get_row_size().unwrap(), 31);
-    }
-
-    #[test]
-    fn read_column_with_nulls_functionality() {
-        let mut header = create_test_header(None);
-        header.add_keyword(Keyword::integer("TFIELDS", 1));
-        header.add_keyword(Keyword::integer("NAXIS2", 0));
-        header.add_keyword(Keyword::string("TFORM1", "I6"));
-        header.add_keyword(Keyword::string("TNULL1", "-999"));
-        let info = create_test_hdu_info();
-        let hdu = AsciiTableHdu::new(header, info);
-
-        let mut cursor = std::io::Cursor::new(vec![]);
-        let result = hdu
-            .read_column_with_nulls::<i32, _>(&mut cursor, 0)
+    fn fields_may_overlap_and_leave_gaps() {
+        let t = table(&[("A3", 2), ("I2", 4), ("F3.1", 7)], 10, 1, &[]);
+        let row = t
+            .get_row(&mut Cursor::new(b"#ab12#123#".to_vec()), 0)
             .unwrap();
-        assert_eq!(result.len(), 0);
-
-        let col_info = hdu.column_info(0).unwrap();
-        assert_eq!(col_info.null_value, Some("-999".to_string()));
+        assert_eq!(
+            row,
+            vec![
+                TableValue::String("ab1".to_string()),
+                TableValue::I64(12),
+                TableValue::F64(12.3),
+            ]
+        );
+        assert_eq!(t.hdu_type(), HduType::AsciiTable);
+        assert_eq!(
+            t.read_column_raw(&mut Cursor::new(b"#ab12#123#".to_vec()), 2)
+                .unwrap(),
+            b"123"
+        );
     }
 
     #[test]
-    fn get_row_fails_for_invalid_index() {
-        let mut header = create_test_header(None);
-        header.add_keyword(Keyword::integer("TFIELDS", 1));
-        header.add_keyword(Keyword::string("TFORM1", "I6"));
-        let info = create_test_hdu_info();
-        let hdu = AsciiTableHdu::new(header, info);
-        let mut cursor = std::io::Cursor::new(vec![0u8; 100]);
-
-        let result = hdu.get_row(&mut cursor, 200);
-        assert!(result.is_err());
+    fn scaled_fields_give_f64() {
+        let extra = [Keyword::real("TSCAL1", 0.5), Keyword::real("TZERO2", 1.0)];
+        let t = table(&[("I2", 1), ("E4.1", 3)], 6, 1, &extra);
+        let row = t.get_row(&mut Cursor::new(b" 3 2.5".to_vec()), 0).unwrap();
+        assert_eq!(row, vec![TableValue::F64(1.5), TableValue::F64(3.5)]);
     }
 
     #[test]
-    fn get_row_parses_integer() {
-        let mut header = Header::new();
-        header.add_keyword(Keyword::string("XTENSION", "TABLE"));
-        header.add_keyword(Keyword::integer("NAXIS", 2));
-        header.add_keyword(Keyword::integer("NAXIS1", 7));
-        header.add_keyword(Keyword::integer("NAXIS2", 1));
-        header.add_keyword(Keyword::integer("TFIELDS", 1));
-        header.add_keyword(Keyword::string("TFORM1", "I6"));
+    fn bad_layouts_are_rejected() {
+        // A card in `extra` replaces the card of the same name.
+        let h = |fields: &[(&str, i64)], extra: &[Keyword]| {
+            let mut cards = vec![
+                Keyword::integer("NAXIS1", 8),
+                Keyword::integer("NAXIS2", 1),
+                Keyword::integer("TFIELDS", fields.len() as i64),
+            ];
+            for (i, (form, col)) in fields.iter().enumerate() {
+                cards.push(Keyword::string(format!("TFORM{}", i + 1), form.to_string()));
+                cards.push(Keyword::integer(format!("TBCOL{}", i + 1), *col));
+            }
+            for card in extra {
+                set_keyword(&mut cards, card.clone());
+            }
+            let mut h = Header::new();
+            for card in cards {
+                h.add_keyword(card);
+            }
+            h
+        };
         let info = HduInfo {
             index: 1,
             header_start: 0,
             header_size: 0,
             data_start: 0,
-            data_size: 7,
+            data_size: 8,
         };
-        let hdu = AsciiTableHdu::new(header, info);
-
-        let data = b"   42 \n";
-        let mut cursor = std::io::Cursor::new(data.to_vec());
-
-        let result = hdu.get_row(&mut cursor, 0);
-        assert!(result.is_ok());
-        let row = result.unwrap();
-        assert_eq!(row.len(), 1);
-        assert_eq!(row[0], TableValue::I64(42));
-    }
-
-    #[test]
-    fn get_row_parses_float() {
-        let mut header = Header::new();
-        header.add_keyword(Keyword::string("XTENSION", "TABLE"));
-        header.add_keyword(Keyword::integer("NAXIS", 2));
-        header.add_keyword(Keyword::integer("NAXIS1", 10));
-        header.add_keyword(Keyword::integer("NAXIS2", 1));
-        header.add_keyword(Keyword::integer("TFIELDS", 1));
-        header.add_keyword(Keyword::string("TFORM1", "F9.3"));
-        let info = HduInfo {
-            index: 1,
-            header_start: 0,
-            header_size: 0,
-            data_start: 0,
-            data_size: 10,
-        };
-        let hdu = AsciiTableHdu::new(header, info);
-
-        let data = b"   1.2345\n";
-        let mut cursor = std::io::Cursor::new(data.to_vec());
-
-        let result = hdu.get_row(&mut cursor, 0);
-        assert!(result.is_ok());
-        let row = result.unwrap();
-        assert_eq!(row.len(), 1);
-        if let TableValue::F64(v) = row[0] {
-            assert!((v - 1.2345).abs() < 1e-6);
-        } else {
-            panic!("Expected F64");
+        for bad in [
+            h(&[("I4", 6)], &[]),
+            h(&[("I4", 0)], &[]),
+            h(&[("I4", -1)], &[]),
+            h(&[("Q4", 1)], &[]),
+            h(&[("I4", 1)], &[Keyword::integer("TFIELDS", 2)]),
+        ] {
+            assert!(AsciiTableHdu::new(bad, info.clone()).is_err());
         }
+        assert!(AsciiTableHdu::new(h(&[("I4", 5)], &[]), info).is_ok());
     }
 
     #[test]
-    fn get_row_parses_string() {
-        let mut header = Header::new();
-        header.add_keyword(Keyword::string("XTENSION", "TABLE"));
-        header.add_keyword(Keyword::integer("NAXIS", 2));
-        header.add_keyword(Keyword::integer("NAXIS1", 11));
-        header.add_keyword(Keyword::integer("NAXIS2", 1));
-        header.add_keyword(Keyword::integer("TFIELDS", 1));
-        header.add_keyword(Keyword::string("TFORM1", "A10"));
-        let info = HduInfo {
-            index: 1,
-            header_start: 0,
-            header_size: 0,
-            data_start: 0,
-            data_size: 11,
-        };
-        let hdu = AsciiTableHdu::new(header, info);
-
-        let data = b"Hello     \n";
-        let mut cursor = std::io::Cursor::new(data.to_vec());
-
-        let result = hdu.get_row(&mut cursor, 0);
-        assert!(result.is_ok());
-        let row = result.unwrap();
-        assert_eq!(row.len(), 1);
-        assert_eq!(row[0], TableValue::String("Hello".to_string()));
-    }
-
-    #[test]
-    fn get_column_by_name_success() {
-        let mut header = Header::new();
-        header.add_keyword(Keyword::string("XTENSION", "TABLE"));
-        header.add_keyword(Keyword::integer("NAXIS", 2));
-        header.add_keyword(Keyword::integer("NAXIS1", 7));
-        header.add_keyword(Keyword::integer("NAXIS2", 2));
-        header.add_keyword(Keyword::integer("TFIELDS", 1));
-        header.add_keyword(Keyword::string("TFORM1", "I6"));
-        header.add_keyword(Keyword::string("TTYPE1", "ID"));
-        let info = HduInfo {
-            index: 1,
-            header_start: 0,
-            header_size: 0,
-            data_start: 0,
-            data_size: 14,
-        };
-        let hdu = AsciiTableHdu::new(header, info);
-
-        let data = b"   10 \n   20 \n";
-        let mut cursor = std::io::Cursor::new(data.to_vec());
-
-        let result = hdu.get_column_by_name(&mut cursor, "ID");
-        assert!(result.is_ok());
-        let column = result.unwrap();
-        assert_eq!(column.len(), 2);
-        assert_eq!(column[0], TableValue::I64(10));
-        assert_eq!(column[1], TableValue::I64(20));
-    }
-
-    #[test]
-    fn get_column_by_name_not_found() {
-        let mut header = create_test_header(None);
-        header.add_keyword(Keyword::integer("TFIELDS", 1));
-        header.add_keyword(Keyword::string("TFORM1", "I6"));
-        let info = create_test_hdu_info();
-        let hdu = AsciiTableHdu::new(header, info);
-        let mut cursor = std::io::Cursor::new(vec![0u8; 100]);
-
-        let result = hdu.get_column_by_name(&mut cursor, "NONEXISTENT");
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn row_count_returns_correct_value() {
-        let header = create_test_header(None);
-        let info = create_test_hdu_info();
-        let hdu = AsciiTableHdu::new(header, info);
-
-        assert_eq!(hdu.row_count(), 100);
-    }
-
-    #[test]
-    fn row_count_returns_zero_when_missing() {
-        let mut header = Header::new();
-        header.add_keyword(Keyword::string("XTENSION", "TABLE"));
-        header.add_keyword(Keyword::integer("TFIELDS", 1));
-        header.add_keyword(Keyword::string("TFORM1", "I6"));
-        let info = create_test_hdu_info();
-        let hdu = AsciiTableHdu::new(header, info);
-
-        assert_eq!(hdu.row_count(), 0);
-    }
-
-    #[test]
-    fn iter_rows_returns_correct_count() {
-        let mut header = Header::new();
-        header.add_keyword(Keyword::string("XTENSION", "TABLE"));
-        header.add_keyword(Keyword::integer("NAXIS", 2));
-        header.add_keyword(Keyword::integer("NAXIS1", 7));
-        header.add_keyword(Keyword::integer("NAXIS2", 2));
-        header.add_keyword(Keyword::integer("TFIELDS", 1));
-        header.add_keyword(Keyword::string("TFORM1", "I6"));
-        let info = HduInfo {
-            index: 1,
-            header_start: 0,
-            header_size: 0,
-            data_start: 0,
-            data_size: 14,
-        };
-        let hdu = AsciiTableHdu::new(header, info);
-
-        let data = b"   10 \n   20 \n";
-        let mut cursor = std::io::Cursor::new(data.to_vec());
-
-        let iter = hdu.iter_rows(&mut cursor);
-        assert_eq!(iter.len(), 2);
-    }
-
-    #[test]
-    fn parse_ascii_value_empty_is_null() {
-        let header = create_test_header(None);
-        let info = create_test_hdu_info();
-        let hdu = AsciiTableHdu::new(header, info);
-
-        let result = hdu.parse_ascii_value("I", b"      ").unwrap();
-        assert_eq!(result, TableValue::Null);
-    }
-
-    #[test]
-    fn parse_ascii_float_with_d_exponent() {
-        let header = create_test_header(None);
-        let info = create_test_hdu_info();
-        let hdu = AsciiTableHdu::new(header, info);
-
-        let result = hdu.parse_ascii_float("1.5D+02");
-        assert!(result.is_ok());
-        if let TableValue::F64(v) = result.unwrap() {
-            assert!((v - 150.0).abs() < 1e-6);
-        } else {
-            panic!("Expected F64");
-        }
-    }
-
-    #[test]
-    fn get_column_values_empty_table() {
-        let mut header = Header::new();
-        header.add_keyword(Keyword::string("XTENSION", "TABLE"));
-        header.add_keyword(Keyword::integer("NAXIS", 2));
-        header.add_keyword(Keyword::integer("NAXIS1", 7));
-        header.add_keyword(Keyword::integer("NAXIS2", 0));
-        header.add_keyword(Keyword::integer("TFIELDS", 1));
-        header.add_keyword(Keyword::string("TFORM1", "I6"));
-        let info = create_test_hdu_info();
-        let hdu = AsciiTableHdu::new(header, info);
-        let mut cursor = std::io::Cursor::new(vec![]);
-
-        let result = hdu.get_column_values(&mut cursor, 0);
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap().len(), 0);
+    fn bad_field_text_is_an_error() {
+        let t = table(&[("I3", 1)], 3, 1, &[]);
+        assert!(t.get_row(&mut Cursor::new(b"1x2".to_vec()), 0).is_err());
+        assert!(t
+            .get_row(&mut Cursor::new(vec![0xff, b'1', b'2']), 0)
+            .is_err());
     }
 }

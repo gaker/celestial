@@ -175,6 +175,27 @@ impl Wcs {
         self.linear.pixel_scale()
     }
 
+    #[inline]
+    pub fn cd_matrix(&self) -> [[f64; 2]; 2] {
+        self.linear.cd_matrix()
+    }
+
+    #[inline]
+    pub fn projection(&self) -> &Projection {
+        &self.projection
+    }
+
+    #[inline]
+    pub fn rotation(&self) -> &SphericalRotation {
+        &self.rotation
+    }
+
+    // The fiducial point (φ0, θ0) after any PV1_1 and PV1_2 override.
+    #[inline]
+    pub fn native_reference(&self) -> (f64, f64) {
+        (self.fiducial.phi_0(), self.fiducial.theta_0())
+    }
+
     pub fn to_keywords(&self) -> Vec<WcsKeyword> {
         let mut keywords = Vec::new();
 
@@ -338,6 +359,29 @@ mod tests {
         assert_eq!(wcs.crpix(), [512.0, 512.0]);
         assert_eq!(wcs.crval(), [180.0, 45.0]);
         assert_eq!(wcs.pixel_scale(), 0.001);
+    }
+
+    // CAR with PV1_1/PV1_2 moves the fiducial point; LONPOLE 10 and the
+    // default LATPOLE fix the pole.
+    #[test]
+    fn test_wcs_projection_and_rotation_accessors() {
+        let wcs = WcsBuilder::new()
+            .crpix(100.0, 50.0)
+            .crval(37.5, 30.0)
+            .cd_matrix([[-0.002, 0.0001], [0.0003, 0.001]])
+            .projection(Projection::car())
+            .pv(1, 1, 5.0)
+            .pv(1, 2, 20.0)
+            .lonpole(10.0)
+            .build()
+            .unwrap();
+        assert_eq!(wcs.cd_matrix(), [[-0.002, 0.0001], [0.0003, 0.001]]);
+        assert_eq!(wcs.projection(), &Projection::car());
+        assert_eq!(wcs.native_reference(), (5.0, 20.0));
+        let expected =
+            SphericalRotation::from_crval(37.5, 30.0, 5.0, 20.0, Some(10.0), None).unwrap();
+        assert_eq!(wcs.rotation(), &expected);
+        assert_eq!(wcs.rotation().phi_p_deg(), 10.0);
     }
 
     #[test]
