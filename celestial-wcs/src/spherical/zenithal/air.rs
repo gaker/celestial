@@ -4,9 +4,34 @@ use crate::common::{
 use crate::coordinate::{IntermediateCoord, NativeCoord};
 use crate::error::{WcsError, WcsResult};
 use crate::newton::bracketed_newton;
-use crate::trig::{asind, sincosd, to_degrees, to_radians};
+use crate::trig::{acosd, asind, sincosd, to_degrees, to_radians};
 
-pub(crate) fn project_air(native: NativeCoord, k: &WcsResult<f64>) -> WcsResult<IntermediateCoord> {
+// What eq. 71 derives from θb: its constant k and the θ where R turns.
+#[derive(Debug, Clone)]
+pub(crate) struct AirRadius {
+    k: f64,
+    turns: Option<AirTurns>,
+}
+
+// The southern and northern θ where dR/dθ is 0, and R at the northern one.
+#[derive(Debug, Clone, Copy)]
+struct AirTurns {
+    south: f64,
+    north: f64,
+    r_north: f64,
+}
+
+pub(crate) fn air_radius(theta_b: f64) -> WcsResult<AirRadius> {
+    let k = air_k(theta_b)?;
+    let turns = air_turns(k)?;
+    Ok(AirRadius { k, turns })
+}
+
+pub(crate) fn project_air(
+    native: NativeCoord,
+    radius: &WcsResult<AirRadius>,
+) -> WcsResult<IntermediateCoord> {
+    let k = radius.as_ref().map_err(Clone::clone)?.k;
     let theta = native.theta_deg();
     if theta == 90.0 {
         return Ok(IntermediateCoord::new(0.0, 0.0));
@@ -20,16 +45,19 @@ pub(crate) fn project_air(native: NativeCoord, k: &WcsResult<f64>) -> WcsResult<
     Ok(radial_to_intermediate(r_theta, native.phi_deg()))
 }
 
-// Paper II eq. 71.
-fn compute_air_r_theta(theta: f64, k: &WcsResult<f64>) -> WcsResult<f64> {
+// Paper II eq. 71. At the pole ln(cos ξ)/tan ξ is 0/0, and R's limit is 0.
+fn compute_air_r_theta(theta: f64, k: f64) -> WcsResult<f64> {
+    if theta == 90.0 {
+        return Ok(0.0);
+    }
     let h = half_colatitude(theta)
         .ok_or_else(|| WcsError::singularity("AIR projection: cos(xi) <= 0"))?;
-    Ok(-2.0 * to_degrees(h.ln_cos / h.tan + k.clone()? * h.tan))
+    Ok(-2.0 * to_degrees(h.ln_cos / h.tan + k * h.tan))
 }
 
 // Eq. 71's ln(cos ξb) / tan² ξb, which the paper notes tends to −1/2 as θb
 // approaches 90°. That limit stands for it at θb = 90°, where ξb = 0.
-pub(crate) fn air_k(theta_b: f64) -> WcsResult<f64> {
+fn air_k(theta_b: f64) -> WcsResult<f64> {
     if theta_b == 90.0 {
         return Ok(-0.5);
     }
@@ -38,6 +66,49 @@ pub(crate) fn air_k(theta_b: f64) -> WcsResult<f64> {
         None => Err(WcsError::singularity(
             "AIR projection: invalid theta_b parameter",
         )),
+    }
+}
+
+// With u = cos² ξ, dR/dθ is (k + q(u))/u for q(u) = −u − u ln u / (2(1 − u)).
+// q is 0 at u = 0 and −1/2 at u = 1, and q′ changes sign once, near
+// u = 0.0699 (θ ≈ −59.33°), where q is about 0.0301. k + q is negative at both
+// ends, so R turns at two θ when k + q is positive at that maximum, which is
+// when θb is below about −76.47°, and nowhere otherwise. Small u is the south.
+fn air_turns(k: f64) -> WcsResult<Option<AirTurns>> {
+    let q = |u: f64| -u - u * libm::log(u) / (2.0 * (1.0 - u));
+    let q_slope = |u: f64| {
+        let one_minus_u = 1.0 - u;
+        -1.0 - (libm::log(u) + one_minus_u) / (2.0 * one_minus_u * one_minus_u)
+    };
+    let peak = sign_change(|u| -q_slope(u), (0.0, 1.0));
+    if k + q(peak) <= 0.0 {
+        return Ok(None);
+    }
+    let theta = |u: f64| 90.0 - 2.0 * acosd(libm::sqrt(u));
+    let south = theta(sign_change(|u| k + q(u), (0.0, peak)));
+    let north = theta(sign_change(|u| -(k + q(u)), (peak, 1.0)));
+    let r_north = compute_air_r_theta(north, k)?;
+    Ok(Some(AirTurns {
+        south,
+        north,
+        r_north,
+    }))
+}
+
+// Bisection for the point in (lo, hi) where f goes from negative to positive.
+// It stops when the midpoint rounds to an end, so it ends within the ~1100
+// halvings that separate two doubles in (0, 1).
+fn sign_change(f: impl Fn(f64) -> f64, (mut lo, mut hi): (f64, f64)) -> f64 {
+    loop {
+        let mid = lo + (hi - lo) / 2.0;
+        if mid <= lo || mid >= hi {
+            return mid;
+        }
+        if f(mid) < 0.0 {
+            lo = mid;
+        } else {
+            hi = mid;
+        }
     }
 }
 
@@ -71,37 +142,56 @@ fn half_colatitude(theta: f64) -> Option<HalfColatitude> {
 
 pub(crate) fn deproject_air(
     inter: IntermediateCoord,
-    k: &WcsResult<f64>,
+    radius: &WcsResult<AirRadius>,
 ) -> WcsResult<NativeCoord> {
     let (phi, r_theta, is_pole) = intermediate_to_polar(inter.x_deg(), inter.y_deg());
     if is_pole {
         return Ok(pole_native_coord());
     }
-    native_coord(phi, solve_air_inverse(r_theta, k)?)
+    let radius = radius.as_ref().map_err(Clone::clone)?;
+    native_coord(phi, solve_air_inverse(r_theta, radius)?)
 }
 
 // Eq. 71 solved for θ. R runs from 0 at the north pole to infinity at the
-// south, so (−90°, 90°] always holds the root, and r − R rises through it.
-// The ZEA radius (eq. 70) seeds the iteration where it is defined.
-fn solve_air_inverse(r: f64, k: &WcsResult<f64>) -> WcsResult<f64> {
+// south. Where it turns, a radius up to R at the northern turn belongs to as
+// many as three θ, and this takes the one nearest the pole, as the ZPN inverse
+// does. A larger radius belongs to one θ, south of the southern turn. On each
+// bracket r − R rises through the root. The ZEA radius (eq. 70) seeds the
+// iteration where it is defined and inside the bracket.
+fn solve_air_inverse(r: f64, radius: &AirRadius) -> WcsResult<f64> {
+    let (lo, hi) = match radius.turns {
+        Some(turns) if r <= turns.r_north => (turns.north, 90.0),
+        Some(turns) => (-90.0, turns.south),
+        None => (-90.0, 90.0),
+    };
     let rho = to_radians(r) / 2.0;
     let seed = if rho < 1.0 {
         90.0 - 2.0 * asind(rho)
     } else {
         0.0
     };
+    let seed = if (lo..=hi).contains(&seed) {
+        seed
+    } else {
+        lo + (hi - lo) / 2.0
+    };
+    let k = radius.k;
     let f_and_slope = |theta| {
         let r_theta = compute_air_r_theta(theta, k)?;
         Ok((r - r_theta, -compute_air_dr_dtheta(theta, k)?))
     };
-    bracketed_newton((-90.0, 90.0), seed, f_and_slope, "AIR inverse")
+    bracketed_newton((lo, hi), seed, f_and_slope, "AIR inverse")
 }
 
 // dRθ/dθ in degrees per degree, the same number as in radians per radian.
-fn compute_air_dr_dtheta(theta: f64, k: &WcsResult<f64>) -> WcsResult<f64> {
+// At the pole ln(cos ξ)/sin² ξ is 0/0 with limit −1/2, so dR/dθ is k − 1/2.
+fn compute_air_dr_dtheta(theta: f64, k: f64) -> WcsResult<f64> {
+    if theta == 90.0 {
+        return Ok(k - 0.5);
+    }
     let h = half_colatitude(theta)
         .ok_or_else(|| WcsError::singularity("AIR derivative: cos(xi) <= 0"))?;
-    Ok(-1.0 - h.ln_cos / h.sin2 + k.clone()? / h.cos2)
+    Ok(-1.0 - h.ln_cos / h.sin2 + k / h.cos2)
 }
 
 #[cfg(test)]
@@ -114,6 +204,21 @@ mod tests {
     // and the deprojected φ within 0.44 ulp. The inverse finds θ to the ~2 ulp
     // to which eq. 71 evaluates R, so θ is 16.17 ulp low at θ = 10° for
     // θb = 30°: R ≈ 78 there is three binades above θ.
+    // A point next to the reference point deprojects to just below the pole.
+    // The θ are the 60-digit values, correctly rounded.
+    #[test]
+    fn test_air_inverse_next_to_the_pole() {
+        let air = Projection::air(45.0);
+        for (x, theta) in [
+            (1e-15, 90.0),
+            (1e-13, 89.9999999999999),
+            (1e-9, 89.99999999895991),
+        ] {
+            let native = air.deproject(IntermediateCoord::new(x, 0.0)).unwrap();
+            assert_eq!((native.phi_deg(), native.theta_deg()), (90.0, theta), "{x}");
+        }
+    }
+
     #[test]
     fn test_air_pinned_both_ways() {
         let cases = [
@@ -204,6 +309,41 @@ mod tests {
         }
     }
 
+    // Below θb ≈ −76.47° R turns twice. For θb = −80 it rises between
+    // θ ≈ −74.69° and −45.20°, where R is 46.97° and 50.76°. Against 60 digits
+    // the southern θ is 0.29 ulp high, the northern θ 3.36 ulp high and R there
+    // 1.07 ulp high.
+    #[test]
+    fn test_air_turns_below_the_threshold() {
+        assert!(air_turns(air_k(-76.47).unwrap()).unwrap().is_none());
+        assert!(air_turns(air_k(-76.48).unwrap()).unwrap().is_some());
+        let turns = air_turns(air_k(-80.0).unwrap()).unwrap().unwrap();
+        assert_eq!(
+            (turns.south, turns.north, turns.r_north),
+            (-74.68610976650166, -45.19507584653405, 50.75987255064677)
+        );
+    }
+
+    // (120.29°, −60.98°) lies between the turns of θb = −80, so its radius also
+    // belongs to two θ further north, and the inverse returns the nearest the
+    // pole, −28.42°. A radius above R at the northern turn belongs to one θ,
+    // south of the turns. Against 60 digits x and y are within 2.06 ulp, φ is
+    // 0.80 ulp low and θ = −83° is 0.32 ulp low. θ = −28.42° is 11.53 ulp
+    // high: dR/dθ is −0.164 there and R is a binade above θ, so each ulp of R
+    // moves θ 12.2 ulp.
+    #[test]
+    fn test_air_inverse_takes_the_root_nearest_the_pole() {
+        let rows = [
+            (
+                (120.29, -60.98),
+                (42.584879596534776, 24.874625037334816),
+                (120.28999999999999, -28.42452060022634),
+            ),
+            ((180.0, -83.0), (0.0, 54.58911310938161), (180.0, -83.0)),
+        ];
+        assert_pinned(&Projection::air(-80.0), &rows);
+    }
+
     #[test]
     fn test_air_edge_cases() {
         // South pole: AIR diverges at theta = -90.
@@ -215,7 +355,7 @@ mod tests {
         let native = NativeCoord::new(0.0, 45.0);
         let err = Projection::air(-100.0).project(native).unwrap_err();
         assert!(
-            matches!(err, WcsError::Singularity { .. }),
+            matches!(err, WcsError::InvalidParameter { .. }),
             "invalid theta_b: {:?}",
             err
         );

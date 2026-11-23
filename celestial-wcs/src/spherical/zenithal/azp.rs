@@ -156,26 +156,19 @@ mod tests {
             err
         );
 
-        // Deproject: out-of-bounds / singularity cases
+        // Deproject: each way past the boundary. With µ = 0 and γ = 30° the
+        // denominator of eq. 25 is (180°/π) + y/2, exactly zero at this y.
         let cases = &[
-            (10.0, 0.0, 50.0, 50.0),              // no slant, far out
-            (0.0, 90.0, 0.0, -57.29577951308232), // denom zero with slant
-            (10.0, 30.0, 80.0, 80.0),             // s out of bounds with slant
+            (10.0, 0.0, 50.0, 50.0),               // no slant, far out
+            (0.0, 30.0, 0.0, -114.59155902616465), // denominator zero
+            (10.0, 30.0, 80.0, 80.0),              // s out of bounds with slant
         ];
         for &(mu, gamma, x, y) in cases {
             let inter = IntermediateCoord::new(x, y);
             let err = Projection::azp(mu, gamma).deproject(inter).unwrap_err();
             assert!(
-                matches!(
-                    err,
-                    WcsError::OutOfBounds { .. } | WcsError::Singularity { .. }
-                ),
-                "(mu={}, gamma={}, x={}, y={}): got: {:?}",
-                mu,
-                gamma,
-                x,
-                y,
-                err,
+                matches!(err, WcsError::OutOfBounds { .. }),
+                "(mu={mu}, gamma={gamma}, x={x}, y={y}): got: {err:?}"
             );
         }
     }

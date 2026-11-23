@@ -1,3 +1,4 @@
+use crate::common::{require_finite, ZERO_LIMIT};
 use crate::error::{WcsError, WcsResult};
 
 use super::{Kind, Projection};
@@ -7,7 +8,7 @@ use super::{Kind, Projection};
 // itself.
 impl PartialEq for Projection {
     fn eq(&self, other: &Self) -> bool {
-        self.parameters() == other.parameters()
+        self.kind.parameters() == other.kind.parameters()
     }
 }
 
@@ -32,12 +33,12 @@ impl Projection {
     }
 
     pub(crate) fn code(&self) -> &'static str {
-        self.parameters().0
+        self.kind.parameters().0
     }
 
     // The parameters other than their defaults, as (m, PV2_m).
     pub(crate) fn pv_values(&self) -> Vec<(usize, f64)> {
-        let (code, values) = self.parameters();
+        let (code, values) = self.kind.parameters();
         let (first, defaults) = parameter_defaults(code);
         let default = |i: usize| defaults.get(i).copied().flatten();
         let differs = |&(i, value): &(usize, f64)| default(i) != Some(value);
@@ -48,39 +49,6 @@ impl Projection {
             .filter(differs)
             .map(at_m)
             .collect()
-    }
-
-    fn parameters(&self) -> (&'static str, Vec<f64>) {
-        match &self.0 {
-            Kind::Tan => ("TAN", vec![]),
-            Kind::Sin { xi, eta } => ("SIN", vec![*xi, *eta]),
-            Kind::Arc => ("ARC", vec![]),
-            Kind::Stg => ("STG", vec![]),
-            Kind::Zea => ("ZEA", vec![]),
-            Kind::Azp { mu, gamma, .. } => ("AZP", vec![*mu, *gamma]),
-            Kind::Szp {
-                mu, phi_c, theta_c, ..
-            } => ("SZP", vec![*mu, *phi_c, *theta_c]),
-            Kind::Zpn { coeffs } => ("ZPN", coeffs.clone()),
-            Kind::Air { theta_b, .. } => ("AIR", vec![*theta_b]),
-            Kind::Car => ("CAR", vec![]),
-            Kind::Mer => ("MER", vec![]),
-            Kind::Cea { lambda } => ("CEA", vec![*lambda]),
-            Kind::Cyp { mu, lambda } => ("CYP", vec![*mu, *lambda]),
-            Kind::Sfl => ("SFL", vec![]),
-            Kind::Par => ("PAR", vec![]),
-            Kind::Mol => ("MOL", vec![]),
-            Kind::Ait => ("AIT", vec![]),
-            Kind::Cop { theta_a, eta, .. } => ("COP", vec![*theta_a, *eta]),
-            Kind::Coe { theta_a, eta, .. } => ("COE", vec![*theta_a, *eta]),
-            Kind::Cod { theta_a, eta, .. } => ("COD", vec![*theta_a, *eta]),
-            Kind::Coo { theta_a, eta, .. } => ("COO", vec![*theta_a, *eta]),
-            Kind::Bon { theta_1, .. } => ("BON", vec![*theta_1]),
-            Kind::Pco => ("PCO", vec![]),
-            Kind::Tsc => ("TSC", vec![]),
-            Kind::Csc => ("CSC", vec![]),
-            Kind::Qsc => ("QSC", vec![]),
-        }
     }
 
     fn with_parameters(code: &str, values: &[f64]) -> Option<Self> {
@@ -130,6 +98,67 @@ fn parameter_defaults(code: &str) -> (u8, &'static [Option<f64>]) {
         "COP" | "COE" | "COD" | "COO" => (1, &[None, Some(0.0)]),
         "BON" => (1, &[None]),
         _ => (1, &[]),
+    }
+}
+
+impl Kind {
+    fn parameters(&self) -> (&'static str, Vec<f64>) {
+        match self {
+            Kind::Tan => ("TAN", vec![]),
+            Kind::Sin { xi, eta } => ("SIN", vec![*xi, *eta]),
+            Kind::Arc => ("ARC", vec![]),
+            Kind::Stg => ("STG", vec![]),
+            Kind::Zea => ("ZEA", vec![]),
+            Kind::Azp { mu, gamma, .. } => ("AZP", vec![*mu, *gamma]),
+            Kind::Szp {
+                mu, phi_c, theta_c, ..
+            } => ("SZP", vec![*mu, *phi_c, *theta_c]),
+            Kind::Zpn { coeffs, .. } => ("ZPN", coeffs.clone()),
+            Kind::Air { theta_b, .. } => ("AIR", vec![*theta_b]),
+            Kind::Car => ("CAR", vec![]),
+            Kind::Mer => ("MER", vec![]),
+            Kind::Cea { lambda } => ("CEA", vec![*lambda]),
+            Kind::Cyp { mu, lambda } => ("CYP", vec![*mu, *lambda]),
+            Kind::Sfl => ("SFL", vec![]),
+            Kind::Par => ("PAR", vec![]),
+            Kind::Mol => ("MOL", vec![]),
+            Kind::Ait => ("AIT", vec![]),
+            Kind::Cop { theta_a, eta, .. } => ("COP", vec![*theta_a, *eta]),
+            Kind::Coe { theta_a, eta, .. } => ("COE", vec![*theta_a, *eta]),
+            Kind::Cod { theta_a, eta, .. } => ("COD", vec![*theta_a, *eta]),
+            Kind::Coo { theta_a, eta, .. } => ("COO", vec![*theta_a, *eta]),
+            Kind::Bon { theta_1, .. } => ("BON", vec![*theta_1]),
+            Kind::Pco => ("PCO", vec![]),
+            Kind::Tsc => ("TSC", vec![]),
+            Kind::Csc => ("CSC", vec![]),
+            Kind::Qsc => ("QSC", vec![]),
+        }
+    }
+
+    // Paper II's range for each parameter on its own. What a projection
+    // derives from them checks the conditions that combine them.
+    pub(super) fn check_parameters(&self) -> WcsResult<()> {
+        let (code, values) = self.parameters();
+        require_finite(&values, &format!("{code} projection parameters"))?;
+        let invalid = |why: &str| {
+            Err(WcsError::invalid_parameter(format!(
+                "{code} projection: {why}"
+            )))
+        };
+        match self {
+            Kind::Azp { sincos_gamma, .. } if sincos_gamma.1 == 0.0 => {
+                invalid("gamma = +/-90 (Paper II section 5.1.1)")
+            }
+            Kind::Air { theta_b, .. } if !(-90.0..=90.0).contains(theta_b) => {
+                invalid("theta_b must be within [-90, 90]")
+            }
+            Kind::Cea { lambda } if *lambda <= 0.0 => invalid("lambda must be positive"),
+            Kind::Cyp { lambda, .. } if lambda.abs() < ZERO_LIMIT => {
+                invalid("lambda cannot be zero")
+            }
+            Kind::Cyp { mu, lambda } if mu + lambda == 0.0 => invalid("mu cannot be -lambda"),
+            _ => Ok(()),
+        }
     }
 }
 

@@ -42,6 +42,9 @@ pub(super) struct CopCone {
 pub(super) fn cop_cone(theta_a: f64, eta: f64) -> WcsResult<CopCone> {
     check_nonzero_param(theta_a, "COP projection: theta_a")?;
     let cos_eta = sincosd(eta).1;
+    if cos_eta == 0.0 {
+        return Err(WcsError::invalid_parameter("COP projection: eta = +/-90"));
+    }
     let (sin_theta_a, cos_theta_a) = sincosd(theta_a);
     let cot_theta_a = cotd(theta_a);
     let y0_rad = cos_eta * cot_theta_a;
@@ -110,9 +113,6 @@ pub(crate) fn deproject_cop(
     cone: &WcsResult<CopCone>,
 ) -> WcsResult<NativeCoord> {
     let cone = cone.clone()?;
-    if cone.cos_eta == 0.0 {
-        return Err(WcsError::invalid_parameter("COP projection: eta = +/-90"));
-    }
     let (phi, r_theta) = intermediate_to_conic(inter, cone.y0, theta_a, cone.c);
     let theta = theta_a + atand(cone.cot_theta_a - to_radians(r_theta) / cone.cos_eta);
     native_coord(phi, theta)
@@ -219,7 +219,7 @@ pub(crate) fn deproject_cod(
 ) -> WcsResult<NativeCoord> {
     let CodCone { c, y0 } = cone.clone()?;
     let (phi, r_theta) = intermediate_to_conic(inter, y0, theta_a, c);
-    native_coord(phi, theta_a + y0 - r_theta)
+    native_coord(phi, theta_a + (y0 - r_theta))
 }
 
 // C and Y0 from eqs. 130 and 132. With one standard parallel (η = 0),
@@ -310,9 +310,9 @@ fn coo_cone_constant(theta_a: f64, eta: f64) -> WcsResult<f64> {
         let (sin_eta, cos_theta_a) = (sind(eta), sincosd(theta_a).1);
         libm::atanh(tand(theta_a) * tand(eta)) / libm::atanh(sin_eta / cos_theta_a)
     };
-    if c.abs() < ZERO_LIMIT {
+    if !c.is_finite() || c.abs() < ZERO_LIMIT {
         return Err(WcsError::invalid_parameter(
-            "COO projection: degenerate cone (C = 0)",
+            "COO projection: degenerate cone (C is 0 or not finite)",
         ));
     }
     Ok(c)
@@ -524,6 +524,19 @@ mod tests {
     // Against a 60-digit evaluation x is within 3.19 ulp and y within 7.19 ulp,
     // at (90°, 20°) with η = 20°, 1.8 ulp of Rθ. The deprojected values are
     // within 2.63 ulp.
+    // At the reference point Rθ = |Y0| exactly, so eq. 133 gives θa with no
+    // rounding.
+    #[test]
+    fn test_cod_reference_point_is_exact() {
+        for theta_a in [-60.0, -30.0, 10.0, 30.0, 45.0, 75.0] {
+            for eta in [0.0, 5.0, 20.0] {
+                let back =
+                    Projection::cod(theta_a, eta).deproject(IntermediateCoord::new(0.0, 0.0));
+                assert_eq!(back.unwrap().theta_deg(), theta_a, "({theta_a}, {eta})");
+            }
+        }
+    }
+
     #[test]
     fn test_cod_pinned_both_ways() {
         let cases: [(f64, f64, &[PinnedRow]); 3] = [
@@ -559,9 +572,13 @@ mod tests {
                     (
                         (90.0, 20.0),
                         (70.82251377535216, 17.85370185393586),
-                        (90.0, 20.0),
+                        (90.0, 19.999999999999993),
                     ),
-                    ((0.0, 20.0), (0.0, -25.000000000000007), (0.0, 20.0)),
+                    (
+                        (0.0, 20.0),
+                        (0.0, -25.000000000000007),
+                        (0.0, 19.999999999999993),
+                    ),
                     (
                         (180.0, 80.0),
                         (16.39938865090083, 66.30932535897378),
@@ -742,6 +759,11 @@ mod tests {
         let cop = Projection::cop(45.0, 0.0);
         let native = NativeCoord::new(0.0, -45.0);
         assert!(cop.project(native).is_err());
+
+        // COE maps the sphere inside Rθ = (180°/π)(2/γ)√(1 + sin θ1 sin θ2 +
+        // γ), 142.0° for (45°, 20°), and y = −500 lies past it.
+        let far = Projection::coe(45.0, 20.0).deproject(IntermediateCoord::new(0.0, -500.0));
+        assert!(matches!(far, Err(WcsError::OutOfBounds { .. })), "{far:?}");
 
         // COO is singular at the pole opposite theta_a (tan((90-theta)/2) <= 0).
         let coo = Projection::coo(45.0, 0.0);

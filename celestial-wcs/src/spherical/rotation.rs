@@ -263,12 +263,12 @@ impl SphericalRotation {
     }
 
     #[inline]
-    pub fn phi_p_degrees(&self) -> f64 {
+    pub fn phi_p_deg(&self) -> f64 {
         self.phi_p
     }
 
     #[inline]
-    pub fn delta_p_degrees(&self) -> f64 {
+    pub fn delta_p_deg(&self) -> f64 {
         self.delta_p
     }
 }
@@ -322,7 +322,7 @@ mod tests {
     fn test_from_crval_southern_cylindrical() {
         // δ0 < θ0 takes the default LONPOLE of 180°, and αp then depends on δp.
         let rot = crval_rotation((37.5, -22.5), 0.0, None);
-        assert_eq!(rot.delta_p_degrees(), 67.5);
+        assert_eq!(rot.delta_p_deg(), 67.5);
         assert_eq!(to_celestial(&rot, 0.0, 0.0).0, 37.5);
         // 60 digits give −7.954231362487325.
         assert_eq!(to_native(&rot, 50.0, -30.0).1, -7.954231362487324);
@@ -341,7 +341,7 @@ mod tests {
         ];
         for (crval, fiducial, lonpole, delta_p) in cases {
             let rot = fiducial_rotation(crval, fiducial, lonpole, None);
-            assert_eq!(rot.delta_p_degrees(), delta_p, "{crval:?} {fiducial:?}");
+            assert_eq!(rot.delta_p_deg(), delta_p, "{crval:?} {fiducial:?}");
             let back = to_celestial(&rot, fiducial.0, fiducial.1);
             assert_eq!(back, crval, "{crval:?} {fiducial:?}");
         }
@@ -351,10 +351,10 @@ mod tests {
     fn test_from_crval_takes_eq8_roots_as_angles() {
         // Eq. 8 gives −150° ± 135°; −285° is the angle 75°, a valid root.
         let northern = fiducial_rotation((10.0, -45.0), (0.0, -30.0), None, None);
-        assert_eq!(northern.delta_p_degrees(), 75.0);
+        assert_eq!(northern.delta_p_deg(), 75.0);
         assert_eq!(to_celestial(&northern, 0.0, -30.0), (10.0, -45.0));
         let southern = fiducial_rotation((10.0, -45.0), (0.0, -30.0), None, Some(-90.0));
-        assert_eq!(southern.delta_p_degrees(), -15.0);
+        assert_eq!(southern.delta_p_deg(), -15.0);
         assert_eq!(to_celestial(&southern, 0.0, -30.0), (10.0, -45.0));
     }
 
@@ -363,7 +363,7 @@ mod tests {
         // 60 digits give δp = 24.627121690838486; the inverse cosine in eq. 8
         // has slope 2.4 here and magnifies the rounding of its argument.
         let rot = crval_rotation((100.0, 40.0), 0.0, Some(45.0));
-        assert_eq!(rot.delta_p_degrees(), 24.627121690838507);
+        assert_eq!(rot.delta_p_deg(), 24.627121690838507);
         assert_eq!(
             to_celestial(&rot, 10.0, 5.0),
             (101.91313532571672, 51.08934021953901)
@@ -403,7 +403,7 @@ mod tests {
         assert_eq!(to_native(&given, 13.0, 90.0), (180.0, -25.0));
         assert_eq!(to_native(&given, 13.0, -90.0), (0.0, 25.0));
         let rot = crval_rotation((37.5, 22.5), 0.0, Some(45.0));
-        let delta_p = rot.delta_p_degrees();
+        let delta_p = rot.delta_p_deg();
         assert_eq!(to_native(&rot, 10.0, 90.0), (45.0, delta_p));
         assert_eq!(to_native(&rot, 10.0, -90.0), (-135.0, -delta_p));
     }
@@ -443,7 +443,7 @@ mod tests {
     #[test]
     fn test_from_crval_zenithal_pole_is_crval() {
         let rot = crval_rotation((123.456, 37.5), 90.0, None);
-        assert_eq!(rot.delta_p_degrees(), 37.5);
+        assert_eq!(rot.delta_p_deg(), 37.5);
         assert_eq!(to_celestial(&rot, 0.0, 90.0).1, 37.5);
         assert_eq!(to_native(&rot, 123.456, 37.5).1, 90.0);
         // 60 digits give 37.74832107683319.
@@ -457,7 +457,7 @@ mod tests {
     fn test_rotation_about_shared_pole_is_longitude_shift() {
         // CRVAL on the equator with θ0 = 0 puts the native pole on the celestial pole.
         let rot = crval_rotation((37.5, 0.0), 0.0, None);
-        assert_eq!(rot.delta_p_degrees(), 90.0);
+        assert_eq!(rot.delta_p_deg(), 90.0);
         assert_eq!(to_native(&rot, 0.0, 90.0), (-37.5, 90.0));
         assert_eq!(to_native(&rot, 0.0, -90.0), (-37.5, -90.0));
         assert_eq!(to_native(&rot, 10.0, 45.0), (-27.5, 45.0));
@@ -661,6 +661,43 @@ mod tests {
         for (alpha_0, alpha) in alphas {
             let rot = crval_rotation((alpha_0, 0.0), 0.0, None);
             assert_eq!(to_celestial(&rot, 0.0, 0.0), (alpha, 0.0), "α0 = {alpha_0}");
+        }
+    }
+
+    // A CAR reference point on the celestial pole: θ0 = 0, so δp = 0 and
+    // αp = α0 (eqs. 8-10). Eq. 2 then takes (90°, 0°) to α0 + arg(0, −1).
+    #[test]
+    fn test_from_crval_reference_point_on_the_pole() {
+        let rot = SphericalRotation::from_crval(30.0, 90.0, 0.0, 0.0, None, None).unwrap();
+        assert_eq!((rot.phi_p_deg(), rot.delta_p_deg()), (0.0, 0.0));
+        let at_crval = rot.native_to_celestial(NativeCoord::new(0.0, 0.0)).unwrap();
+        assert_eq!(at_crval, CelestialCoord::new(30.0, 90.0));
+        let quarter = rot
+            .native_to_celestial(NativeCoord::new(90.0, 0.0))
+            .unwrap();
+        assert_eq!(quarter, CelestialCoord::new(-60.0, 0.0));
+    }
+
+    // With δp = −90° eq. 2 reduces to α = αp + φp − φ and δ = −θ.
+    #[test]
+    fn test_rotation_about_a_shared_south_pole() {
+        let rot = SphericalRotation::new(0.0, -90.0, 180.0);
+        let celestial = rot
+            .native_to_celestial(NativeCoord::new(30.0, 20.0))
+            .unwrap();
+        assert_eq!(celestial, CelestialCoord::new(150.0, -20.0));
+        let native = rot.celestial_to_native(celestial).unwrap();
+        assert_eq!(native, NativeCoord::new(30.0, 20.0));
+    }
+
+    #[test]
+    fn test_from_crval_refuses_non_finite_angles() {
+        for (alpha_0, lonpole) in [(f64::NAN, None), (0.0, Some(f64::INFINITY))] {
+            let result = SphericalRotation::from_crval(alpha_0, 45.0, 0.0, 90.0, lonpole, None);
+            assert!(
+                matches!(result, Err(WcsError::InvalidParameter { .. })),
+                "{alpha_0} {lonpole:?}: {result:?}"
+            );
         }
     }
 }

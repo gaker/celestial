@@ -31,20 +31,20 @@ impl CoordType {
         named
             .into_iter()
             .find(|coord_type| {
-                let (lon, lat) = coord_type.ctype_prefixes();
+                let [lon, lat] = coord_type.ctype_prefixes();
                 prefix == lon || prefix == lat
             })
             .unwrap_or(Self::Generic)
     }
 
-    fn ctype_prefixes(self) -> (&'static str, &'static str) {
+    fn ctype_prefixes(self) -> [&'static str; 2] {
         match self {
-            Self::Equatorial => ("RA", "DEC"),
-            Self::Galactic => ("GLON", "GLAT"),
-            Self::Ecliptic => ("ELON", "ELAT"),
-            Self::Helioecliptic => ("HLON", "HLAT"),
-            Self::Supergalactic => ("SLON", "SLAT"),
-            Self::Generic => ("XLON", "XLAT"),
+            Self::Equatorial => ["RA", "DEC"],
+            Self::Galactic => ["GLON", "GLAT"],
+            Self::Ecliptic => ["ELON", "ELAT"],
+            Self::Helioecliptic => ["HLON", "HLAT"],
+            Self::Supergalactic => ["SLON", "SLAT"],
+            Self::Generic => ["XLON", "XLAT"],
         }
     }
 }
@@ -55,7 +55,9 @@ pub struct Wcs {
     projection: Projection,
     rotation: SphericalRotation,
     coord_type: CoordType,
-    crval_deg: (f64, f64),
+    // The header's own CTYPE prefixes when they name no known system.
+    generic_prefixes: Option<[String; 2]>,
+    crval_deg: [f64; 2],
     distortion: Option<DistortionModel>,
     fiducial: Fiducial,
 }
@@ -66,7 +68,7 @@ impl Wcs {
         projection: Projection,
         rotation: SphericalRotation,
         coord_type: CoordType,
-        crval_deg: (f64, f64),
+        crval_deg: [f64; 2],
         distortion: Option<DistortionModel>,
     ) -> Self {
         Self {
@@ -75,6 +77,7 @@ impl Wcs {
             projection,
             rotation,
             coord_type,
+            generic_prefixes: None,
             crval_deg,
             distortion,
         }
@@ -82,6 +85,13 @@ impl Wcs {
 
     pub(super) fn with_fiducial(self, fiducial: Fiducial) -> Self {
         Self { fiducial, ..self }
+    }
+
+    pub(super) fn with_generic_prefixes(self, generic_prefixes: Option<[String; 2]>) -> Self {
+        Self {
+            generic_prefixes,
+            ..self
+        }
     }
 
     pub fn pixel_to_celestial(&self, pixel: PixelCoord) -> WcsResult<CelestialCoord> {
@@ -140,18 +150,6 @@ impl Wcs {
         Ok(IntermediateCoord::new(x, y))
     }
 
-    pub fn pix2world(&self, x: f64, y: f64) -> WcsResult<(f64, f64)> {
-        let pixel = PixelCoord::new(x, y);
-        let celestial = self.pixel_to_celestial(pixel)?;
-        Ok((celestial.alpha_deg(), celestial.delta_deg()))
-    }
-
-    pub fn world2pix(&self, lon: f64, lat: f64) -> WcsResult<(f64, f64)> {
-        let celestial = CelestialCoord::new(lon, lat);
-        let pixel = self.celestial_to_pixel(celestial)?;
-        Ok((pixel.x(), pixel.y()))
-    }
-
     #[inline]
     pub fn projection_code(&self) -> &'static str {
         self.projection.code()
@@ -168,7 +166,7 @@ impl Wcs {
     }
 
     #[inline]
-    pub fn crval(&self) -> (f64, f64) {
+    pub fn crval(&self) -> [f64; 2] {
         self.crval_deg
     }
 
@@ -195,7 +193,10 @@ impl Wcs {
     }
 
     fn ctype_keywords(&self) -> Vec<WcsKeyword> {
-        let (prefix1, prefix2) = self.coord_type.ctype_prefixes();
+        let [prefix1, prefix2] = match &self.generic_prefixes {
+            Some([lon, lat]) => [lon.as_str(), lat.as_str()],
+            None => self.coord_type.ctype_prefixes(),
+        };
         let code = &ctype_code(self.projection_code(), self.distortion.as_ref());
 
         vec![
@@ -214,8 +215,8 @@ impl Wcs {
 
     fn crval_keywords(&self) -> Vec<WcsKeyword> {
         vec![
-            WcsKeyword::real("CRVAL1", self.crval_deg.0),
-            WcsKeyword::real("CRVAL2", self.crval_deg.1),
+            WcsKeyword::real("CRVAL1", self.crval_deg[0]),
+            WcsKeyword::real("CRVAL2", self.crval_deg[1]),
         ]
     }
 
@@ -231,11 +232,11 @@ impl Wcs {
 
     fn pole_keywords(&self) -> Vec<WcsKeyword> {
         let mut keywords = Vec::new();
-        let phi_p = self.rotation.phi_p_degrees();
-        let delta_p = self.rotation.delta_p_degrees();
+        let phi_p = self.rotation.phi_p_deg();
+        let delta_p = self.rotation.delta_p_deg();
 
         let default_phi_p = SphericalRotation::default_lonpole(
-            self.crval_deg.1,
+            self.crval_deg[1],
             self.fiducial.phi_0(),
             self.fiducial.theta_0(),
         );
@@ -284,17 +285,15 @@ mod tests {
 
     type PixelRow = ((f64, f64), (f64, f64), (f64, f64));
 
-    // (pixel, sky, pixel): pix2world of the first pair and world2pix of the
-    // second, each pinned one way.
+    // (pixel, sky, pixel): pixel_to_celestial of the first pair and
+    // celestial_to_pixel of the second, each pinned one way.
     fn assert_pixel_pins(wcs: &Wcs, rows: &[PixelRow]) {
-        for &(pixel, sky, back) in rows {
-            let got = wcs.pix2world(pixel.0, pixel.1).unwrap();
-            assert_eq!(got, sky, "pix2world {pixel:?}");
-            assert_eq!(
-                wcs.world2pix(sky.0, sky.1).unwrap(),
-                back,
-                "world2pix {sky:?}"
-            );
+        for &((x, y), (lon, lat), (back_x, back_y)) in rows {
+            let sky = CelestialCoord::new(lon, lat);
+            let got = wcs.pixel_to_celestial(PixelCoord::new(x, y)).unwrap();
+            assert_eq!(got, sky, "pixel ({x}, {y})");
+            let back = wcs.celestial_to_pixel(sky).unwrap();
+            assert_eq!(back, PixelCoord::new(back_x, back_y), "{sky:?}");
         }
     }
 
@@ -323,10 +322,10 @@ mod tests {
     }
 
     #[test]
-    fn test_world2pix_rejects_latitude_beyond_a_pole() {
+    fn test_celestial_to_pixel_rejects_latitude_beyond_a_pole() {
         let wcs = create_simple_tan_wcs().unwrap();
         for lat in [100.0, -100.0] {
-            let result = wcs.world2pix(180.0, lat);
+            let result = wcs.celestial_to_pixel(CelestialCoord::new(180.0, lat));
             assert!(result.is_err(), "{lat}: {result:?}");
         }
     }
@@ -337,7 +336,7 @@ mod tests {
         assert_eq!(wcs.projection_code(), "TAN");
         assert_eq!(wcs.coord_type(), CoordType::Equatorial);
         assert_eq!(wcs.crpix(), [512.0, 512.0]);
-        assert_eq!(wcs.crval(), (180.0, 45.0));
+        assert_eq!(wcs.crval(), [180.0, 45.0]);
         assert_eq!(wcs.pixel_scale(), 0.001);
     }
 
@@ -471,9 +470,9 @@ mod tests {
     fn test_pipeline_pinned_through_tpv() {
         // TPV corrects intermediate coordinates, here ξ = x + 1e-4 x² and
         // η = y + 1e-4 y².
-        let mut tpv = TpvDistortion::identity();
-        tpv.set_pv1(4, 1e-4).unwrap();
-        tpv.set_pv2(4, 1e-4).unwrap();
+        let mut tpv = TpvDistortion::new();
+        tpv.set_pv(1, 4, 1e-4).unwrap();
+        tpv.set_pv(2, 4, 1e-4).unwrap();
         let wcs = tan_wcs_with(DistortionModel::Tpv(Box::new(tpv)));
         let sky = (179.98303301166573, 44.98799875846779);
         let back = (499.99999999999784, 499.99999999999915);

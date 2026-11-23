@@ -157,17 +157,12 @@ fn mollweide_polar_inverse(u: f64) -> (f64, f64) {
     (root, libm::copysign(90.0 - t, u))
 }
 
-// Eqs. 103 to 105. 1 + cos θ cos(φ/2) vanishes only at φ = ±360°, outside the
-// native range.
+// Eqs. 103 to 105. 1 + cos θ cos(φ/2) vanishes only at φ = ±360°, which
+// Projection::project wraps to 0.
 pub(crate) fn project_ait(native: NativeCoord) -> WcsResult<IntermediateCoord> {
     let (sin_theta, cos_theta) = sincosd(native.theta_deg());
     let (sin_half_phi, cos_half_phi) = sincosd(native.phi_deg() / 2.0);
     let denom = 1.0 + cos_theta * cos_half_phi;
-    if denom == 0.0 {
-        return Err(WcsError::singularity(
-            "AIT projection: singularity at antipodal point",
-        ));
-    }
     let gamma = to_degrees(libm::sqrt(2.0 / denom));
     let x = 2.0 * gamma * cos_theta * sin_half_phi;
     Ok(IntermediateCoord::new(x, gamma * sin_theta))

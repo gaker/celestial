@@ -8,7 +8,7 @@ mod tan;
 mod zea;
 mod zpn;
 
-pub(super) use air::{air_k, deproject_air, project_air};
+pub(super) use air::{air_radius, deproject_air, project_air, AirRadius};
 pub(super) use arc::{deproject_arc, project_arc};
 pub(super) use azp::{deproject_azp, project_azp};
 pub(super) use sin::{deproject_sin, project_sin};
@@ -16,7 +16,7 @@ pub(super) use stg::{deproject_stg, project_stg};
 pub(super) use szp::{deproject_szp, project_szp, projection_point};
 pub(super) use tan::{deproject_tan, project_tan};
 pub(super) use zea::{deproject_zea, project_zea};
-pub(super) use zpn::{deproject_zpn, project_zpn};
+pub(super) use zpn::{deproject_zpn, project_zpn, zpn_piece_ends};
 
 #[cfg(test)]
 mod tests {

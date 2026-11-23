@@ -4,7 +4,7 @@ use crate::error::{WcsError, WcsResult};
 use super::{front_face, quadcube_face_from_xy};
 
 pub(crate) fn project_csc(native: NativeCoord) -> WcsResult<IntermediateCoord> {
-    let face = front_face(native, "CSC")?;
+    let face = front_face(native);
     let (chi, psi) = face.plane();
     let x_face = csc_forward_poly(chi, psi);
     let y_face = csc_forward_poly(psi, chi);

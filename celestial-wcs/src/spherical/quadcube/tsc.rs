@@ -4,7 +4,7 @@ use crate::error::{WcsError, WcsResult};
 use super::{front_face, quadcube_face_from_xy};
 
 pub(crate) fn project_tsc(native: NativeCoord) -> WcsResult<IntermediateCoord> {
-    let face = front_face(native, "TSC")?;
+    let face = front_face(native);
     let (chi, psi) = face.plane();
     Ok(face.intermediate(45.0 * chi, 45.0 * psi))
 }

@@ -37,7 +37,7 @@ pub(super) fn parse_ctype(ctype: &str) -> WcsResult<(&str, &str, Option<&str>)> 
 pub(super) fn parse_ctype_pair<'a>(
     ctype1: &'a str,
     ctype2: &'a str,
-) -> WcsResult<(&'a str, &'a str, Option<&'a str>)> {
+) -> WcsResult<([&'a str; 2], &'a str, Option<&'a str>)> {
     let (prefix1, code1, suffix1) = parse_ctype(ctype1)?;
     let (prefix2, code2, suffix2) = parse_ctype(ctype2)?;
     let mismatch = |message: String| Err(WcsError::invalid_keyword("CTYPE1/CTYPE2", message));
@@ -51,7 +51,7 @@ pub(super) fn parse_ctype_pair<'a>(
             "'{ctype1}' and '{ctype2}' are not a celestial pair"
         ));
     }
-    Ok((prefix1, code1, suffix1))
+    Ok(([prefix1, prefix2], code1, suffix1))
 }
 
 // Paper II §3: RA/DEC, or xLON/xLAT and yzLN/yzLT with the same x or yz.

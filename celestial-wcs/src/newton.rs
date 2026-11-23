@@ -1,68 +1,7 @@
 use std::ops::ControlFlow;
 
-use crate::common::{is_singular, ZERO_LIMIT};
+use crate::common::is_singular;
 use crate::error::{WcsError, WcsResult};
-
-/// Configuration for Newton-Raphson 1D solver
-pub(crate) struct NewtonConfig {
-    pub(crate) bounds: (f64, f64),
-    pub(crate) max_iter: usize,
-    pub(crate) tol: f64,
-    pub(crate) context: &'static str,
-}
-
-impl NewtonConfig {
-    pub(crate) const DEFAULT_MAX_ITER: usize = 50;
-    pub(crate) const DEFAULT_TOL: f64 = 1e-12;
-
-    pub(crate) const fn new(bounds: (f64, f64), context: &'static str) -> Self {
-        Self {
-            bounds,
-            max_iter: Self::DEFAULT_MAX_ITER,
-            tol: Self::DEFAULT_TOL,
-            context,
-        }
-    }
-}
-
-pub(crate) fn newton_raphson_1d<F, FP>(
-    initial: f64,
-    target: f64,
-    f: F,
-    f_prime: FP,
-    config: &NewtonConfig,
-) -> WcsResult<f64>
-where
-    F: Fn(f64) -> f64,
-    FP: Fn(f64) -> f64,
-{
-    let mut x = initial.clamp(config.bounds.0, config.bounds.1);
-
-    for _ in 0..config.max_iter {
-        let f_val = f(x) - target;
-        let f_prime_val = f_prime(x);
-
-        if f_prime_val.abs() < ZERO_LIMIT {
-            return Err(WcsError::convergence_failure(format!(
-                "{}: derivative too small",
-                config.context
-            )));
-        }
-
-        let delta = f_val / f_prime_val;
-        x -= delta;
-        x = x.clamp(config.bounds.0, config.bounds.1);
-
-        if delta.abs() < config.tol {
-            return Ok(x);
-        }
-    }
-
-    Err(WcsError::convergence_failure(format!(
-        "{}: Newton-Raphson did not converge",
-        config.context
-    )))
-}
 
 // Newton's method on an f that rises through a bracket holding its one root.
 // Every evaluation narrows the bracket and a step that would leave it bisects
@@ -201,19 +140,6 @@ fn solve_2x2(m: [[f64; 2]; 2], (b1, b2): (f64, f64), context: &str) -> WcsResult
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_newton_raphson_1d_converges() {
-        // Linear: f(x) = 2x; solving f(x) = 5 gives x = 2.5.
-        let config = NewtonConfig::new((-10.0, 10.0), "linear");
-        let x = newton_raphson_1d(0.0, 5.0, |x| 2.0 * x, |_| 2.0, &config).unwrap();
-        assert_eq!(x, 2.5);
-
-        // Quadratic: f(x) = x^2 on [0, 10]; solving f(x) = 4 gives x = 2.
-        let config = NewtonConfig::new((0.0, 10.0), "quadratic");
-        let x = newton_raphson_1d(1.0, 4.0, |x| x * x, |x| 2.0 * x, &config).unwrap();
-        assert_eq!(x, 2.0);
-    }
 
     #[test]
     fn test_newton_raphson_2d_recovers_distortion() {

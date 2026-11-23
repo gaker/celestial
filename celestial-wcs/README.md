@@ -63,6 +63,7 @@ From FITS keywords, through any `KeywordProvider`:
 
 ```rust
 use celestial_wcs::builder::WcsBuilder;
+use celestial_wcs::coordinate::PixelCoord;
 use celestial_wcs::header::KeywordMap;
 
 let mut header = KeywordMap::new();
@@ -77,7 +78,7 @@ header
     .set_float("CDELT2", 0.001);
 
 let wcs = WcsBuilder::from_header(&header)?.build()?;
-let (ra, dec) = wcs.pix2world(256.0, 256.0)?;
+let sky = wcs.pixel_to_celestial(PixelCoord::new(256.0, 256.0))?;
 ```
 
 ## License

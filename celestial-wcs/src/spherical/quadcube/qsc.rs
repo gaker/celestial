@@ -5,7 +5,7 @@ use crate::trig::{asind, atand, sincosd};
 use super::{front_face, quadcube_face_from_xy};
 
 pub(crate) fn project_qsc(native: NativeCoord) -> WcsResult<IntermediateCoord> {
-    let face = front_face(native, "QSC")?;
+    let face = front_face(native);
 
     // Near a face centre 1 − ζ falls below the rounding of ζ. The direction
     // cosines are a unit vector, so 1 − ζ = (ξ² + η²)/(1 + ζ), which keeps

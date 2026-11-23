@@ -1,4 +1,4 @@
-use crate::common::{require_finite, require_on_sphere};
+use crate::common::{require_finite, require_on_sphere, wrap_longitude};
 use crate::coordinate::{IntermediateCoord, NativeCoord};
 use crate::error::WcsResult;
 use crate::trig::sincosd;
@@ -25,14 +25,17 @@ use pseudocylindrical::{deproject_ait, deproject_mol, deproject_par, deproject_s
 use pseudocylindrical::{project_ait, project_mol, project_par, project_sfl};
 use quadcube::{deproject_csc, deproject_qsc, deproject_tsc};
 use quadcube::{project_csc, project_qsc, project_tsc};
-use zenithal::{air_k, projection_point};
+use zenithal::{air_radius, projection_point, zpn_piece_ends, AirRadius};
 use zenithal::{deproject_air, deproject_arc, deproject_azp, deproject_sin, deproject_stg};
 use zenithal::{deproject_szp, deproject_tan, deproject_zea, deproject_zpn};
 use zenithal::{project_air, project_arc, project_azp, project_sin, project_stg};
 use zenithal::{project_szp, project_tan, project_zea, project_zpn};
 
 #[derive(Debug, Clone)]
-pub struct Projection(Kind);
+pub struct Projection {
+    kind: Kind,
+    parameter_check: WcsResult<()>,
+}
 
 // The parameters as given, and what each projection derives from them once.
 // The constructors cannot fail, so a parameter with no valid derivation keeps
@@ -60,10 +63,11 @@ enum Kind {
     },
     Zpn {
         coeffs: Vec<f64>,
+        piece_ends: WcsResult<Vec<f64>>,
     },
     Air {
         theta_b: f64,
-        k: WcsResult<f64>,
+        radius: WcsResult<AirRadius>,
     },
     Car,
     Mer,
@@ -109,32 +113,44 @@ enum Kind {
 }
 
 impl Projection {
+    fn new(kind: Kind) -> Self {
+        let parameter_check = kind.check_parameters();
+        Self {
+            kind,
+            parameter_check,
+        }
+    }
+
+    pub(crate) fn check_parameters(&self) -> WcsResult<()> {
+        self.parameter_check.clone()
+    }
+
     pub fn tan() -> Self {
-        Self(Kind::Tan)
+        Self::new(Kind::Tan)
     }
 
     pub fn sin() -> Self {
-        Self(Kind::Sin { xi: 0.0, eta: 0.0 })
+        Self::new(Kind::Sin { xi: 0.0, eta: 0.0 })
     }
 
     pub fn sin_with_params(xi: f64, eta: f64) -> Self {
-        Self(Kind::Sin { xi, eta })
+        Self::new(Kind::Sin { xi, eta })
     }
 
     pub fn arc() -> Self {
-        Self(Kind::Arc)
+        Self::new(Kind::Arc)
     }
 
     pub fn stg() -> Self {
-        Self(Kind::Stg)
+        Self::new(Kind::Stg)
     }
 
     pub fn zea() -> Self {
-        Self(Kind::Zea)
+        Self::new(Kind::Zea)
     }
 
     pub fn azp(mu: f64, gamma: f64) -> Self {
-        Self(Kind::Azp {
+        Self::new(Kind::Azp {
             mu,
             gamma,
             sincos_gamma: sincosd(gamma),
@@ -142,7 +158,7 @@ impl Projection {
     }
 
     pub fn szp(mu: f64, phi_c: f64, theta_c: f64) -> Self {
-        Self(Kind::Szp {
+        Self::new(Kind::Szp {
             mu,
             phi_c,
             theta_c,
@@ -157,54 +173,55 @@ impl Projection {
         while coeffs.last() == Some(&0.0) {
             coeffs.pop();
         }
-        Self(Kind::Zpn { coeffs })
+        let piece_ends = zpn_piece_ends(&coeffs);
+        Self::new(Kind::Zpn { coeffs, piece_ends })
     }
 
     pub fn air(theta_b: f64) -> Self {
-        Self(Kind::Air {
+        Self::new(Kind::Air {
             theta_b,
-            k: air_k(theta_b),
+            radius: air_radius(theta_b),
         })
     }
 
     pub fn car() -> Self {
-        Self(Kind::Car)
+        Self::new(Kind::Car)
     }
 
     pub fn mer() -> Self {
-        Self(Kind::Mer)
+        Self::new(Kind::Mer)
     }
 
     pub fn cea() -> Self {
-        Self(Kind::Cea { lambda: 1.0 })
+        Self::new(Kind::Cea { lambda: 1.0 })
     }
 
     pub fn cea_with_lambda(lambda: f64) -> Self {
-        Self(Kind::Cea { lambda })
+        Self::new(Kind::Cea { lambda })
     }
 
     pub fn cyp(mu: f64, lambda: f64) -> Self {
-        Self(Kind::Cyp { mu, lambda })
+        Self::new(Kind::Cyp { mu, lambda })
     }
 
     pub fn sfl() -> Self {
-        Self(Kind::Sfl)
+        Self::new(Kind::Sfl)
     }
 
     pub fn par() -> Self {
-        Self(Kind::Par)
+        Self::new(Kind::Par)
     }
 
     pub fn mol() -> Self {
-        Self(Kind::Mol)
+        Self::new(Kind::Mol)
     }
 
     pub fn ait() -> Self {
-        Self(Kind::Ait)
+        Self::new(Kind::Ait)
     }
 
     pub fn cop(theta_a: f64, eta: f64) -> Self {
-        Self(Kind::Cop {
+        Self::new(Kind::Cop {
             theta_a,
             eta,
             cone: cop_cone(theta_a, eta),
@@ -212,7 +229,7 @@ impl Projection {
     }
 
     pub fn coe(theta_a: f64, eta: f64) -> Self {
-        Self(Kind::Coe {
+        Self::new(Kind::Coe {
             theta_a,
             eta,
             cone: coe_cone(theta_a, eta),
@@ -220,7 +237,7 @@ impl Projection {
     }
 
     pub fn cod(theta_a: f64, eta: f64) -> Self {
-        Self(Kind::Cod {
+        Self::new(Kind::Cod {
             theta_a,
             eta,
             cone: cod_cone(theta_a, eta),
@@ -228,7 +245,7 @@ impl Projection {
     }
 
     pub fn coo(theta_a: f64, eta: f64) -> Self {
-        Self(Kind::Coo {
+        Self::new(Kind::Coo {
             theta_a,
             eta,
             cone: coo_cone(theta_a, eta),
@@ -236,30 +253,30 @@ impl Projection {
     }
 
     pub fn bon(theta_1: f64) -> Self {
-        Self(Kind::Bon {
+        Self::new(Kind::Bon {
             theta_1,
             y0: bonne_y0(theta_1),
         })
     }
 
     pub fn pco() -> Self {
-        Self(Kind::Pco)
+        Self::new(Kind::Pco)
     }
 
     pub fn tsc() -> Self {
-        Self(Kind::Tsc)
+        Self::new(Kind::Tsc)
     }
 
     pub fn csc() -> Self {
-        Self(Kind::Csc)
+        Self::new(Kind::Csc)
     }
 
     pub fn qsc() -> Self {
-        Self(Kind::Qsc)
+        Self::new(Kind::Qsc)
     }
 
     pub fn native_reference(&self) -> (f64, f64) {
-        match &self.0 {
+        match &self.kind {
             Kind::Tan
             | Kind::Sin { .. }
             | Kind::Arc
@@ -282,8 +299,10 @@ impl Projection {
     }
 
     pub fn project(&self, native: NativeCoord) -> WcsResult<IntermediateCoord> {
+        self.check_parameters()?;
         require_on_sphere(native.phi_deg(), native.theta_deg())?;
-        match &self.0 {
+        let native = within_the_seam(native)?;
+        match &self.kind {
             Kind::Tan => project_tan(native),
             Kind::Sin { xi, eta } => project_sin(native, *xi, *eta),
             Kind::Arc => project_arc(native),
@@ -293,8 +312,8 @@ impl Projection {
                 mu, sincos_gamma, ..
             } => project_azp(native, *mu, *sincos_gamma),
             Kind::Szp { point, .. } => project_szp(native, point),
-            Kind::Zpn { coeffs } => project_zpn(native, coeffs),
-            Kind::Air { k, .. } => project_air(native, k),
+            Kind::Zpn { coeffs, .. } => project_zpn(native, coeffs),
+            Kind::Air { radius, .. } => project_air(native, radius),
             Kind::Car => project_car(native),
             Kind::Mer => project_mer(native),
             Kind::Cea { lambda } => project_cea(native, *lambda),
@@ -316,8 +335,9 @@ impl Projection {
     }
 
     pub fn deproject(&self, inter: IntermediateCoord) -> WcsResult<NativeCoord> {
+        self.check_parameters()?;
         require_finite(&[inter.x_deg(), inter.y_deg()], "intermediate coordinates")?;
-        match &self.0 {
+        match &self.kind {
             Kind::Tan => deproject_tan(inter),
             Kind::Sin { xi, eta } => deproject_sin(inter, *xi, *eta),
             Kind::Arc => deproject_arc(inter),
@@ -327,8 +347,8 @@ impl Projection {
                 mu, sincos_gamma, ..
             } => deproject_azp(inter, *mu, *sincos_gamma),
             Kind::Szp { point, .. } => deproject_szp(inter, point),
-            Kind::Zpn { coeffs } => deproject_zpn(inter, coeffs),
-            Kind::Air { k, .. } => deproject_air(inter, k),
+            Kind::Zpn { coeffs, piece_ends } => deproject_zpn(inter, coeffs, piece_ends),
+            Kind::Air { radius, .. } => deproject_air(inter, radius),
             Kind::Car => deproject_car(inter),
             Kind::Mer => deproject_mer(inter),
             Kind::Cea { lambda } => deproject_cea(inter, *lambda),
@@ -348,6 +368,16 @@ impl Projection {
             Kind::Qsc => deproject_qsc(inter),
         }
     }
+}
+
+// φ beyond ±180° names the meridian of its remainder by 360°. ±180° is the
+// seam, and each side keeps the sign it was given.
+fn within_the_seam(native: NativeCoord) -> WcsResult<NativeCoord> {
+    let phi = native.phi_deg();
+    if libm::fabs(phi) <= 180.0 {
+        return Ok(native);
+    }
+    Ok(NativeCoord::new(wrap_longitude(phi)?, native.theta_deg()))
 }
 
 #[cfg(test)]
@@ -436,6 +466,61 @@ mod tests {
         }
     }
 
+    // Paper II gives each parameter a range, and no equation has a value for a
+    // NaN or infinite one.
+    #[test]
+    fn test_invalid_parameters_are_refused() {
+        let invalid = [
+            Projection::sin_with_params(f64::NAN, 0.0),
+            Projection::azp(2.0, 90.0),
+            Projection::azp(2.0, -90.0),
+            Projection::azp(f64::NAN, 30.0),
+            Projection::szp(f64::INFINITY, 0.0, 90.0),
+            Projection::zpn(vec![0.0, 1.0, f64::NAN]),
+            Projection::air(90.5),
+            Projection::air(-100.0),
+            Projection::cea_with_lambda(0.0),
+            Projection::cea_with_lambda(-1.0),
+            Projection::cyp(-1.0, 1.0),
+            Projection::cyp(1.0, 0.0),
+            Projection::cop(45.0, 90.0),
+            Projection::coe(f64::NAN, 0.0),
+            Projection::coe(45.0, 90.0),
+            Projection::cod(45.0, f64::INFINITY),
+            Projection::coo(45.0, 50.0),
+            Projection::coo(45.0, 5e-324),
+            Projection::bon(f64::NAN),
+        ];
+        for proj in &invalid {
+            let forward = proj.project(NativeCoord::new(30.0, 45.0)).map(|_| ());
+            let inverse = proj.deproject(IntermediateCoord::new(1.0, 2.0)).map(|_| ());
+            for result in [forward, inverse] {
+                let refused = matches!(result, Err(WcsError::InvalidParameter { .. }));
+                assert!(refused, "{proj:?}: {result:?}");
+            }
+        }
+    }
+
+    // φ outside [−180°, 180°] names the meridian of its remainder by 360°.
+    #[test]
+    fn test_project_wraps_longitude() {
+        let same_meridian = [
+            (270.0, -90.0),
+            (-300.0, 60.0),
+            (360.0, 0.0),
+            (540.0, 180.0),
+            (-540.0, 180.0),
+        ];
+        for proj in every_projection() {
+            for (phi, wrapped) in same_meridian {
+                let got = proj.project(NativeCoord::new(phi, 30.0));
+                let expected = proj.project(NativeCoord::new(wrapped, 30.0));
+                let (got, expected) = (format!("{got:?}"), format!("{expected:?}"));
+                assert_eq!(got, expected, "{proj:?} φ = {phi}");
+            }
+        }
+    }
+
     #[test]
     fn test_rotation_rejects_points_off_the_sphere() {
         let rotation = SphericalRotation::new(123.456, 52.5, 180.0);
@@ -480,25 +565,23 @@ mod tests {
     #[test]
     fn test_deprojection_keeps_points_on_the_boundary() {
         // Rounding can put the forward of the seam or a pole just past the
-        // edge; it is still on the boundary and deprojects. The poles of SFL,
-        // PAR, MOL and BON do not deproject at all yet, so they take the seam only.
-        let with_poles = [
+        // edge; it is still on the boundary and deprojects.
+        let projections = [
             Projection::car(),
             Projection::cea_with_lambda(0.75),
             Projection::cyp(1.0, SQRT2 / 2.0),
+            Projection::sfl(),
+            Projection::par(),
+            Projection::mol(),
             Projection::ait(),
             Projection::cop(45.0, 25.0),
             Projection::coe(-45.0, 10.0),
             Projection::cod(45.0, 25.0),
             Projection::coo(45.0, 25.0),
+            Projection::bon(45.0),
+            Projection::bon(-30.0),
             Projection::pco(),
             Projection::arc(),
-        ];
-        let seam_only = [
-            Projection::sfl(),
-            Projection::par(),
-            Projection::mol(),
-            Projection::bon(45.0),
         ];
         let keeps = |proj: &Projection, phi: f64, theta: f64| {
             let native = NativeCoord::new(phi, theta);
@@ -508,13 +591,11 @@ mod tests {
             }
         };
         let halves = || (-179..=179).map(|t| t as f64 / 2.0);
-        for proj in with_poles.iter().chain(&seam_only) {
+        for proj in &projections {
             for theta in halves() {
                 keeps(proj, -180.0, theta);
                 keeps(proj, 180.0, theta);
             }
-        }
-        for proj in &with_poles {
             for phi in halves() {
                 keeps(proj, phi, 90.0);
                 keeps(proj, phi, -90.0);

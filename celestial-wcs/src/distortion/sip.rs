@@ -376,6 +376,8 @@ mod tests {
         sip.set_a(2, 0, 0.0).unwrap();
         sip.set_a(1, 1, 1e-6).unwrap();
         assert_eq!(sip.a_coeffs, vec![((1, 1), 1e-6)]);
+        sip.set_a(1, 1, 2e-6).unwrap();
+        assert_eq!(sip.a_coeffs, vec![((1, 1), 2e-6)]);
     }
 
     #[test]

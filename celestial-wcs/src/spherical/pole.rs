@@ -127,3 +127,54 @@ pub(super) fn offset_from_pole(
 pub(super) fn near_pole(lat: f64) -> bool {
     (lat.abs() - 90.0).abs() < POLE_TOL
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // With θ0 = 0, δ0 = 0 and φp − φ0 = 90°, eq. 8 holds for every δp, and
+    // LATPOLE is the answer.
+    #[test]
+    fn test_every_delta_p_solves_eq_8_on_the_equator() {
+        assert_eq!(delta_p(0.0, 0.0, 90.0, 37.0).unwrap(), 37.0);
+    }
+
+    // (δ0, θ0, φp − φ0): cos θ0 sin(φp − φ0) = 1 with δ0 ≠ 0; an acos
+    // argument of sin 45° / cos 60° = √2; roots −130° and 110°, both past a
+    // pole.
+    #[test]
+    fn test_delta_p_without_a_solution_is_refused() {
+        for (delta_0, theta_0, offset) in
+            [(10.0, 0.0, 90.0), (45.0, 0.0, 60.0), (30.0, 10.0, 180.0)]
+        {
+            let result = delta_p(delta_0, theta_0, offset, 90.0);
+            assert!(
+                matches!(result, Err(WcsError::InvalidParameter { .. })),
+                "({delta_0}, {theta_0}, {offset}): {result:?}"
+            );
+        }
+    }
+
+    // On the equator with the default LONPOLE the roots are ±90°, and
+    // LATPOLE chooses between them.
+    #[test]
+    fn test_latpole_chooses_either_root() {
+        assert_eq!(delta_p(0.0, 0.0, 0.0, 90.0).unwrap(), 90.0);
+        assert_eq!(delta_p(0.0, 0.0, 0.0, -90.0).unwrap(), -90.0);
+    }
+
+    // With θ0 = 30° and δ0 = 0 the roots are 120° and −60°, and only the
+    // second is a latitude.
+    #[test]
+    fn test_delta_p_takes_the_one_valid_root() {
+        assert_eq!(delta_p(0.0, 30.0, 0.0, 90.0).unwrap(), -60.0);
+    }
+
+    // A reference point on the celestial pole leaves αp at α0 (the note to
+    // eqs. 9 and 10).
+    #[test]
+    fn test_alpha_p_of_a_reference_point_on_the_pole() {
+        assert_eq!(alpha_p(123.0, 90.0, 0.0, 180.0, 90.0), 123.0);
+        assert_eq!(alpha_p(-45.0, -90.0, 0.0, 180.0, -90.0), -45.0);
+    }
+}

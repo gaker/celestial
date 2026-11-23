@@ -25,13 +25,13 @@ pub(super) fn header_distortion(
 
 // TPV convention: absent terms are 0, except PV1_1 and PV2_1, which are 1.
 fn read_tpv(header: &impl KeywordProvider) -> WcsResult<TpvDistortion> {
-    let mut tpv = TpvDistortion::identity();
+    let mut tpv = TpvDistortion::new();
     for m in 0..40 {
         if let Some(value) = header.get_float(&format!("PV1_{m}")) {
-            tpv.set_pv1(m, value)?;
+            tpv.set_pv(1, m, value)?;
         }
         if let Some(value) = header.get_float(&format!("PV2_{m}")) {
-            tpv.set_pv2(m, value)?;
+            tpv.set_pv(2, m, value)?;
         }
     }
     Ok(tpv)
@@ -154,7 +154,7 @@ fn sip_keywords(sip: &SipDistortion) -> Vec<WcsKeyword> {
 
 // Terms left at the defaults read_tpv starts from are left out.
 fn tpv_keywords(tpv: &TpvDistortion) -> Vec<WcsKeyword> {
-    let identity = TpvDistortion::identity();
+    let identity = TpvDistortion::new();
     let mut keywords = Vec::new();
     for ((axis, terms), (_, defaults)) in tpv.axes().into_iter().zip(identity.axes()) {
         for (m, (&value, &default)) in terms.iter().zip(defaults).enumerate() {
@@ -171,6 +171,7 @@ mod tests {
     use super::*;
     use crate::builder::keyword::keyword_map;
     use crate::builder::{Wcs, WcsBuilder};
+    use crate::coordinate::PixelCoord;
     use crate::distortion::{DistortionModel, SipDistortion, TpvDistortion};
     use crate::header::KeywordMap;
 
@@ -211,10 +212,11 @@ mod tests {
     #[track_caller]
     fn assert_same_mapping(got: &Wcs, expected: &Wcs) {
         for (x, y) in [(612.5, 412.5), (12.0, 1000.0), (900.25, 30.75)] {
-            let world = expected.pix2world(x, y).unwrap();
-            assert_eq!(got.pix2world(x, y).unwrap(), world, "({x}, {y})");
-            let pixel = expected.world2pix(world.0, world.1).unwrap();
-            assert_eq!(got.world2pix(world.0, world.1).unwrap(), pixel, "{world:?}");
+            let pixel = PixelCoord::new(x, y);
+            let world = expected.pixel_to_celestial(pixel).unwrap();
+            assert_eq!(got.pixel_to_celestial(pixel).unwrap(), world, "({x}, {y})");
+            let back = expected.celestial_to_pixel(world).unwrap();
+            assert_eq!(got.celestial_to_pixel(world).unwrap(), back, "{world:?}");
         }
     }
 
@@ -256,12 +258,12 @@ mod tests {
             ("PV2_2", 1e-3),
             ("PV2_39", 1e-9),
         ];
-        let mut tpv = TpvDistortion::identity();
-        tpv.set_pv1(0, 1e-4).unwrap();
-        tpv.set_pv1(3, 2e-3).unwrap();
-        tpv.set_pv1(4, 1e-3).unwrap();
-        tpv.set_pv2(2, 1e-3).unwrap();
-        tpv.set_pv2(39, 1e-9).unwrap();
+        let mut tpv = TpvDistortion::new();
+        tpv.set_pv(1, 0, 1e-4).unwrap();
+        tpv.set_pv(1, 3, 2e-3).unwrap();
+        tpv.set_pv(1, 4, 1e-3).unwrap();
+        tpv.set_pv(2, 2, 1e-3).unwrap();
+        tpv.set_pv(2, 39, 1e-9).unwrap();
         let got = header_wcs(&tan_header("TPV", &terms, &[])).unwrap();
         assert_same_mapping(&got, &tan_with(DistortionModel::Tpv(Box::new(tpv))));
     }
@@ -306,11 +308,11 @@ mod tests {
         sip.set_ap(2, 0, -1e-6).unwrap();
         sip.set_bp(0, 2, 5e-7).unwrap();
         // PV1_1 away from its default of 1 must be written to survive.
-        let mut tpv = TpvDistortion::identity();
-        tpv.set_pv1(1, 0.999).unwrap();
-        tpv.set_pv1(4, 1e-3).unwrap();
-        tpv.set_pv2(0, 1e-4).unwrap();
-        tpv.set_pv2(39, 1e-9).unwrap();
+        let mut tpv = TpvDistortion::new();
+        tpv.set_pv(1, 1, 0.999).unwrap();
+        tpv.set_pv(1, 4, 1e-3).unwrap();
+        tpv.set_pv(2, 0, 1e-4).unwrap();
+        tpv.set_pv(2, 39, 1e-9).unwrap();
         let cases = [
             ("RA---TAN-SIP", DistortionModel::Sip(sip)),
             ("RA---TPV", DistortionModel::Tpv(Box::new(tpv))),
@@ -325,6 +327,26 @@ mod tests {
         }
     }
 
+    // AP_ORDER and BP_ORDER are optional (SIP §2); without the reverse
+    // polynomials none of their keywords is written.
+    #[test]
+    fn test_sip_without_reverse_polynomials_writes_a_and_b_only() {
+        let mut sip = SipDistortion::new([512.5, 512.5], 2, 2);
+        sip.set_a(2, 0, 1e-6).unwrap();
+        sip.set_b(0, 2, -1e-6).unwrap();
+        let wcs = tan_with(DistortionModel::Sip(sip));
+        let names: Vec<String> = wcs.to_keywords().into_iter().map(|k| k.name).collect();
+        assert!(names.iter().any(|n| n == "A_ORDER"), "{names:?}");
+        assert!(
+            !names
+                .iter()
+                .any(|n| n.starts_with("AP_") || n.starts_with("BP_")),
+            "{names:?}"
+        );
+        let header = keyword_map(wcs.to_keywords());
+        assert_same_mapping(&header_wcs(&header).unwrap(), &wcs);
+    }
+
     #[test]
     fn test_build_rejects_distortion_a_header_cannot_carry() {
         let base = || {
@@ -333,7 +355,7 @@ mod tests {
                 .crval(123.456, 37.5)
                 .cd_matrix([[-1e-3, 0.0], [0.0, 1e-3]])
         };
-        let tpv = || DistortionModel::Tpv(Box::new(TpvDistortion::identity()));
+        let tpv = || DistortionModel::Tpv(Box::default());
         let off_centre = DistortionModel::Sip(SipDistortion::new([500.0, 500.0], 2, 2));
         let cases = [
             (

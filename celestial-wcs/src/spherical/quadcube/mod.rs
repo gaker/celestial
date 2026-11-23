@@ -1,6 +1,6 @@
 use crate::common::native_coord;
 use crate::coordinate::{IntermediateCoord, NativeCoord};
-use crate::error::{WcsError, WcsResult};
+use crate::error::WcsResult;
 use crate::trig::{atan2d, sincosd};
 
 mod csc;
@@ -116,13 +116,9 @@ impl QuadcubeFace {
     }
 }
 
-fn front_face(native: NativeCoord, code: &str) -> WcsResult<QuadcubeFace> {
-    let face = select_quadcube_face(native.phi_deg(), native.theta_deg());
-    if face.zeta <= 0.0 {
-        let message = format!("{code} projection: point on back of cube face");
-        return Err(WcsError::singularity(message));
-    }
-    Ok(face)
+// The face with the largest direction cosine ζ, which is at least 1/√3.
+fn front_face(native: NativeCoord) -> QuadcubeFace {
+    select_quadcube_face(native.phi_deg(), native.theta_deg())
 }
 
 fn select_quadcube_face(phi: f64, theta: f64) -> QuadcubeFace {

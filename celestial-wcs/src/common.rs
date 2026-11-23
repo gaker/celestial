@@ -2,7 +2,6 @@ use celestial_core::constants::RAD_TO_DEG;
 
 use crate::coordinate::{IntermediateCoord, NativeCoord};
 use crate::error::{WcsError, WcsResult};
-use crate::newton::NewtonConfig;
 use crate::trig::{atan2d, sincosd};
 
 #[inline]
@@ -20,12 +19,13 @@ pub(crate) fn radial_to_intermediate(r_theta: f64, phi: f64) -> IntermediateCoor
 // Every deprojection ends here. A point beyond a projection's boundary, off
 // the end of a cylinder, past the edge of a bounded map or behind a cone's
 // apex, comes back with θ or φ off the native sphere (Paper II §5), and
-// wrapping φ would hide that. A point on the boundary can come back just past
-// it, so the check allows the tolerance the iterative deprojections converge
-// to. It is measured as an arc on the sphere: past the seam that is
-// (|φ| − 180°) cos θ, which lets any φ through at a pole, where all are one.
+// wrapping φ would hide that. Rounding can bring a point on the boundary back
+// just past it, by up to 5.1e-14° in this crate's tests, so the check allows
+// 1e-12 rad, about a thousand times that. It is measured as an arc on the
+// sphere: past the seam that is (|φ| − 180°) cos θ, which lets any φ through
+// at a pole, where all are one.
 pub(crate) fn native_coord(phi: f64, theta: f64) -> WcsResult<NativeCoord> {
-    const BOUNDARY_TOL: f64 = NewtonConfig::DEFAULT_TOL * RAD_TO_DEG;
+    const BOUNDARY_TOL: f64 = 1e-12 * RAD_TO_DEG;
     if theta.is_nan() {
         return Err(WcsError::invalid_parameter("latitude must be finite"));
     }

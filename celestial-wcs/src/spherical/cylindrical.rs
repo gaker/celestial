@@ -1,4 +1,4 @@
-use crate::common::{native_coord, ZERO_LIMIT};
+use crate::common::native_coord;
 use crate::coordinate::{IntermediateCoord, NativeCoord};
 use crate::error::{WcsError, WcsResult};
 use crate::trig::{asind, atan2d, atand, sincosd, sind, tand, to_degrees, to_radians};
@@ -19,13 +19,13 @@ pub(crate) fn deproject_car(inter: IntermediateCoord) -> WcsResult<NativeCoord> 
     Ok(NativeCoord::new(phi, theta))
 }
 
-// φ is x itself, so the seam at x = ±180 is exact. Beyond it lies off the end
-// of the cylinder.
+// φ is x itself, so the seam at x = ±180 is exact, and it is returned as
+// +180° as everywhere else. Beyond it lies off the end of the cylinder.
 fn cylinder_longitude(x: f64) -> WcsResult<f64> {
     if x.abs() > 180.0 {
         return Err(WcsError::out_of_bounds("Point beyond the cylinder's seam"));
     }
-    Ok(x)
+    Ok(if x == -180.0 { 180.0 } else { x })
 }
 
 // Eqs. 86 and 87. y diverges at the poles and nowhere else.
@@ -80,8 +80,24 @@ pub(crate) fn project_cyp(
             "CYP projection singularity: mu + cos(theta) = 0",
         ));
     }
+    check_cyp_domain(mu, cos_theta, denom)?;
     let y = to_degrees((mu + lambda) / denom * sin_theta);
     Ok(IntermediateCoord::new(lambda * native.phi_deg(), y))
+}
+
+// dy/dθ is a constant times (μ + λ)(μ cos θ + 1)/(μ + cos θ)², so y is
+// monotonic on the equator's side of the parallel where μ + cos θ = 0 and, for
+// μ < −1, of the limb where μ cos θ + 1 = 0. Beyond either, y takes a value
+// that a point nearer the equator also has, and the inverse returns that point.
+fn check_cyp_domain(mu: f64, cos_theta: f64, denom: f64) -> WcsResult<()> {
+    let beyond_divergence = (mu + 1.0) * denom < 0.0;
+    let beyond_limb = (mu * cos_theta + 1.0) * (mu + 1.0) < 0.0;
+    if beyond_divergence || beyond_limb {
+        return Err(WcsError::out_of_bounds(
+            "CYP projection: point beyond the boundary",
+        ));
+    }
+    Ok(())
 }
 
 // Eqs. 76 to 78.
@@ -90,12 +106,10 @@ pub(crate) fn deproject_cyp(
     mu: f64,
     lambda: f64,
 ) -> WcsResult<NativeCoord> {
-    if lambda.abs() < ZERO_LIMIT {
-        return Err(WcsError::invalid_parameter(
-            "CYP deprojection: lambda cannot be zero",
-        ));
-    }
     let eta = to_radians(inter.y_deg()) / (mu + lambda);
+    if mu == -1.0 {
+        return deproject_cyp_on_sphere(inter.x_deg() / lambda, eta);
+    }
     let sin_offset = eta * mu / libm::sqrt(eta * eta + 1.0);
     if sin_offset.abs() > 1.0 {
         return Err(WcsError::out_of_bounds(
@@ -104,6 +118,18 @@ pub(crate) fn deproject_cyp(
     }
     let theta = atan2d(eta, 1.0) + asind(sin_offset);
     native_coord(inter.x_deg() / lambda, theta)
+}
+
+// With μ = −1 the two terms of eq. 77 cancel for every η and give the trivial
+// root θ = 0. Eq. 75 there reduces to η = −cot(θ/2), which is one-to-one on
+// θ ≠ 0 and reaches |θ| ≤ 90° only for |η| ≥ 1.
+fn deproject_cyp_on_sphere(phi: f64, eta: f64) -> WcsResult<NativeCoord> {
+    if libm::fabs(eta) < 1.0 {
+        return Err(WcsError::out_of_bounds(
+            "CYP deprojection: point outside valid region",
+        ));
+    }
+    native_coord(phi, -2.0 * atand(1.0 / eta))
 }
 
 #[cfg(test)]
@@ -131,7 +157,8 @@ mod tests {
         assert_eq!((inter2.x_deg(), inter2.y_deg()), (-120.0, -60.0));
 
         // CAR is an identity in degrees, so the roundtrip must be byte-exact.
-        for phi_deg in [-180.0, -90.0, 0.0, 45.0, 90.0, 135.0, 180.0] {
+        // φ = −180° comes back as +180°, the same meridian.
+        for phi_deg in [-179.5, -90.0, 0.0, 45.0, 90.0, 135.0, 180.0] {
             for theta_deg in [-85.0, -45.0, 0.0, 45.0, 85.0] {
                 let original = NativeCoord::new(phi_deg, theta_deg);
                 let inter = proj.project(original).unwrap();
@@ -158,9 +185,9 @@ mod tests {
             (
                 (-180.0, -45.0),
                 (-180.0, -50.498986710526204),
-                (-180.0, -44.99999999999999),
+                (180.0, -44.99999999999999),
             ),
-            ((-180.0, 45.0), (-180.0, 50.498986710526204), (-180.0, 45.0)),
+            ((-180.0, 45.0), (-180.0, 50.498986710526204), (180.0, 45.0)),
             ((45.0, 80.0), (45.0, 139.58661673332185), (45.0, 80.0)),
             ((135.0, -80.0), (135.0, -139.58661673332185), (135.0, -80.0)),
         ];
@@ -195,12 +222,12 @@ mod tests {
             (
                 (-180.0, -85.0),
                 (-180.0, -57.07775177396626),
-                (-180.0, -85.0),
+                (180.0, -85.0),
             ),
             (
                 (-180.0, -45.0),
                 (-180.0, -40.51423422706977),
-                (-180.0, -44.99999999999999),
+                (180.0, -44.99999999999999),
             ),
             ((135.0, 85.0), (135.0, 57.07775177396626), (135.0, 85.0)),
         ];
@@ -255,6 +282,96 @@ mod tests {
         }
     }
 
+    // The seam is one meridian, which every projection returns as +180°.
+    #[test]
+    fn test_seam_deprojects_to_plus_180() {
+        for proj in [
+            Projection::car(),
+            Projection::mer(),
+            Projection::cea(),
+            Projection::cyp(1.0, 1.0),
+        ] {
+            let native = proj.deproject(IntermediateCoord::new(-180.0, 0.0)).unwrap();
+            assert_eq!(native, NativeCoord::new(180.0, 0.0), "{proj:?}");
+        }
+    }
+
+    // Eq. 75 keeps the sign of y that μ + 1 gives it near the equator only up
+    // to the parallel where μ + cos θ = 0. For μ < −1 it turns back at the limb
+    // cos θ = −1/μ. Points past either fold onto other points.
+    #[test]
+    fn test_cyp_refuses_points_that_fold_over() {
+        let refused = [
+            (Projection::cyp(-0.5, 1.0), -85.93, -85.27),
+            (Projection::cyp(-0.5, 1.0), 0.0, 90.0),
+            (Projection::cyp(-0.5, 0.2), 10.0, 70.0),
+            (Projection::cyp(-2.0, 1.0), 10.0, 61.0),
+            (Projection::cyp(-2.0, 1.0), 10.0, -80.0),
+        ];
+        for (proj, phi, theta) in refused {
+            let result = proj.project(NativeCoord::new(phi, theta));
+            let out = matches!(result, Err(WcsError::OutOfBounds { .. }));
+            assert!(out, "{proj:?} ({phi}, {theta}): {result:?}");
+        }
+        let kept = [
+            (Projection::cyp(-0.5, 0.2), 10.0, 20.0),
+            (Projection::cyp(-2.0, 1.0), 10.0, 59.0),
+            (Projection::cyp(-2.0, 1.0), 10.0, -60.0),
+        ];
+        for (proj, phi, theta) in kept {
+            let result = proj.project(NativeCoord::new(phi, theta));
+            assert!(result.is_ok(), "{proj:?} ({phi}, {theta}): {result:?}");
+        }
+    }
+
+    // With µ = −1 the projection point is on the sphere and eq. 77 gives only
+    // θ = 0, so the inverse solves η = −cot(θ/2) instead. Against 60 digits
+    // θ is within 0.38 ulp. y at ±40° is 1.74 ulp off: µ + cos θ = cos 40° − 1
+    // cancels to −0.234, which magnifies the rounding of cos 40° about 3.3
+    // times.
+    #[test]
+    fn test_cyp_projection_point_on_sphere() {
+        let rows = [
+            (
+                (10.0, 40.0),
+                (20.0, -157.41886044224438),
+                (10.0, 40.000000000000014),
+            ),
+            (
+                (10.0, -40.0),
+                (20.0, 157.41886044224438),
+                (10.0, -40.000000000000014),
+            ),
+            ((10.0, 90.0), (20.0, -57.29577951308232), (10.0, 90.0)),
+        ];
+        assert_pinned(&Projection::cyp(-1.0, 2.0), &rows);
+        let rows = [
+            (
+                (60.0, 40.0),
+                (30.0, 78.70943022112219),
+                (60.0, 40.000000000000014),
+            ),
+            (
+                (60.0, -40.0),
+                (30.0, -78.70943022112219),
+                (60.0, -40.000000000000014),
+            ),
+            ((60.0, 90.0), (30.0, 28.64788975654116), (60.0, 90.0)),
+        ];
+        assert_pinned(&Projection::cyp(-1.0, 0.5), &rows);
+    }
+
+    // |η| < 1 is cot(θ/2) for some |θ| > 90°, beyond the poles.
+    #[test]
+    fn test_cyp_on_sphere_refuses_beyond_poles() {
+        let proj = Projection::cyp(-1.0, 2.0);
+        for y in [10.0, 0.0, -57.0] {
+            let result = proj.deproject(IntermediateCoord::new(0.0, y));
+            let out = matches!(result, Err(WcsError::OutOfBounds { .. }));
+            assert!(out, "y = {y}: {result:?}");
+        }
+    }
+
     #[test]
     fn test_cylindrical_error_cases() {
         // MER blows up at the poles (theta = +/- 90).
@@ -278,6 +395,14 @@ mod tests {
         for theta in [60.0, -60.0] {
             assert!(cyp.project(NativeCoord::new(0.0, theta)).is_err());
         }
+
+        // μ = 2 puts the edge of the map at |y| = (μ + λ)/√(μ² − 1) rad,
+        // 99.2°.
+        let edge = Projection::cyp(2.0, 1.0).deproject(IntermediateCoord::new(0.0, 200.0));
+        assert!(
+            matches!(edge, Err(WcsError::OutOfBounds { .. })),
+            "{edge:?}"
+        );
 
         // CYP deproject with lambda = 0 is an invalid parameter.
         let cyp_zero = Projection::cyp(1.0, 0.0);

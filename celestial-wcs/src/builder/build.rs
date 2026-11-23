@@ -41,6 +41,7 @@ pub struct WcsBuilder {
     latpole: Option<f64>,
     pv_params: HashMap<(u8, u8), f64>,
     coord_type: Option<CoordType>,
+    generic_prefixes: Option<[String; 2]>,
     distortion: Option<DistortionModel>,
 }
 
@@ -91,6 +92,7 @@ impl WcsBuilder {
 
     pub fn coord_type(mut self, coord_type: CoordType) -> Self {
         self.coord_type = Some(coord_type);
+        self.generic_prefixes = None;
         self
     }
 
@@ -108,7 +110,8 @@ impl WcsBuilder {
         let header = &LongitudeFirst::new(header)?;
         let ctype1 = header.require_string("CTYPE1")?;
         let ctype2 = header.require_string("CTYPE2")?;
-        let (prefix, code, suffix) = parse_ctype_pair(&ctype1, &ctype2)?;
+        let (prefixes, code, suffix) = parse_ctype_pair(&ctype1, &ctype2)?;
+        let coord_type = CoordType::from_ctype_prefix(prefixes[0]);
         let units = celestial_units(header)?;
         let crpix = axis_pair(header, "CRPIX", 0.0);
         let crval = in_degrees(axis_pair(header, "CRVAL", 0.0), units);
@@ -117,10 +120,13 @@ impl WcsBuilder {
         let mut builder = Self::new()
             .crpix(crpix[0], crpix[1])
             .crval(crval[0], crval[1])
-            .coord_type(CoordType::from_ctype_prefix(prefix))
+            .coord_type(coord_type)
             .proj_code(if tpv { "TAN" } else { code });
         builder.matrix = parse_matrix(header, units);
         builder.distortion = distortion;
+        if coord_type == CoordType::Generic {
+            builder.generic_prefixes = Some(prefixes.map(String::from));
+        }
         Ok(builder.with_pole_and_pv(header, tpv))
     }
 
@@ -146,15 +152,14 @@ impl WcsBuilder {
     }
 
     pub fn build(self) -> WcsResult<Wcs> {
-        self.validate()?;
         let (crpix, crval) = self.reference_point()?;
         let linear = self.linear_transform(crpix)?;
         let projection = self.resolved_projection()?;
+        projection.check_parameters()?;
         let fiducial = Fiducial::from_pv(&projection, &self.pv_params)?;
         check_distortion(self.distortion.as_ref(), crpix, &projection, &fiducial)?;
         let rotation = self.rotation(crval, &fiducial)?;
         let coord_type = self.coord_type.unwrap_or_default();
-        let crval = (crval[0], crval[1]);
         let wcs = Wcs::new(
             linear,
             projection,
@@ -163,7 +168,9 @@ impl WcsBuilder {
             crval,
             self.distortion,
         );
-        Ok(wcs.with_fiducial(fiducial))
+        Ok(wcs
+            .with_fiducial(fiducial)
+            .with_generic_prefixes(self.generic_prefixes))
     }
 
     fn reference_point(&self) -> WcsResult<([f64; 2], [f64; 2])> {
@@ -227,7 +234,9 @@ fn missing_projection() -> WcsError {
 #[cfg(test)]
 mod tests {
     use super::super::keyword::{keyword_map, WcsKeywordValue};
+    use super::super::wcs::format_ctype;
     use super::*;
+    use crate::coordinate::{CelestialCoord, PixelCoord};
     use crate::header::KeywordMap;
     use celestial_core::constants::PI;
 
@@ -661,6 +670,24 @@ mod tests {
         assert_eq!(builder.matrix, MatrixSpec::Cd([[0.001, 0.0], [0.0, 0.001]]));
     }
 
+    // validate and build report the same missing piece.
+    #[test]
+    fn test_validate_and_build_name_what_is_missing() {
+        let no_matrix = WcsBuilder::new()
+            .crpix(512.0, 512.0)
+            .crval(180.0, 45.0)
+            .projection(Projection::tan());
+        let no_projection = minimal_builder();
+        for (builder, wanted) in [
+            (no_matrix, missing_matrix()),
+            (no_projection, missing_projection()),
+        ] {
+            let wanted = wanted.to_string();
+            assert_eq!(builder.validate().unwrap_err().to_string(), wanted);
+            assert_eq!(builder.build().unwrap_err().to_string(), wanted);
+        }
+    }
+
     #[test]
     fn test_build_succeeds_with_minimal_valid_config() {
         // The same builder must both validate and build.
@@ -668,7 +695,7 @@ mod tests {
         assert!(builder.clone().validate().is_ok());
         let wcs = builder.build().unwrap();
         assert_eq!(wcs.crpix(), [512.0, 512.0]);
-        assert_eq!(wcs.crval(), (180.0, 45.0));
+        assert_eq!(wcs.crval(), [180.0, 45.0]);
         assert_eq!(wcs.projection_code(), "TAN");
     }
 
@@ -753,10 +780,11 @@ mod tests {
             .coord_type(CoordType::Equatorial)
             .build()
             .unwrap();
-        let sky = (179.69920249673768, 45.187604542264104);
-        assert_eq!(wcs.pix2world(300.0, 700.0).unwrap(), sky);
-        let back = (300.0000000000147, 699.9999999999836);
-        assert_eq!(wcs.world2pix(sky.0, sky.1).unwrap(), back);
+        let sky = CelestialCoord::new(179.69920249673768, 45.187604542264104);
+        let pixel = PixelCoord::new(300.0, 700.0);
+        assert_eq!(wcs.pixel_to_celestial(pixel).unwrap(), sky);
+        let back = PixelCoord::new(300.0000000000147, 699.9999999999836);
+        assert_eq!(wcs.celestial_to_pixel(sky).unwrap(), back);
     }
 
     #[test]
@@ -767,7 +795,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(wcs.crpix(), [512.0, 512.0]);
-        assert_eq!(wcs.crval(), (180.0, 45.0));
+        assert_eq!(wcs.crval(), [180.0, 45.0]);
         assert_eq!(wcs.projection_code(), "TAN");
         assert_eq!(wcs.coord_type(), CoordType::Equatorial);
     }
@@ -791,19 +819,20 @@ mod tests {
 
         assert_eq!(from_pc.crpix(), [256.0, 256.0]);
         assert_eq!(from_pc.projection_code(), "ARC");
-        let sky = from_cd.pix2world(200.0, 300.0).unwrap();
-        assert_eq!(from_pc.pix2world(200.0, 300.0).unwrap(), sky);
+        let pixel = PixelCoord::new(200.0, 300.0);
+        let sky = from_cd.pixel_to_celestial(pixel).unwrap();
+        assert_eq!(from_pc.pixel_to_celestial(pixel).unwrap(), sky);
         assert_eq!(
-            from_pc.world2pix(sky.0, sky.1).unwrap(),
-            from_cd.world2pix(sky.0, sky.1).unwrap()
+            from_pc.celestial_to_pixel(sky).unwrap(),
+            from_cd.celestial_to_pixel(sky).unwrap()
         );
     }
 
     // LONPOLE 90 turns the TAN sky a quarter turn about the reference point,
     // and LATPOLE −90 puts the CAR native pole at δp = −45° rather than +45°
     // (Paper II eqs. 8 to 10), so neither row is where the defaults put it.
-    // Against 60 digits pix2world is within 1.48 ulp and world2pix within
-    // 39 ulp, at most 0.46 of the summed half-ulp rounding of the steps; most
+    // Against 60 digits pixel_to_celestial is within 1.48 ulp and
+    // celestial_to_pixel within 39 ulp, at most 0.46 of the summed half-ulp rounding of the steps; most
     // of that is θ's rounding scaled by 1/CDELT.
     #[test]
     fn test_build_with_lonpole_latpole() {
@@ -829,9 +858,12 @@ mod tests {
                 (612.0000000000041, 561.999999999994),
             ),
         ];
-        for (wcs, sky, back) in rows {
-            assert_eq!(wcs.pix2world(612.0, 562.0).unwrap(), sky);
-            assert_eq!(wcs.world2pix(sky.0, sky.1).unwrap(), back);
+        for (wcs, (lon, lat), (back_x, back_y)) in rows {
+            let sky = CelestialCoord::new(lon, lat);
+            let pixel = PixelCoord::new(612.0, 562.0);
+            assert_eq!(wcs.pixel_to_celestial(pixel).unwrap(), sky);
+            let back = PixelCoord::new(back_x, back_y);
+            assert_eq!(wcs.celestial_to_pixel(sky).unwrap(), back);
         }
     }
 
@@ -869,9 +901,10 @@ mod tests {
                 vec![("LONPOLE", 0.0), ("LATPOLE", -90.0)],
             ),
         ];
+        let pixel = PixelCoord::new(130.0, 80.0);
         for (encapsulated, plain) in cases {
-            let got = header_wcs(&car_header(&encapsulated)).pix2world(130.0, 80.0);
-            let expected = header_wcs(&car_header(&plain)).pix2world(130.0, 80.0);
+            let got = header_wcs(&car_header(&encapsulated)).pixel_to_celestial(pixel);
+            let expected = header_wcs(&car_header(&plain)).pixel_to_celestial(pixel);
             assert_eq!(got.unwrap(), expected.unwrap(), "{encapsulated:?}");
         }
     }
@@ -881,7 +914,8 @@ mod tests {
         // Paper II §2.5. CAR puts (φ0, θ0) = (30°, 22.5°) at (x, y) = (φ0, θ0),
         // 600 and 450 pixels of 0.05° from CRPIX.
         let wcs = header_wcs(&car_header(&[("PV1_1", 30.0), ("PV1_2", 22.5)]));
-        assert_eq!(wcs.pix2world(700.0, 550.0).unwrap(), (150.0, 40.0));
+        let sky = wcs.pixel_to_celestial(PixelCoord::new(700.0, 550.0));
+        assert_eq!(sky.unwrap(), CelestialCoord::new(150.0, 40.0));
     }
 
     #[test]
@@ -892,11 +926,42 @@ mod tests {
         let fiducial = [("PV1_1", 0.0), ("PV1_2", 22.5)];
         let offset = header_wcs(&car_header(&[("PV1_0", 1.0), fiducial[0], fiducial[1]]));
         let plain = header_wcs(&car_header(&fiducial));
-        let shifted = plain.pix2world(130.0, 530.0).unwrap();
-        assert_eq!(offset.pix2world(130.0, 80.0).unwrap(), shifted);
-        assert_eq!(offset.pix2world(100.0, 100.0).unwrap(), (150.0, 40.0));
-        let (x, y) = plain.world2pix(150.0, 40.0).unwrap();
-        assert_eq!(offset.world2pix(150.0, 40.0).unwrap(), (x, y - 450.0));
+        let shifted = plain.pixel_to_celestial(PixelCoord::new(130.0, 530.0));
+        let moved = offset.pixel_to_celestial(PixelCoord::new(130.0, 80.0));
+        assert_eq!(moved.unwrap(), shifted.unwrap());
+        let crval = CelestialCoord::new(150.0, 40.0);
+        let at_crpix = offset.pixel_to_celestial(PixelCoord::new(100.0, 100.0));
+        assert_eq!(at_crpix.unwrap(), crval);
+        let plain_pixel = plain.celestial_to_pixel(crval).unwrap();
+        let expected = PixelCoord::new(plain_pixel.x(), plain_pixel.y() - 450.0);
+        assert_eq!(offset.celestial_to_pixel(crval).unwrap(), expected);
+    }
+
+    #[test]
+    fn test_nan_pv1_0_is_refused() {
+        let header = car_header(&[("PV1_0", f64::NAN)]);
+        let result = WcsBuilder::from_header(&header).unwrap().build();
+        assert!(
+            matches!(result, Err(WcsError::InvalidParameter { .. })),
+            "{result:?}"
+        );
+    }
+
+    // LONPOLE away from its default is written, and the header it writes
+    // maps every pixel the same way.
+    #[test]
+    fn test_to_keywords_keeps_lonpole() {
+        let wcs = minimal_builder()
+            .projection(Projection::tan())
+            .lonpole(90.0)
+            .build()
+            .unwrap();
+        let header = keyword_map(wcs.to_keywords());
+        assert_eq!(header.get_float("LONPOLE"), Some(90.0));
+        let reread = header_wcs(&header);
+        let pixel = PixelCoord::new(612.0, 562.0);
+        let expected = wcs.pixel_to_celestial(pixel).unwrap();
+        assert_eq!(reread.pixel_to_celestial(pixel).unwrap(), expected);
     }
 
     #[test]
@@ -908,8 +973,48 @@ mod tests {
             assert_eq!(header.get_float(name), Some(value), "{name}");
         }
         let reread = header_wcs(&header);
-        let expected = wcs.pix2world(130.0, 80.0).unwrap();
-        assert_eq!(reread.pix2world(130.0, 80.0).unwrap(), expected);
+        let pixel = PixelCoord::new(130.0, 80.0);
+        let expected = wcs.pixel_to_celestial(pixel).unwrap();
+        assert_eq!(reread.pixel_to_celestial(pixel).unwrap(), expected);
+    }
+
+    #[test]
+    fn test_to_keywords_keeps_the_header_axis_names() {
+        for (lon, lat) in [("TLON", "TLAT"), ("EQLN", "EQLT"), ("GLON", "GLAT")] {
+            let mut header = car_header(&[]);
+            header
+                .set_string("CTYPE1", format_ctype(lon, "CAR"))
+                .set_string("CTYPE2", format_ctype(lat, "CAR"));
+            let written = keyword_map(header_wcs(&header).to_keywords());
+            for name in ["CTYPE1", "CTYPE2"] {
+                assert_eq!(written.get_string(name), header.get_string(name));
+            }
+        }
+    }
+
+    #[test]
+    fn test_coord_type_replaces_the_header_axis_names() {
+        let mut header = car_header(&[]);
+        header
+            .set_string("CTYPE1", "TLON-CAR")
+            .set_string("CTYPE2", "TLAT-CAR");
+        let wcs = WcsBuilder::from_header(&header)
+            .unwrap()
+            .coord_type(CoordType::Galactic)
+            .build()
+            .unwrap();
+        let written = keyword_map(wcs.to_keywords());
+        assert_eq!(written.get_string("CTYPE1").as_deref(), Some("GLON-CAR"));
+        assert_eq!(written.get_string("CTYPE2").as_deref(), Some("GLAT-CAR"));
+    }
+
+    #[test]
+    fn test_build_refuses_invalid_projection_parameters() {
+        for (code, m, value) in [("AZP", 1, f64::NAN), ("AZP", 2, 90.0), ("CEA", 1, 0.0)] {
+            let result = minimal_builder().proj_code(code).pv(2, m, value).build();
+            let refused = matches!(result, Err(WcsError::InvalidParameter { .. }));
+            assert!(refused, "{code} PV2_{m} = {value}: {result:?}");
+        }
     }
 
     #[test]
@@ -926,9 +1031,10 @@ mod tests {
             .build()
             .unwrap();
         let plain_tan = minimal_builder().proj_code("TAN").build().unwrap();
+        let pixel = PixelCoord::new(100.0, 900.0);
         assert_eq!(
-            tan.pix2world(100.0, 900.0).unwrap(),
-            plain_tan.pix2world(100.0, 900.0).unwrap()
+            tan.pixel_to_celestial(pixel).unwrap(),
+            plain_tan.pixel_to_celestial(pixel).unwrap()
         );
 
         // An explicit Projection carries its own parameters.

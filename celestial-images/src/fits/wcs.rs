@@ -1,6 +1,7 @@
 use crate::fits::header::Header;
 use crate::fits::{FitsError, Result};
 use celestial_wcs::builder::{Wcs, WcsBuilder};
+use celestial_wcs::coordinate::{CelestialCoord, PixelCoord};
 use celestial_wcs::header::KeywordProvider;
 
 struct FitsKeywordAdapter<'a> {
@@ -41,15 +42,19 @@ impl WcsInfo {
     }
 
     pub fn pix2world(&self, x: f64, y: f64) -> Result<(f64, f64)> {
-        self.wcs
-            .pix2world(x, y)
-            .map_err(|e| FitsError::InvalidFormat(format!("WCS transform: {}", e)))
+        let sky = self
+            .wcs
+            .pixel_to_celestial(PixelCoord::new(x, y))
+            .map_err(|e| FitsError::InvalidFormat(format!("WCS transform: {}", e)))?;
+        Ok((sky.alpha_deg(), sky.delta_deg()))
     }
 
     pub fn world2pix(&self, ra: f64, dec: f64) -> Result<(f64, f64)> {
-        self.wcs
-            .world2pix(ra, dec)
-            .map_err(|e| FitsError::InvalidFormat(format!("WCS transform: {}", e)))
+        let pixel = self
+            .wcs
+            .celestial_to_pixel(CelestialCoord::new(ra, dec))
+            .map_err(|e| FitsError::InvalidFormat(format!("WCS transform: {}", e)))?;
+        Ok((pixel.x(), pixel.y()))
     }
 
     #[inline]
@@ -68,7 +73,7 @@ impl WcsInfo {
     }
 
     #[inline]
-    pub fn crval(&self) -> (f64, f64) {
+    pub fn crval(&self) -> [f64; 2] {
         self.wcs.crval()
     }
 }
@@ -109,7 +114,7 @@ mod tests {
 
         assert_eq!(wcs.projection_code(), "TAN");
         assert_eq!(wcs.crpix(), [512.0, 512.0]);
-        assert_eq!(wcs.crval(), (180.0, 45.0));
+        assert_eq!(wcs.crval(), [180.0, 45.0]);
     }
 
     #[test]
