@@ -16,7 +16,7 @@ pub use sip::{fit_sip, SipSolution};
 pub use solution::{StarResidual, WcsSolution};
 
 use anyhow::{ensure, Result};
-use celestial_catalog::query::{tan_deproject_star, tan_project_star};
+use celestial_catalog::query::quad::{tan_deproject_star, tan_project_star};
 use celestial_core::constants::{DEG_TO_RAD, RAD_TO_DEG};
 
 use crate::match_field::StarPair;
@@ -167,7 +167,7 @@ pub fn fit_wcs(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use celestial_catalog::query::tan_deproject_star;
+    use celestial_catalog::query::quad::tan_deproject_star;
 
     struct SynthGrid {
         crval_ra: f64,

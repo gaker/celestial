@@ -3,13 +3,23 @@
 //! Ingests raw catalog data (Gaia DR3, Hipparcos) and produces
 //! a unified HEALPix-indexed binary catalog.
 
+mod bp_rp_excess;
 mod build_index;
 mod cli;
 mod download_gaia;
 mod gaia;
+mod gaia_listing;
+mod gaia_parts;
+mod hip2;
+mod http;
 mod ingest_gaia;
 mod ingest_hipparcos;
+mod intermediate;
 mod merge;
+#[cfg(test)]
+mod pipeline_tests;
+#[cfg(test)]
+mod test_server;
 
 use clap::Parser;
 use cli::{Cli, Commands};

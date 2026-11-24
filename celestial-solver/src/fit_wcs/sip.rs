@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use anyhow::{ensure, Result};
-use celestial_catalog::query::tan_project_star;
+use celestial_catalog::query::quad::tan_project_star;
 use celestial_core::constants::RAD_TO_DEG;
 
 use crate::match_field::StarPair;
@@ -28,7 +28,7 @@ struct Position {
 ///
 /// ```rust,ignore
 /// # let img = celestial_images::formats::image::Image::open("f.fits")?;
-/// # let catalog = celestial_catalog::query::Catalog::open("cat.bin")?;
+/// # let catalog = celestial_catalog::query::catalog::Catalog::open("cat.bin")?;
 /// let result = celestial_solver::solve(&img, &catalog).run()?;
 /// if let Some(sip) = &result.sip {
 ///     println!("SIP order: {}, RMS: {:.3}px", sip.a_order, sip.rms_px);

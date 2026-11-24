@@ -27,7 +27,7 @@ the headers carry enough metadata that solving is one line:
 
 ```rust,ignore
 use celestial_images::formats::image::Image;
-use celestial_catalog::query::Catalog;
+use celestial_catalog::query::catalog::Catalog;
 
 let img = Image::open("lights/m31_001.fits")?;
 let catalog = Catalog::open("celestial-37M.bin")?;

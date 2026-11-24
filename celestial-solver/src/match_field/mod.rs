@@ -11,7 +11,7 @@ mod quad_stars;
 mod verify;
 
 use anyhow::Result;
-use celestial_catalog::query::{neighbor_quads, Quad};
+use celestial_catalog::query::quad::{neighbor_quads, Quad};
 use celestial_coords::frames::icrs::ICRSPosition;
 use celestial_core::constants::PI;
 use celestial_images::formats::image::Image;
@@ -83,7 +83,7 @@ pub struct QuadMatch {
 ///
 /// ```rust,ignore
 /// # let img = celestial_images::formats::image::Image::open("f.fits")?;
-/// # let catalog = celestial_catalog::query::Catalog::open("cat.bin")?;
+/// # let catalog = celestial_catalog::query::catalog::Catalog::open("cat.bin")?;
 /// let result = celestial_solver::solve(&img, &catalog).run()?;
 /// let top = &result.pairs[0];
 /// println!("pixel ({:.1}, {:.1}) = sky ({:.4}°, {:.4}°)", top.px_x, top.px_y, top.ra_deg, top.dec_deg);
@@ -113,9 +113,9 @@ pub struct StarPair {
 #[derive(Debug)]
 pub struct FieldMatch {
     /// Image-side quad-star set (brightest detections with quad-relevant bookkeeping).
-    pub image_stars: Vec<celestial_catalog::query::QuadStar>,
+    pub image_stars: Vec<celestial_catalog::query::quad::QuadStar>,
     /// Catalog-side quad-star set (cone-searched stars with quad-relevant bookkeeping).
-    pub catalog_stars: Vec<celestial_catalog::query::QuadStar>,
+    pub catalog_stars: Vec<celestial_catalog::query::quad::QuadStar>,
     /// Every quad match found.
     pub matches: Vec<QuadMatch>,
     /// Aggregated pixel↔sky pairs derived from the matched quads.
@@ -140,7 +140,7 @@ pub struct FieldMatch {
 ///
 /// # let stars = vec![];
 /// # let img = celestial_images::formats::image::Image::open("f.fits")?;
-/// # let catalog = celestial_catalog::query::Catalog::open("cat.bin")?;
+/// # let catalog = celestial_catalog::query::catalog::Catalog::open("cat.bin")?;
 /// # let hint = celestial_coords::frames::icrs::ICRSPosition::from_degrees(180.0, 30.0)?;
 /// # let epoch = celestial_time::julian::JulianDate::new(2_400_000.5, 0.0);
 /// let field = match_field(&stars, &img, &catalog, &hint, 1.5, epoch, &MatchParams::default())?;
@@ -149,7 +149,7 @@ pub struct FieldMatch {
 pub fn match_field(
     stars: &[DetectedStar],
     image: &Image,
-    catalog: &celestial_catalog::query::Catalog,
+    catalog: &celestial_catalog::query::catalog::Catalog,
     hint: &ICRSPosition,
     scale_arcsec: f64,
     epoch: JulianDate,
@@ -238,7 +238,7 @@ pub fn match_field(
 
 #[derive(Default)]
 struct ParityAttempt {
-    img_stars: Vec<celestial_catalog::query::QuadStar>,
+    img_stars: Vec<celestial_catalog::query::quad::QuadStar>,
     matches: Vec<QuadMatch>,
     pairs: Vec<StarPair>,
     score: usize,
@@ -246,13 +246,10 @@ struct ParityAttempt {
 
 #[cfg(test)]
 pub(super) mod test_catalog {
+    use celestial_catalog::query::catalog::{pixel_entry_bytes, CatalogHeader, StarRecord};
     use celestial_catalog::query::healpix::ang2pix_nest;
     use std::io::Write;
     use tempfile::NamedTempFile;
-
-    const HEADER_SIZE: usize = 64;
-    const PIXEL_ENTRY_SIZE: usize = 16;
-    const STAR_RECORD_SIZE: usize = 56;
 
     pub struct SynthStar {
         pub source_id: i64,
@@ -261,13 +258,24 @@ pub(super) mod test_catalog {
         pub mag: f32,
     }
 
+    fn record(s: &SynthStar) -> StarRecord {
+        let mut star = StarRecord::from_le_bytes(&[0; 56]);
+        star.source_id = s.source_id;
+        star.ra = s.ra;
+        star.dec = s.dec;
+        star.mag = s.mag;
+        star
+    }
+
     pub fn build(order: u32, stars: &[SynthStar]) -> NamedTempFile {
         let nside = 1u32 << order;
         let npix = 12u64 * (nside as u64) * (nside as u64);
 
         let mut buckets: Vec<Vec<&SynthStar>> = (0..npix).map(|_| Vec::new()).collect();
         for s in stars {
-            let pix = ang2pix_nest(order, s.ra, s.dec);
+            let pix = ang2pix_nest(order, s.ra, s.dec).unwrap_or_else(|e| {
+                panic!("synthetic star ({}, {}) has no pixel: {e}", s.ra, s.dec)
+            });
             buckets[pix as usize].push(s);
         }
         // Magnitude-sort within each pixel — cone_search relies on it elsewhere.
@@ -279,46 +287,25 @@ pub(super) mod test_catalog {
             });
         }
 
-        let total_stars: u64 = stars.len() as u64;
-
-        let mut buf: Vec<u8> = Vec::new();
-        buf.extend_from_slice(b"CCAT");
-        buf.extend_from_slice(&1u32.to_le_bytes());
-        buf.extend_from_slice(&order.to_le_bytes());
-        buf.extend_from_slice(&nside.to_le_bytes());
-        buf.extend_from_slice(&npix.to_le_bytes());
-        buf.extend_from_slice(&total_stars.to_le_bytes());
-        buf.extend_from_slice(&2016.0f64.to_le_bytes());
-        buf.extend_from_slice(&21.0f32.to_le_bytes());
-        buf.extend_from_slice(&[0u8; 20]);
-        assert_eq!(buf.len(), HEADER_SIZE);
-
+        let header = CatalogHeader {
+            order,
+            nside,
+            npix,
+            total_stars: stars.len() as u64,
+            epoch: 2016.0,
+            mag_limit: 21.0,
+        };
+        let mut buf = header.to_bytes().to_vec();
         let mut star_data: Vec<u8> = Vec::new();
-        let mut offsets: Vec<(u64, u32)> = vec![(0, 0); npix as usize];
-        for (pix, bucket) in buckets.iter().enumerate() {
-            let off = star_data.len() as u64;
-            offsets[pix] = (off, bucket.len() as u32);
+        for bucket in &buckets {
+            buf.extend_from_slice(&pixel_entry_bytes(
+                star_data.len() as u64,
+                bucket.len() as u32,
+            ));
             for s in bucket {
-                star_data.extend_from_slice(&s.source_id.to_le_bytes());
-                star_data.extend_from_slice(&s.ra.to_le_bytes());
-                star_data.extend_from_slice(&s.dec.to_le_bytes());
-                star_data.extend_from_slice(&0.0f64.to_le_bytes()); // pmra
-                star_data.extend_from_slice(&0.0f64.to_le_bytes()); // pmdec
-                star_data.extend_from_slice(&0.0f64.to_le_bytes()); // parallax
-                star_data.extend_from_slice(&s.mag.to_le_bytes());
-                star_data.extend_from_slice(&0u16.to_le_bytes()); // flags
-                star_data.extend_from_slice(&0u16.to_le_bytes()); // padding
+                star_data.extend_from_slice(&record(s).to_le_bytes());
             }
         }
-        assert_eq!(star_data.len(), stars.len() * STAR_RECORD_SIZE);
-
-        for &(o, c) in &offsets {
-            buf.extend_from_slice(&o.to_le_bytes());
-            buf.extend_from_slice(&c.to_le_bytes());
-            buf.extend_from_slice(&0u32.to_le_bytes());
-        }
-        assert_eq!(buf.len(), HEADER_SIZE + npix as usize * PIXEL_ENTRY_SIZE);
-
         buf.extend_from_slice(&star_data);
 
         let mut file = NamedTempFile::new().unwrap();
@@ -333,7 +320,7 @@ mod tests {
     use super::test_catalog::{build, SynthStar};
     use super::*;
 
-    use celestial_catalog::query::Catalog;
+    use celestial_catalog::query::catalog::Catalog;
     use celestial_images::formats::pixel_data::PixelData;
     use celestial_time::julian::JulianDate;
 
@@ -397,7 +384,7 @@ mod tests {
 
     #[test]
     fn quad_match_clone_preserves_quads() {
-        use celestial_catalog::query::Quad;
+        use celestial_catalog::query::quad::Quad;
         let qm = QuadMatch {
             image_quad: Quad {
                 hash: [0.1, 0.2, 0.3, 0.4],

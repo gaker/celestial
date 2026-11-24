@@ -1,7 +1,7 @@
 use anyhow::{ensure, Result};
-use celestial_catalog::query::{
-    cone_search, tan_deproject_star, tan_project_star, Catalog, ConeSearchParams,
-};
+use celestial_catalog::query::catalog::Catalog;
+use celestial_catalog::query::cone::{cone_search, ConeSearchParams};
+use celestial_catalog::query::quad::{tan_deproject_star, tan_project_star};
 use celestial_core::constants::{DEG_TO_RAD, RAD_TO_DEG};
 use celestial_time::julian::JulianDate;
 
@@ -85,7 +85,7 @@ pub struct RefineResult {
 ///
 /// # let initial = unimplemented!();
 /// # let stars = vec![];
-/// # let catalog: celestial_catalog::query::Catalog = unimplemented!();
+/// # let catalog: celestial_catalog::query::catalog::Catalog = unimplemented!();
 /// # let epoch = celestial_time::julian::JulianDate::new(2_400_000.5, 0.0);
 /// let refined = refine_wcs(&initial, &stars, &catalog, epoch, &RefineParams::default())?;
 /// # Ok::<(), Box<dyn std::error::Error>>(())
@@ -546,7 +546,7 @@ fn log_match_stats(match_dists: &[f64], n_pairs: usize) {
 mod tests {
     use super::*;
 
-    use celestial_catalog::query::Catalog;
+    use celestial_catalog::query::catalog::Catalog;
 
     use crate::detect::DetectedStar;
     use crate::match_field::test_catalog::{build, SynthStar};

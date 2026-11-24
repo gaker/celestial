@@ -22,7 +22,7 @@ use super::solution::{fmt_dec, fmt_fov_component, fmt_ra, WcsSolution};
 /// use celestial_solver::fit_wcs::SolveDisplay;
 ///
 /// # let img = celestial_images::formats::image::Image::open("f.fits")?;
-/// # let catalog = celestial_catalog::query::Catalog::open("cat.bin")?;
+/// # let catalog = celestial_catalog::query::catalog::Catalog::open("cat.bin")?;
 /// let result = celestial_solver::solve(&img, &catalog).run()?;
 /// let display = SolveDisplay::new(&result.wcs, result.sip.as_ref())
 ///     .with_software("my-solver 1.0");
@@ -46,7 +46,7 @@ impl<'a> SolveDisplay<'a> {
     /// use celestial_solver::fit_wcs::SolveDisplay;
     ///
     /// # let img = celestial_images::formats::image::Image::open("f.fits")?;
-    /// # let catalog = celestial_catalog::query::Catalog::open("cat.bin")?;
+    /// # let catalog = celestial_catalog::query::catalog::Catalog::open("cat.bin")?;
     /// let result = celestial_solver::solve(&img, &catalog).run()?;
     /// println!("{}", SolveDisplay::new(&result.wcs, result.sip.as_ref()));
     /// # Ok::<(), Box<dyn std::error::Error>>(())

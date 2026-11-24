@@ -5,7 +5,7 @@
 
 use std::path::Path;
 
-use celestial_catalog::query::tan_project_star;
+use celestial_catalog::query::quad::tan_project_star;
 use celestial_core::constants::RAD_TO_DEG;
 use celestial_images::core::errors::Result as ImageResult;
 use celestial_images::fits::header::keywords::Keyword;
@@ -29,7 +29,7 @@ impl SolveResult {
     ///
     /// ```rust,ignore
     /// # let img = celestial_images::formats::image::Image::open("f.fits")?;
-    /// # let catalog = celestial_catalog::query::Catalog::open("cat.bin")?;
+    /// # let catalog = celestial_catalog::query::catalog::Catalog::open("cat.bin")?;
     /// let result = celestial_solver::solve(&img, &catalog).run()?;
     /// for kw in result.to_fits_keywords() {
     ///     println!("{}", kw.name);
@@ -55,7 +55,7 @@ impl SolveResult {
     ///
     /// ```rust,ignore
     /// # let img = celestial_images::formats::image::Image::open("f.fits")?;
-    /// # let catalog = celestial_catalog::query::Catalog::open("cat.bin")?;
+    /// # let catalog = celestial_catalog::query::catalog::Catalog::open("cat.bin")?;
     /// let result = celestial_solver::solve(&img, &catalog).run()?;
     /// let props = result.to_xisf_properties();
     /// # Ok::<(), Box<dyn std::error::Error>>(())
@@ -78,7 +78,7 @@ impl SolveResult {
     ///
     /// ```rust,ignore
     /// # let img = celestial_images::formats::image::Image::open("f.fits")?;
-    /// # let catalog = celestial_catalog::query::Catalog::open("cat.bin")?;
+    /// # let catalog = celestial_catalog::query::catalog::Catalog::open("cat.bin")?;
     /// let result = celestial_solver::solve(&img, &catalog).run()?;
     ///
     /// let mut with_wcs = img.clone();
@@ -108,7 +108,7 @@ impl SolveResult {
     ///
     /// ```rust,ignore
     /// # let img = celestial_images::formats::image::Image::open("f.fits")?;
-    /// # let catalog = celestial_catalog::query::Catalog::open("cat.bin")?;
+    /// # let catalog = celestial_catalog::query::catalog::Catalog::open("cat.bin")?;
     /// let result = celestial_solver::solve(&img, &catalog).run()?;
     /// result.save_with(&img, "out/solved.fits")?;
     /// # Ok::<(), Box<dyn std::error::Error>>(())

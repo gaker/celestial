@@ -2,7 +2,7 @@
 
 use std::fmt;
 
-use celestial_catalog::query::{tan_deproject_star, tan_project_star};
+use celestial_catalog::query::quad::{tan_deproject_star, tan_project_star};
 use celestial_core::constants::{DEG_TO_RAD, RAD_TO_DEG};
 
 /// Per-pair fit residual.
@@ -16,7 +16,7 @@ use celestial_core::constants::{DEG_TO_RAD, RAD_TO_DEG};
 ///
 /// ```rust,ignore
 /// # let img = celestial_images::formats::image::Image::open("f.fits")?;
-/// # let catalog = celestial_catalog::query::Catalog::open("cat.bin")?;
+/// # let catalog = celestial_catalog::query::catalog::Catalog::open("cat.bin")?;
 /// let result = celestial_solver::solve(&img, &catalog).run()?;
 /// let worst = result.wcs.residuals.iter()
 ///     .max_by(|a, b| a.err_px.partial_cmp(&b.err_px).unwrap()).unwrap();
@@ -48,7 +48,7 @@ pub struct StarResidual {
 ///
 /// ```rust,ignore
 /// # let img = celestial_images::formats::image::Image::open("f.fits")?;
-/// # let catalog = celestial_catalog::query::Catalog::open("cat.bin")?;
+/// # let catalog = celestial_catalog::query::catalog::Catalog::open("cat.bin")?;
 /// let result = celestial_solver::solve(&img, &catalog).run()?;
 /// let (ra, dec) = result.wcs.pixel_to_sky(1024.0, 768.0);
 /// println!("center: {:.4}° {:.4}°", ra, dec);
@@ -101,7 +101,7 @@ impl WcsSolution {
     ///
     /// ```rust,ignore
     /// # let img = celestial_images::formats::image::Image::open("f.fits")?;
-    /// # let catalog = celestial_catalog::query::Catalog::open("cat.bin")?;
+    /// # let catalog = celestial_catalog::query::catalog::Catalog::open("cat.bin")?;
     /// let result = celestial_solver::solve(&img, &catalog).run()?;
     /// let (ra, dec) = result.wcs.pixel_to_sky(100.0, 200.0);
     /// # Ok::<(), Box<dyn std::error::Error>>(())
@@ -129,7 +129,7 @@ impl WcsSolution {
     ///
     /// ```rust,ignore
     /// # let img = celestial_images::formats::image::Image::open("f.fits")?;
-    /// # let catalog = celestial_catalog::query::Catalog::open("cat.bin")?;
+    /// # let catalog = celestial_catalog::query::catalog::Catalog::open("cat.bin")?;
     /// let result = celestial_solver::solve(&img, &catalog).run()?;
     /// if let Some((x, y)) = result.wcs.sky_to_pixel(180.0, 30.0) {
     ///     println!("(180°, 30°) lands at ({:.1}, {:.1})", x, y);
@@ -156,7 +156,7 @@ impl WcsSolution {
     ///
     /// ```rust,ignore
     /// # let img = celestial_images::formats::image::Image::open("f.fits")?;
-    /// # let catalog = celestial_catalog::query::Catalog::open("cat.bin")?;
+    /// # let catalog = celestial_catalog::query::catalog::Catalog::open("cat.bin")?;
     /// let result = celestial_solver::solve(&img, &catalog).run()?;
     /// let (sx, sy) = result.wcs.scale_arcsec();
     /// println!("{:.3} × {:.3} arcsec/px", sx, sy);
@@ -177,7 +177,7 @@ impl WcsSolution {
     ///
     /// ```rust,ignore
     /// # let img = celestial_images::formats::image::Image::open("f.fits")?;
-    /// # let catalog = celestial_catalog::query::Catalog::open("cat.bin")?;
+    /// # let catalog = celestial_catalog::query::catalog::Catalog::open("cat.bin")?;
     /// let result = celestial_solver::solve(&img, &catalog).run()?;
     /// println!("rotation: {:.2}°", result.wcs.rotation_deg());
     /// # Ok::<(), Box<dyn std::error::Error>>(())
@@ -201,7 +201,7 @@ impl WcsSolution {
     ///
     /// ```rust,ignore
     /// # let img = celestial_images::formats::image::Image::open("f.fits")?;
-    /// # let catalog = celestial_catalog::query::Catalog::open("cat.bin")?;
+    /// # let catalog = celestial_catalog::query::catalog::Catalog::open("cat.bin")?;
     /// let result = celestial_solver::solve(&img, &catalog).run()?;
     /// if result.wcs.is_flipped() {
     ///     println!("image is flipped");
@@ -223,7 +223,7 @@ impl WcsSolution {
     ///
     /// ```rust,ignore
     /// # let img = celestial_images::formats::image::Image::open("f.fits")?;
-    /// # let catalog = celestial_catalog::query::Catalog::open("cat.bin")?;
+    /// # let catalog = celestial_catalog::query::catalog::Catalog::open("cat.bin")?;
     /// let result = celestial_solver::solve(&img, &catalog).run()?;
     /// if let Some(f) = result.wcs.effective_focal_mm() {
     ///     println!("effective focal length: {:.0}mm", f);

@@ -1,9 +1,9 @@
 //! Quad-star construction for image detections and catalog cone searches.
 
 use anyhow::Result;
-use celestial_catalog::query::{
-    cone_search, tan_project_star, Catalog, ConeSearchParams, ConeSearchResult, QuadStar,
-};
+use celestial_catalog::query::catalog::Catalog;
+use celestial_catalog::query::cone::{cone_search, ConeSearchParams, ConeSearchResult};
+use celestial_catalog::query::quad::{tan_project_star, QuadStar};
 use celestial_core::constants::PI;
 use celestial_time::julian::JulianDate;
 
@@ -215,7 +215,7 @@ mod tests {
         assert!(out.is_empty());
     }
 
-    use celestial_catalog::query::Catalog;
+    use celestial_catalog::query::catalog::Catalog;
     use celestial_time::julian::JulianDate;
 
     use super::super::test_catalog::{build, SynthStar};

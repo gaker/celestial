@@ -4,23 +4,22 @@
 //! and downloads files with resume support and parallel fetching.
 
 use crate::cli::{Cli, DownloadGaiaArgs};
+use crate::gaia_listing::{list_remote_files, RemoteFile};
+use crate::http::Downloader;
 use anyhow::Context;
-use quick_xml::events::Event;
-use quick_xml::Reader;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::fs::{self, File};
-use std::io::Write;
+use std::fs;
+use std::io;
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
-use std::sync::Arc;
+use std::sync::Mutex;
 
-const LISTING_URL: &str =
-    "https://gaia.eu-1.cdn77-storage.com/?prefix=Gaia/gdr3/gaia_source/&delimiter=/";
 const CDN_BASE: &str = "https://cdn.gea.esac.esa.int/";
 const MANIFEST_FILENAME: &str = "gaia_manifest.json";
+const BYTES_PER_GB: f64 = 1_073_741_824.0;
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Default, Serialize, Deserialize)]
 struct Manifest {
     files: HashMap<String, FileEntry>,
 }
@@ -32,15 +31,45 @@ struct FileEntry {
     downloaded: bool,
 }
 
-struct RemoteFile {
-    key: String,
-    filename: String,
-    size: u64,
-    etag: String,
+struct DownloadJob<'a> {
+    http: &'a Downloader,
+    base_url: &'a str,
+    output: &'a Path,
+    concurrency: usize,
 }
 
-pub fn run(args: &DownloadGaiaArgs, cli: &Cli) -> anyhow::Result<()> {
+struct Progress {
+    total: usize,
+    completed: AtomicUsize,
+    failed: AtomicUsize,
+    bytes: AtomicU64,
+}
+
+pub(crate) fn run(args: &DownloadGaiaArgs, cli: &Cli) -> anyhow::Result<()> {
     fs::create_dir_all(&args.output)?;
+    print_plan(args);
+    let http = Downloader::new(args.retries)?;
+    let remote_files = list_files(&http, args.limit, cli.verbose)?;
+    let manifest_path = args.output.join(MANIFEST_FILENAME);
+    let manifest = load_manifest(&manifest_path)?;
+    let to_download = plan_downloads(&remote_files, &manifest, &args.output);
+    if to_download.is_empty() {
+        println!("All files already downloaded and verified.");
+        return Ok(());
+    }
+    let skipped = remote_files.len() - to_download.len();
+    print_download_plan(skipped, &to_download);
+    let job = DownloadJob {
+        http: &http,
+        base_url: CDN_BASE,
+        output: &args.output,
+        concurrency: args.concurrency,
+    };
+    let progress = download_and_record(&job, &to_download, manifest, &manifest_path)?;
+    print_summary(&progress, skipped)
+}
+
+fn print_plan(args: &DownloadGaiaArgs) {
     println!("=== Gaia DR3 Download ===");
     println!("Output: {:?}", args.output);
     println!("Concurrency: {}", args.concurrency);
@@ -48,233 +77,155 @@ pub fn run(args: &DownloadGaiaArgs, cli: &Cli) -> anyhow::Result<()> {
         println!("Limit: {} files", limit);
     }
     println!();
+}
 
+fn list_files(
+    http: &Downloader,
+    limit: Option<usize>,
+    verbose: bool,
+) -> anyhow::Result<Vec<RemoteFile>> {
     println!("Listing files from ESA CDN...");
-    let mut remote_files = list_remote_files(cli.verbose)?;
+    let mut remote_files = list_remote_files(http, verbose)?;
     remote_files.sort_by(|a, b| a.filename.cmp(&b.filename));
-
-    if let Some(limit) = args.limit {
+    if let Some(limit) = limit {
         remote_files.truncate(limit);
     }
-
     let total_size: u64 = remote_files.iter().map(|f| f.size).sum();
     println!(
         "Found {} files ({:.1} GB total)",
         remote_files.len(),
-        total_size as f64 / 1_073_741_824.0
+        total_size as f64 / BYTES_PER_GB
     );
+    Ok(remote_files)
+}
 
-    let manifest_path = args.output.join(MANIFEST_FILENAME);
-    let mut manifest = load_manifest(&manifest_path);
-    let to_download = plan_downloads(&remote_files, &manifest, &args.output);
-
-    if to_download.is_empty() {
-        println!("All files already downloaded and verified.");
-        return Ok(());
-    }
-
-    let skip_count = remote_files.len() - to_download.len();
-    let dl_size: u64 = to_download.iter().map(|f| f.size).sum();
+fn print_download_plan(skipped: usize, to_download: &[&RemoteFile]) {
+    let size: u64 = to_download.iter().map(|f| f.size).sum();
     println!(
         "Skipping {} already downloaded, {} to download ({:.1} GB)",
-        skip_count,
+        skipped,
         to_download.len(),
-        dl_size as f64 / 1_073_741_824.0
+        size as f64 / BYTES_PER_GB
     );
     println!();
+}
 
-    let completed = Arc::new(AtomicUsize::new(0));
-    let bytes_done = Arc::new(AtomicU64::new(0));
-    let failed = Arc::new(AtomicUsize::new(0));
-    let total_count = to_download.len();
-
+// Records each file in the manifest as soon as it is downloaded and verified, so a run that
+// stops early keeps the files it finished. A failed file keeps whatever entry it had.
+fn download_and_record(
+    job: &DownloadJob,
+    files: &[&RemoteFile],
+    manifest: Manifest,
+    manifest_path: &Path,
+) -> anyhow::Result<Progress> {
+    let progress = Progress::new(files.len());
+    let manifest = Mutex::new(manifest);
     let pool = rayon::ThreadPoolBuilder::new()
-        .num_threads(args.concurrency)
+        .num_threads(job.concurrency)
         .build()
         .context("Failed to build thread pool")?;
-
     pool.scope(|s| {
-        for file in &to_download {
-            let output = &args.output;
-            let retries = args.retries;
-            let completed = Arc::clone(&completed);
-            let bytes_done = Arc::clone(&bytes_done);
-            let failed = Arc::clone(&failed);
-
-            s.spawn(move |_| {
-                let dest = output.join(&file.filename);
-                match download_with_retry(&file.key, &dest, file.size, retries) {
-                    Ok(etag) => {
-                        let done = completed.fetch_add(1, Ordering::Relaxed) + 1;
-                        let bytes = bytes_done.fetch_add(file.size, Ordering::Relaxed) + file.size;
-                        println!(
-                            "[{}/{}] {} ({:.1} MB) - {:.1} GB done",
-                            done,
-                            total_count,
-                            file.filename,
-                            file.size as f64 / 1_048_576.0,
-                            bytes as f64 / 1_073_741_824.0,
-                        );
-                        let _ = etag; // used when saving manifest below
-                    }
-                    Err(e) => {
-                        failed.fetch_add(1, Ordering::Relaxed);
-                        eprintln!("FAILED {}: {}", file.filename, e);
-                    }
-                }
-            });
+        for &file in files {
+            let (progress, manifest) = (&progress, &manifest);
+            s.spawn(
+                move |_| match download_one(job, file, manifest, manifest_path) {
+                    Ok(()) => progress.record_success(file),
+                    Err(e) => progress.record_failure(file, &e),
+                },
+            );
         }
     });
+    Ok(progress)
+}
 
-    update_manifest(&mut manifest, &remote_files, &args.output);
-    save_manifest(&manifest, &manifest_path)?;
+fn download_one(
+    job: &DownloadJob,
+    file: &RemoteFile,
+    manifest: &Mutex<Manifest>,
+    manifest_path: &Path,
+) -> anyhow::Result<()> {
+    let url = format!("{}{}", job.base_url, file.key);
+    job.http
+        .download(&url, &job.output.join(&file.filename), Some(file.size))?;
+    let mut manifest = manifest
+        .lock()
+        .map_err(|_| anyhow::anyhow!("Another download panicked while saving the manifest"))?;
+    let entry = FileEntry {
+        etag: file.etag.clone(),
+        size: file.size,
+        downloaded: true,
+    };
+    manifest.files.insert(file.filename.clone(), entry);
+    save_manifest(&manifest, manifest_path)
+}
 
-    let fail_count = failed.load(Ordering::Relaxed);
-    let ok_count = completed.load(Ordering::Relaxed);
+impl Progress {
+    fn new(total: usize) -> Self {
+        Progress {
+            total,
+            completed: AtomicUsize::new(0),
+            failed: AtomicUsize::new(0),
+            bytes: AtomicU64::new(0),
+        }
+    }
+
+    fn record_success(&self, file: &RemoteFile) {
+        let done = self.completed.fetch_add(1, Ordering::Relaxed) + 1;
+        let bytes = self.bytes.fetch_add(file.size, Ordering::Relaxed) + file.size;
+        println!(
+            "[{}/{}] {} ({:.1} MB) - {:.1} GB done",
+            done,
+            self.total,
+            file.filename,
+            file.size as f64 / 1_048_576.0,
+            bytes as f64 / BYTES_PER_GB,
+        );
+    }
+
+    fn record_failure(&self, file: &RemoteFile, error: &anyhow::Error) {
+        self.failed.fetch_add(1, Ordering::Relaxed);
+        eprintln!("FAILED {}: {:#}", file.filename, error);
+    }
+}
+
+fn print_summary(progress: &Progress, skipped: usize) -> anyhow::Result<()> {
+    let failed = progress.failed.load(Ordering::Relaxed);
     println!("\n=== Summary ===");
-    println!("Downloaded: {}", ok_count);
-    println!("Skipped: {}", skip_count);
-    println!("Failed: {}", fail_count);
-
-    if fail_count > 0 {
-        anyhow::bail!("{} downloads failed. Re-run to retry.", fail_count);
+    println!("Downloaded: {}", progress.completed.load(Ordering::Relaxed));
+    println!("Skipped: {}", skipped);
+    println!("Failed: {}", failed);
+    if failed > 0 {
+        anyhow::bail!("{} downloads failed. Re-run to retry.", failed);
     }
     Ok(())
 }
 
-fn list_remote_files(verbose: bool) -> anyhow::Result<Vec<RemoteFile>> {
-    let mut files = Vec::new();
-    let mut marker: Option<String> = None;
-
-    loop {
-        let url = match &marker {
-            Some(m) => format!("{}&marker={}", LISTING_URL, m),
-            None => LISTING_URL.to_string(),
-        };
-
-        if verbose {
-            eprintln!("Listing: {}", url);
-        }
-
-        let body = reqwest::blocking::get(&url)
-            .context("Failed to fetch bucket listing")?
-            .text()
-            .context("Failed to read listing response")?;
-
-        let (batch, next_marker) = parse_listing(&body)?;
-        let batch_len = batch.len();
-        files.extend(batch);
-
-        if verbose {
-            eprintln!("  Got {} keys (total: {})", batch_len, files.len());
-        }
-
-        match next_marker {
-            Some(m) => marker = Some(m),
-            None => break,
-        }
-    }
-
-    Ok(files)
+// A missing manifest means nothing has been downloaded yet.
+fn load_manifest(path: &Path) -> anyhow::Result<Manifest> {
+    let data = match fs::read_to_string(path) {
+        Ok(data) => data,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(Manifest::default()),
+        Err(e) => return Err(e).with_context(|| format!("Failed to read {:?}", path)),
+    };
+    serde_json::from_str(&data).with_context(|| {
+        format!(
+            "{:?} is corrupt. Delete it and re-run; every file is then downloaded again",
+            path
+        )
+    })
 }
 
-fn parse_listing(xml: &str) -> anyhow::Result<(Vec<RemoteFile>, Option<String>)> {
-    let mut reader = Reader::from_str(xml);
-    let mut files = Vec::new();
-    let mut next_marker: Option<String> = None;
-    let mut buf = String::new();
-
-    let mut in_contents = false;
-    let mut in_key = false;
-    let mut in_size = false;
-    let mut in_etag = false;
-    let mut in_next_marker = false;
-
-    let mut cur_key = String::new();
-    let mut cur_size = 0u64;
-    let mut cur_etag = String::new();
-
-    loop {
-        match reader.read_event() {
-            Ok(Event::Start(e)) => {
-                let name = String::from_utf8_lossy(e.name().as_ref()).to_string();
-                match name.as_str() {
-                    "Contents" => {
-                        in_contents = true;
-                        cur_key.clear();
-                        cur_size = 0;
-                        cur_etag.clear();
-                    }
-                    "Key" if in_contents => in_key = true,
-                    "Size" if in_contents => in_size = true,
-                    "ETag" if in_contents => in_etag = true,
-                    "NextMarker" => in_next_marker = true,
-                    _ => {}
-                }
-            }
-            Ok(Event::Text(e)) => {
-                buf.clear();
-                buf.push_str(&e.decode().unwrap_or_default());
-                if in_key {
-                    cur_key.push_str(&buf);
-                } else if in_size {
-                    cur_size = buf.trim().parse().unwrap_or(0);
-                } else if in_etag {
-                    cur_etag.push_str(buf.trim().trim_matches('"'));
-                } else if in_next_marker {
-                    next_marker = Some(buf.trim().to_string());
-                }
-            }
-            Ok(Event::End(e)) => {
-                let name = String::from_utf8_lossy(e.name().as_ref()).to_string();
-                match name.as_str() {
-                    "Contents" => {
-                        in_contents = false;
-                        if cur_key.ends_with(".csv.gz") {
-                            let filename = extract_filename(&cur_key);
-                            files.push(RemoteFile {
-                                key: cur_key.clone(),
-                                filename,
-                                size: cur_size,
-                                etag: cur_etag.clone(),
-                            });
-                        }
-                    }
-                    "Key" => in_key = false,
-                    "Size" => in_size = false,
-                    "ETag" => in_etag = false,
-                    "NextMarker" => in_next_marker = false,
-                    _ => {}
-                }
-            }
-            Ok(Event::Eof) => break,
-            Err(e) => anyhow::bail!("XML parse error: {}", e),
-            _ => {}
-        }
-    }
-
-    Ok((files, next_marker))
-}
-
-fn extract_filename(key: &str) -> String {
-    key.rsplit('/').next().unwrap_or(key).to_string()
-}
-
-fn load_manifest(path: &Path) -> Manifest {
-    match fs::read_to_string(path) {
-        Ok(data) => serde_json::from_str(&data).unwrap_or(Manifest {
-            files: HashMap::new(),
-        }),
-        Err(_) => Manifest {
-            files: HashMap::new(),
-        },
-    }
-}
-
+// The manifest is written to a temporary file and renamed, so an interrupted save leaves the
+// previous manifest in place.
 fn save_manifest(manifest: &Manifest, path: &Path) -> anyhow::Result<()> {
     let json = serde_json::to_string_pretty(manifest)?;
-    fs::write(path, json)?;
-    Ok(())
+    // Synced before the rename: a manifest cut short by a power loss reads as corrupt, and
+    // the only way out of that is downloading every file again.
+    crate::intermediate::write_via_temp(path, |writer| {
+        io::Write::write_all(writer, json.as_bytes())?;
+        Ok(())
+    })
+    .with_context(|| format!("Failed to save {:?}", path))
 }
 
 fn plan_downloads<'a>(
@@ -289,104 +240,150 @@ fn plan_downloads<'a>(
 }
 
 fn is_already_good(file: &RemoteFile, manifest: &Manifest, output_dir: &Path) -> bool {
-    let local_path = output_dir.join(&file.filename);
-    let meta = match fs::metadata(&local_path) {
-        Ok(m) => m,
-        Err(_) => return false,
-    };
-    if meta.len() != file.size {
+    if !has_size(&output_dir.join(&file.filename), file.size) {
         return false;
     }
-    if let Some(entry) = manifest.files.get(&file.filename) {
-        return entry.etag == file.etag && entry.size == file.size && entry.downloaded;
-    }
-    false
+    manifest
+        .files
+        .get(&file.filename)
+        .is_some_and(|entry| entry.etag == file.etag && entry.size == file.size && entry.downloaded)
 }
 
-fn download_with_retry(
-    key: &str,
-    dest: &Path,
-    expected_size: u64,
-    max_retries: u32,
-) -> anyhow::Result<String> {
-    let url = format!("{}{}", CDN_BASE, key);
-    let mut last_err = None;
+fn has_size(path: &Path, size: u64) -> bool {
+    fs::metadata(path).is_ok_and(|m| m.len() == size)
+}
 
-    for attempt in 0..=max_retries {
-        if attempt > 0 {
-            eprintln!("  Retry {}/{} for {}", attempt, max_retries, key);
-        }
-        match download_file(&url, dest, expected_size) {
-            Ok(etag) => return Ok(etag),
-            Err(e) => {
-                last_err = Some(e);
-                if dest.exists() {
-                    let _ = fs::remove_file(dest);
-                }
-            }
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::http::tests::downloader;
+    use crate::test_server::{Reply, Server};
+    use std::time::Duration;
+
+    fn remote(name: &str, etag: &str) -> RemoteFile {
+        RemoteFile {
+            key: format!("Gaia/{name}"),
+            filename: name.to_string(),
+            size: 3,
+            etag: etag.to_string(),
         }
     }
 
-    Err(last_err.unwrap())
-}
-
-fn download_file(url: &str, dest: &Path, expected_size: u64) -> anyhow::Result<String> {
-    let response =
-        reqwest::blocking::get(url).with_context(|| format!("Failed to connect: {}", url))?;
-
-    if !response.status().is_success() {
-        anyhow::bail!("HTTP {}", response.status());
+    fn job<'a>(http: &'a Downloader, base_url: &'a str, output: &'a Path) -> DownloadJob<'a> {
+        DownloadJob {
+            http,
+            base_url,
+            output,
+            concurrency: 1,
+        }
     }
 
-    let etag = response
-        .headers()
-        .get("etag")
-        .and_then(|v| v.to_str().ok())
-        .map(|s| s.trim_matches('"').to_string())
-        .unwrap_or_default();
+    fn planned(remote: &[RemoteFile], dir: &Path) -> Vec<String> {
+        let manifest = load_manifest(&dir.join(MANIFEST_FILENAME)).unwrap();
+        let plan = plan_downloads(remote, &manifest, dir);
+        plan.iter().map(|f| f.filename.clone()).collect()
+    }
 
-    let tmp_path = dest.with_extension("csv.gz.tmp");
-    let mut file =
-        File::create(&tmp_path).with_context(|| format!("Failed to create {:?}", tmp_path))?;
+    // The third request stalls and then fails, as a run stopped by Ctrl-C during its third
+    // file would. A run that starts at that moment must skip the two finished files.
+    #[test]
+    fn test_manifest_records_each_file_as_it_finishes() {
+        let dir = tempfile::tempdir().unwrap();
+        let files: Vec<RemoteFile> = ["a", "b", "c"]
+            .iter()
+            .map(|n| remote(&format!("{n}.csv.gz"), n))
+            .collect();
+        let replies = vec![
+            Reply::ok(b"abc"),
+            Reply::ok(b"abc"),
+            Reply::stalled(3, 1, Duration::from_secs(1)),
+        ];
+        let server = Server::start(replies);
+        let http = downloader(5000, 0);
+        let manifest_path = dir.path().join(MANIFEST_FILENAME);
+        let progress = std::thread::scope(|s| {
+            let run = s.spawn(|| {
+                let to_download: Vec<&RemoteFile> = files.iter().collect();
+                let job = job(&http, &server.url, dir.path());
+                download_and_record(&job, &to_download, Manifest::default(), &manifest_path)
+            });
+            server.wait_for_requests(3);
+            let left = planned(&files, dir.path());
+            assert_eq!(left.len(), 1, "{left:?}");
+            assert!(!dir.path().join(&left[0]).exists());
+            run.join().unwrap().unwrap()
+        });
+        server.join();
+        assert_eq!(progress.failed.load(Ordering::Relaxed), 1);
+        assert_eq!(planned(&files, dir.path()).len(), 1);
+    }
 
-    let bytes = response.bytes().context("Failed to read body")?;
-    file.write_all(&bytes)?;
-    file.flush()?;
-    drop(file);
+    // The local copy matches the new size, but downloading the new version failed, so the
+    // manifest must keep the old ETag and the next run must download the file again.
+    #[test]
+    fn test_failed_update_is_not_recorded() {
+        let dir = tempfile::tempdir().unwrap();
+        let manifest_path = dir.path().join(MANIFEST_FILENAME);
+        fs::write(dir.path().join("a.csv.gz"), b"old").unwrap();
+        let mut manifest = Manifest::default();
+        let entry = FileEntry {
+            etag: "old".to_string(),
+            size: 3,
+            downloaded: true,
+        };
+        manifest.files.insert("a.csv.gz".to_string(), entry);
+        save_manifest(&manifest, &manifest_path).unwrap();
+        let files = [remote("a.csv.gz", "new")];
+        let server = Server::start(vec![Reply::status("503 Service Unavailable")]);
+        let http = downloader(1000, 0);
+        let to_download: Vec<&RemoteFile> = files.iter().collect();
+        let job = job(&http, &server.url, dir.path());
+        let progress = download_and_record(&job, &to_download, manifest, &manifest_path).unwrap();
+        server.join();
+        assert_eq!(progress.failed.load(Ordering::Relaxed), 1);
+        let saved = load_manifest(&manifest_path).unwrap();
+        assert_eq!(saved.files["a.csv.gz"].etag, "old");
+        assert_eq!(planned(&files, dir.path()), ["a.csv.gz"]);
+    }
 
-    let written = fs::metadata(&tmp_path)?.len();
-    if written != expected_size {
-        let _ = fs::remove_file(&tmp_path);
-        anyhow::bail!(
-            "Size mismatch: expected {} got {} for {}",
-            expected_size,
-            written,
-            url
+    #[test]
+    fn test_missing_manifest_is_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        let manifest = load_manifest(&dir.path().join(MANIFEST_FILENAME)).unwrap();
+        assert!(manifest.files.is_empty());
+    }
+
+    #[test]
+    fn test_corrupt_manifest_is_an_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(MANIFEST_FILENAME);
+        fs::write(&path, "{\"files\": {").unwrap();
+        let err = load_manifest(&path).unwrap_err();
+        assert!(
+            format!("{:#}", err).contains("is corrupt. Delete it"),
+            "{err:#}"
         );
     }
 
-    fs::rename(&tmp_path, dest)
-        .with_context(|| format!("Failed to rename {:?} -> {:?}", tmp_path, dest))?;
-
-    Ok(etag)
-}
-
-fn update_manifest(manifest: &mut Manifest, remote: &[RemoteFile], output_dir: &Path) {
-    for file in remote {
-        let local_path = output_dir.join(&file.filename);
-        let ok = match fs::metadata(&local_path) {
-            Ok(m) => m.len() == file.size,
-            Err(_) => false,
+    #[test]
+    fn test_saved_manifest_loads() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(MANIFEST_FILENAME);
+        let mut manifest = Manifest::default();
+        let entry = FileEntry {
+            etag: "e".to_string(),
+            size: 3,
+            downloaded: true,
         };
-        if ok {
-            manifest.files.insert(
-                file.filename.clone(),
-                FileEntry {
-                    etag: file.etag.clone(),
-                    size: file.size,
-                    downloaded: true,
-                },
-            );
-        }
+        manifest.files.insert("a.csv.gz".to_string(), entry);
+        save_manifest(&manifest, &path).unwrap();
+        let loaded = load_manifest(&path).unwrap();
+        let entry = &loaded.files["a.csv.gz"];
+        assert_eq!(
+            (entry.etag.as_str(), entry.size, entry.downloaded),
+            ("e", 3, true)
+        );
+        let names: Vec<_> = fs::read_dir(dir.path()).unwrap().collect();
+        assert_eq!(names.len(), 1);
     }
 }

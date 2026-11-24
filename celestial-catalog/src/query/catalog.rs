@@ -2,23 +2,24 @@
 //!
 //! The catalog binary format has three contiguous sections:
 //!
-//! 1. **Header** (64 bytes) — magic, version, HEALPix parameters, star count, epoch
-//! 2. **Pixel offset table** (`npix × 16` bytes) — byte offset and count per pixel
-//! 3. **Star data** (`total_stars × 56` bytes) — [`StarRecord`] structs grouped by pixel
+//! 1. **Header** (64 bytes): magic, version, HEALPix parameters, star count, epoch
+//! 2. **Pixel offset table** (`npix × 16` bytes): byte offset and count per pixel
+//! 3. **Star data** (`total_stars × 56` bytes): [`StarRecord`] structs grouped by pixel
 //!
 //! Open a catalog with [`Catalog::open`], then query stars by pixel index
 //! or use the higher-level cone search in [`super::cone`].
 
-use anyhow::{bail, Context, Result};
 use memmap2::Mmap;
 use std::fmt;
 use std::fs::File;
 use std::path::Path;
 
-const CATALOG_MAGIC: &[u8; 4] = b"CCAT";
-const CATALOG_VERSION: u32 = 1;
-const HEADER_SIZE: usize = 64;
-const PIXEL_ENTRY_SIZE: usize = 16;
+use super::format::{
+    concat_le, le_field, PixelEntry, CATALOG_MAGIC, CATALOG_VERSION, HEADER_SIZE, PIXEL_ENTRY_SIZE,
+    STAR_RECORD_SIZE,
+};
+use super::validate::{check_header, check_magic_and_version, check_pixel_table, Layout};
+use crate::error::{CatalogError, CatalogResult};
 
 /// Metadata parsed from the first 64 bytes of a catalog file.
 #[derive(Debug, Clone)]
@@ -35,6 +36,42 @@ pub struct CatalogHeader {
     pub epoch: f64,
     /// Faintest magnitude included in the catalog.
     pub mag_limit: f32,
+}
+
+impl CatalogHeader {
+    // Writes the magic, the current format version and the fields. Bytes 44 to 63 are zero.
+    pub fn to_bytes(&self) -> [u8; HEADER_SIZE] {
+        concat_le(&[
+            CATALOG_MAGIC,
+            &CATALOG_VERSION.to_le_bytes(),
+            &self.order.to_le_bytes(),
+            &self.nside.to_le_bytes(),
+            &self.npix.to_le_bytes(),
+            &self.total_stars.to_le_bytes(),
+            &self.epoch.to_le_bytes(),
+            &self.mag_limit.to_le_bytes(),
+        ])
+    }
+
+    fn parse(file: &[u8]) -> CatalogResult<Self> {
+        let Some(bytes) = file.first_chunk::<HEADER_SIZE>() else {
+            return Err(CatalogError::invalid_header(format!(
+                "Catalog file too small: {} bytes, the header alone is {HEADER_SIZE}",
+                file.len()
+            )));
+        };
+        check_magic_and_version(le_field(bytes, 0), u32::from_le_bytes(le_field(bytes, 4)))?;
+        let header = Self {
+            order: u32::from_le_bytes(le_field(bytes, 8)),
+            nside: u32::from_le_bytes(le_field(bytes, 12)),
+            npix: u64::from_le_bytes(le_field(bytes, 16)),
+            total_stars: u64::from_le_bytes(le_field(bytes, 24)),
+            epoch: f64::from_le_bytes(le_field(bytes, 32)),
+            mag_limit: f32::from_le_bytes(le_field(bytes, 40)),
+        };
+        check_header(&header)?;
+        Ok(header)
+    }
 }
 
 impl fmt::Display for CatalogHeader {
@@ -58,7 +95,8 @@ impl fmt::Display for CatalogHeader {
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct StarRecord {
-    /// Gaia DR3 source ID, or negative Hipparcos ID for Hipparcos-only stars.
+    /// Gaia DR3 source ID. A Hipparcos record with a Gaia DR3 cross-match carries that
+    /// source ID; one without a cross-match carries its HIP number negated.
     pub source_id: i64,
     /// Right ascension at catalog epoch, in degrees.
     pub ra: f64,
@@ -70,18 +108,50 @@ pub struct StarRecord {
     pub pmdec: f64,
     /// Trigonometric parallax, in milliarcseconds.
     pub parallax: f64,
-    /// Apparent magnitude (G-band for Gaia, V-band for Hipparcos).
+    /// Apparent magnitude: Gaia G, or Hipparcos Hp for records with [`FLAG_SOURCE_HIPPARCOS`].
     pub mag: f32,
     /// Bitfield of quality and source flags. See `FLAG_*` constants.
     pub flags: u16,
     pub(crate) _padding: u16,
 }
 
+impl StarRecord {
+    // The byte layout is the in-memory repr(C) layout on a little-endian target, so these
+    // agree with the records Catalog::stars_in_pixel reads in place.
+    pub fn to_le_bytes(&self) -> [u8; STAR_RECORD_SIZE] {
+        concat_le(&[
+            &self.source_id.to_le_bytes(),
+            &self.ra.to_le_bytes(),
+            &self.dec.to_le_bytes(),
+            &self.pmra.to_le_bytes(),
+            &self.pmdec.to_le_bytes(),
+            &self.parallax.to_le_bytes(),
+            &self.mag.to_le_bytes(),
+            &self.flags.to_le_bytes(),
+            &self._padding.to_le_bytes(),
+        ])
+    }
+
+    pub fn from_le_bytes(bytes: &[u8; STAR_RECORD_SIZE]) -> Self {
+        Self {
+            source_id: i64::from_le_bytes(le_field(bytes, 0)),
+            ra: f64::from_le_bytes(le_field(bytes, 8)),
+            dec: f64::from_le_bytes(le_field(bytes, 16)),
+            pmra: f64::from_le_bytes(le_field(bytes, 24)),
+            pmdec: f64::from_le_bytes(le_field(bytes, 32)),
+            parallax: f64::from_le_bytes(le_field(bytes, 40)),
+            mag: f32::from_le_bytes(le_field(bytes, 48)),
+            flags: u16::from_le_bytes(le_field(bytes, 52)),
+            _padding: u16::from_le_bytes(le_field(bytes, 54)),
+        }
+    }
+}
+
 /// Star has measured proper motion (pmra and pmdec are valid).
 pub const FLAG_HAS_PROPER_MOTION: u16 = 1 << 0;
 /// Star has measured parallax.
 pub const FLAG_HAS_PARALLAX: u16 = 1 << 1;
-/// Gaia RUWE > 1.4 — astrometric solution may be unreliable.
+/// Gaia RUWE > 1.4: the astrometric solution may be unreliable.
 pub const FLAG_RUWE_SUSPECT: u16 = 1 << 2;
 /// No 5-parameter astrometric solution in Gaia.
 pub const FLAG_NO_5PARAM: u16 = 1 << 3;
@@ -89,18 +159,17 @@ pub const FLAG_NO_5PARAM: u16 = 1 << 3;
 pub const FLAG_BP_RP_EXCESS_SUSPECT: u16 = 1 << 4;
 /// Star originates from Hipparcos, not Gaia DR3.
 pub const FLAG_SOURCE_HIPPARCOS: u16 = 1 << 5;
+// Gaia DR3 astrometric_params_solved is 31 (5-parameter solution) or 95 (6-parameter
+// solution), so the record has a measured parallax and proper motion.
+pub const FLAG_5_OR_6_PARAM: u16 = 1 << 6;
+// Gaia DR3 duplicated_source is true: the source was duplicated during processing and this
+// is the identifier that was kept.
+pub const FLAG_DUPLICATED_SOURCE: u16 = 1 << 7;
 
-const _: () = assert!(std::mem::size_of::<StarRecord>() == 56);
-
-#[repr(C)]
-#[derive(Debug, Clone, Copy)]
-struct PixelEntry {
-    offset: u64,
-    count: u32,
-    _reserved: u32,
+// Writes one pixel table entry. The reserved bytes 12 to 15 are zero.
+pub fn pixel_entry_bytes(offset: u64, count: u32) -> [u8; PIXEL_ENTRY_SIZE] {
+    concat_le(&[&offset.to_le_bytes(), &count.to_le_bytes()])
 }
-
-const _: () = assert!(std::mem::size_of::<PixelEntry>() == 16);
 
 /// Memory-mapped handle to a HEALPix star catalog.
 ///
@@ -110,43 +179,34 @@ const _: () = assert!(std::mem::size_of::<PixelEntry>() == 16);
 pub struct Catalog {
     mmap: Mmap,
     header: CatalogHeader,
+    layout: Layout,
 }
 
 impl Catalog {
     /// Open and memory-map a catalog file.
     ///
-    /// Validates the header (magic bytes, version, HEALPix consistency) and
-    /// returns immediately. No star data is read until you call
-    /// [`Catalog::stars_in_pixel`] or run a cone search.
+    /// Validates the header (magic bytes, version, HEALPix consistency, epoch
+    /// and magnitude limit), the file length and every pixel table entry. No
+    /// star data is read until you call [`Catalog::stars_in_pixel`] or run a
+    /// cone search.
     ///
     /// # Errors
-    /// Returns an error if the file cannot be opened, is too small, has an
-    /// invalid header, or has inconsistent HEALPix parameters.
-    pub fn open(path: impl AsRef<Path>) -> Result<Self> {
+    /// Returns [`CatalogError::Io`] if the file cannot be opened or mapped,
+    /// [`CatalogError::InvalidHeader`] if the header is invalid or the file
+    /// length does not match it, and [`CatalogError::CorruptTable`] if a pixel
+    /// table entry does not point at its own run of contiguous records.
+    pub fn open(path: impl AsRef<Path>) -> CatalogResult<Self> {
         let path = path.as_ref();
-        let file =
-            File::open(path).with_context(|| format!("Failed to open catalog file: {:?}", path))?;
-
-        let mmap = unsafe { Mmap::map(&file) }
-            .with_context(|| format!("Failed to memory-map catalog file: {:?}", path))?;
-
-        if mmap.len() < HEADER_SIZE {
-            bail!("Catalog file too small: {} bytes", mmap.len());
-        }
-
-        let header = parse_header(&mmap)?;
-
-        let expected_offset_table_size = header.npix as usize * PIXEL_ENTRY_SIZE;
-        let min_size = HEADER_SIZE + expected_offset_table_size;
-        if mmap.len() < min_size {
-            bail!(
-                "Catalog file too small for offset table: {} bytes, expected at least {}",
-                mmap.len(),
-                min_size
-            );
-        }
-
-        Ok(Self { mmap, header })
+        let mmap = map_file(path)?;
+        let header = CatalogHeader::parse(&mmap)?;
+        let layout = Layout::new(&header, mmap.len())?;
+        let catalog = Self {
+            mmap,
+            header,
+            layout,
+        };
+        check_pixel_table(catalog.pixel_table(), catalog.header.total_stars)?;
+        Ok(catalog)
     }
 
     /// Returns the catalog header (order, nside, star count, epoch, etc.).
@@ -157,111 +217,72 @@ impl Catalog {
     /// Returns a zero-copy slice of all stars in the given HEALPix pixel.
     ///
     /// The returned slice borrows directly from the memory map. Returns an
-    /// empty slice if `pixel_index` is out of range, the pixel contains no
-    /// stars, or the underlying data is misaligned.
+    /// empty slice if `pixel_index` is not below `npix` or the pixel contains
+    /// no stars.
     pub fn stars_in_pixel(&self, pixel_index: u64) -> &[StarRecord] {
-        if pixel_index >= self.header.npix {
+        let entry = usize::try_from(pixel_index)
+            .ok()
+            .and_then(|pixel| self.pixel_table().get(pixel));
+        let Some(entry) = entry else {
             return &[];
-        }
-
-        let offset_table_start = HEADER_SIZE;
-        let entry_offset = offset_table_start + (pixel_index as usize * PIXEL_ENTRY_SIZE);
-
-        if entry_offset + PIXEL_ENTRY_SIZE > self.mmap.len() {
-            return &[];
-        }
-
-        let entry_bytes = &self.mmap[entry_offset..entry_offset + PIXEL_ENTRY_SIZE];
-        let offset = u64::from_le_bytes(entry_bytes[0..8].try_into().unwrap());
-        let count = u32::from_le_bytes(entry_bytes[8..12].try_into().unwrap());
-
-        if count == 0 {
-            return &[];
-        }
-
-        let star_data_start = HEADER_SIZE + (self.header.npix as usize * PIXEL_ENTRY_SIZE);
-        let star_offset = star_data_start + offset as usize;
-        let star_size = count as usize * std::mem::size_of::<StarRecord>();
-
-        if star_offset + star_size > self.mmap.len() {
-            return &[];
-        }
-
-        let star_bytes = &self.mmap[star_offset..star_offset + star_size];
-        let ptr = star_bytes.as_ptr();
-        if !(ptr as usize).is_multiple_of(std::mem::align_of::<StarRecord>()) {
-            return &[];
-        }
-
-        unsafe { std::slice::from_raw_parts(ptr as *const StarRecord, count as usize) }
+        };
+        // open checked that the entry's records lie inside the star data, so the offset fits
+        // in usize and both slices are in bounds.
+        let first = (entry.offset / STAR_RECORD_SIZE as u64) as usize;
+        &self.records()[first..][..entry.count as usize]
     }
 
     /// Returns the total size of the memory-mapped file in bytes.
     pub fn file_size(&self) -> usize {
         self.mmap.len()
     }
+
+    fn pixel_table(&self) -> &[PixelEntry] {
+        // SAFETY: Layout::new checked that the file holds the header and `pixels` entries, and
+        // map_file checked that the map starts 8-byte aligned, so the entries are in bounds and
+        // aligned.
+        // PixelEntry is repr(C) integers with no padding, so every bit pattern is a value.
+        unsafe {
+            let first = self.mmap.as_ptr().add(HEADER_SIZE).cast::<PixelEntry>();
+            std::slice::from_raw_parts(first, self.layout.pixels)
+        }
+    }
+
+    fn records(&self) -> &[StarRecord] {
+        // SAFETY: Layout::new checked that the file ends with `stars` records starting at
+        // `records_start`, a multiple of 8 bytes into a map that starts 8-byte aligned.
+        // StarRecord is repr(C) integers and floats with no implicit padding, so every bit
+        // pattern is a value.
+        unsafe {
+            let first = self.mmap.as_ptr().add(self.layout.records_start);
+            std::slice::from_raw_parts(first.cast::<StarRecord>(), self.layout.stars)
+        }
+    }
 }
 
-fn parse_header(mmap: &Mmap) -> Result<CatalogHeader> {
-    let header_bytes = &mmap[0..HEADER_SIZE];
-
-    let magic = &header_bytes[0..4];
-    if magic != CATALOG_MAGIC {
-        bail!(
-            "Invalid catalog magic: expected {:?}, got {:?}",
-            CATALOG_MAGIC,
-            magic
-        );
+fn map_file(path: &Path) -> CatalogResult<Mmap> {
+    let io_error = |action: &str, source| CatalogError::Io {
+        context: format!("Failed to {action} catalog file {path:?}"),
+        source,
+    };
+    let file = File::open(path).map_err(|e| io_error("open", e))?;
+    // SAFETY: the map is read-only. Another process that truncates or rewrites the file while
+    // it is mapped changes the bytes behind the slices this module hands out; catalog files
+    // are written once by forge and then only read.
+    let mmap = unsafe { Mmap::map(&file) }.map_err(|e| io_error("memory-map", e))?;
+    if mmap
+        .as_ptr()
+        .align_offset(std::mem::align_of::<StarRecord>())
+        != 0
+    {
+        let source = std::io::Error::other("the map does not start on an 8-byte boundary");
+        return Err(io_error("align", source));
     }
-
-    let version = u32::from_le_bytes(header_bytes[4..8].try_into().unwrap());
-    if version != CATALOG_VERSION {
-        bail!(
-            "Unsupported catalog version: expected {}, got {}",
-            CATALOG_VERSION,
-            version
-        );
-    }
-
-    let order = u32::from_le_bytes(header_bytes[8..12].try_into().unwrap());
-    let nside = u32::from_le_bytes(header_bytes[12..16].try_into().unwrap());
-    let npix = u64::from_le_bytes(header_bytes[16..24].try_into().unwrap());
-    let total_stars = u64::from_le_bytes(header_bytes[24..32].try_into().unwrap());
-    let epoch = f64::from_le_bytes(header_bytes[32..40].try_into().unwrap());
-    let mag_limit = f32::from_le_bytes(header_bytes[40..44].try_into().unwrap());
-
-    let expected_nside = 1u32 << order;
-    if nside != expected_nside {
-        bail!(
-            "Inconsistent nside: order {} implies nside {}, got {}",
-            order,
-            expected_nside,
-            nside
-        );
-    }
-
-    let expected_npix = 12u64 * (nside as u64) * (nside as u64);
-    if npix != expected_npix {
-        bail!(
-            "Inconsistent npix: nside {} implies npix {}, got {}",
-            nside,
-            expected_npix,
-            npix
-        );
-    }
-
-    Ok(CatalogHeader {
-        order,
-        nside,
-        npix,
-        total_stars,
-        epoch,
-        mag_limit,
-    })
+    Ok(mmap)
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use std::io::Write;
     use tempfile::NamedTempFile;
@@ -281,7 +302,7 @@ mod tests {
         assert_eq!(std::mem::align_of::<StarRecord>(), 8);
     }
 
-    fn make_star(source_id: i64, ra: f64, dec: f64, mag: f32, flags: u16) -> StarRecord {
+    pub(crate) fn make_star(source_id: i64, ra: f64, dec: f64, mag: f32, flags: u16) -> StarRecord {
         StarRecord {
             source_id,
             ra,
@@ -295,66 +316,48 @@ mod tests {
         }
     }
 
-    fn star_to_bytes(star: &StarRecord) -> &[u8] {
-        unsafe {
-            std::slice::from_raw_parts(
-                star as *const StarRecord as *const u8,
-                std::mem::size_of::<StarRecord>(),
-            )
+    pub(crate) fn header(
+        order: u32,
+        total_stars: u64,
+        epoch: f64,
+        mag_limit: f32,
+    ) -> CatalogHeader {
+        let nside = 1u64 << order;
+        CatalogHeader {
+            order,
+            nside: nside as u32,
+            npix: 12 * nside * nside,
+            total_stars,
+            epoch,
+            mag_limit,
         }
     }
 
-    fn build_test_catalog(
+    // Writes a catalog with every pixel's records in pixel order. A pixel listed twice keeps
+    // the stars of both lists.
+    pub(crate) fn build_test_catalog(
         order: u32,
         epoch: f64,
         mag_limit: f32,
         pixel_stars: &[(u64, Vec<StarRecord>)],
     ) -> NamedTempFile {
-        let nside = 1u32 << order;
-        let npix = 12u64 * (nside as u64) * (nside as u64);
         let total_stars: u64 = pixel_stars.iter().map(|(_, s)| s.len() as u64).sum();
-
-        let mut buf: Vec<u8> = Vec::new();
-
-        // Header (64 bytes)
-        buf.extend_from_slice(b"CCAT");
-        buf.extend_from_slice(&1u32.to_le_bytes());
-        buf.extend_from_slice(&order.to_le_bytes());
-        buf.extend_from_slice(&nside.to_le_bytes());
-        buf.extend_from_slice(&npix.to_le_bytes());
-        buf.extend_from_slice(&total_stars.to_le_bytes());
-        buf.extend_from_slice(&epoch.to_le_bytes());
-        buf.extend_from_slice(&mag_limit.to_le_bytes());
-        buf.extend_from_slice(&[0u8; 20]); // padding to 64 bytes
-
-        assert_eq!(buf.len(), HEADER_SIZE);
-
-        // Build sorted star data and compute offsets per pixel
-        let mut offsets: Vec<(u64, u32)> = vec![(0, 0); npix as usize];
-        let mut star_data: Vec<u8> = Vec::new();
-
-        for &(pixel_idx, ref stars) in pixel_stars {
-            let byte_offset = star_data.len() as u64;
-            offsets[pixel_idx as usize] = (byte_offset, stars.len() as u32);
-            for star in stars {
-                star_data.extend_from_slice(star_to_bytes(star));
-            }
+        let header = header(order, total_stars, epoch, mag_limit);
+        let mut pixels: Vec<Vec<StarRecord>> = vec![Vec::new(); header.npix as usize];
+        for (pixel, stars) in pixel_stars {
+            pixels[*pixel as usize].extend_from_slice(stars);
         }
 
-        // Pixel offset table (npix * 16 bytes)
-        for &(offset, count) in &offsets {
-            buf.extend_from_slice(&offset.to_le_bytes());
-            buf.extend_from_slice(&count.to_le_bytes());
-            buf.extend_from_slice(&0u32.to_le_bytes()); // reserved
+        let mut buf = header.to_bytes().to_vec();
+        let mut offset = 0u64;
+        for stars in &pixels {
+            buf.extend_from_slice(&pixel_entry_bytes(offset, stars.len() as u32));
+            offset += (stars.len() * STAR_RECORD_SIZE) as u64;
         }
-
-        // Star data section
-        buf.extend_from_slice(&star_data);
-
-        let mut file = NamedTempFile::new().unwrap();
-        file.write_all(&buf).unwrap();
-        file.flush().unwrap();
-        file
+        for star in pixels.iter().flatten() {
+            buf.extend_from_slice(&star.to_le_bytes());
+        }
+        write_file(&buf)
     }
 
     #[test]
@@ -385,16 +388,9 @@ mod tests {
 
     #[test]
     fn test_open_bad_magic() {
-        let mut buf = vec![0u8; HEADER_SIZE + 48 * PIXEL_ENTRY_SIZE];
+        let mut buf = header_only_bytes(CATALOG_VERSION, 1, 2, 48);
         buf[0..4].copy_from_slice(b"XXXX");
-        buf[4..8].copy_from_slice(&1u32.to_le_bytes());
-        buf[8..12].copy_from_slice(&1u32.to_le_bytes()); // order=1
-        buf[12..16].copy_from_slice(&2u32.to_le_bytes()); // nside=2
-        buf[16..24].copy_from_slice(&48u64.to_le_bytes()); // npix=48
-
-        let mut file = NamedTempFile::new().unwrap();
-        file.write_all(&buf).unwrap();
-        file.flush().unwrap();
+        let file = write_file(&buf);
 
         let result = Catalog::open(file.path());
         let msg = result.err().expect("expected error").to_string();
@@ -407,16 +403,7 @@ mod tests {
 
     #[test]
     fn test_open_bad_version() {
-        let mut buf = vec![0u8; HEADER_SIZE + 48 * PIXEL_ENTRY_SIZE];
-        buf[0..4].copy_from_slice(b"CCAT");
-        buf[4..8].copy_from_slice(&99u32.to_le_bytes()); // bad version
-        buf[8..12].copy_from_slice(&1u32.to_le_bytes());
-        buf[12..16].copy_from_slice(&2u32.to_le_bytes());
-        buf[16..24].copy_from_slice(&48u64.to_le_bytes());
-
-        let mut file = NamedTempFile::new().unwrap();
-        file.write_all(&buf).unwrap();
-        file.flush().unwrap();
+        let file = header_only_file(99, 1, 2, 48);
 
         let result = Catalog::open(file.path());
         let msg = result.err().expect("expected error").to_string();
@@ -429,16 +416,7 @@ mod tests {
 
     #[test]
     fn test_open_inconsistent_nside() {
-        let mut buf = vec![0u8; HEADER_SIZE + 48 * PIXEL_ENTRY_SIZE];
-        buf[0..4].copy_from_slice(b"CCAT");
-        buf[4..8].copy_from_slice(&1u32.to_le_bytes());
-        buf[8..12].copy_from_slice(&1u32.to_le_bytes()); // order=1
-        buf[12..16].copy_from_slice(&7u32.to_le_bytes()); // nside=7 (should be 2)
-        buf[16..24].copy_from_slice(&48u64.to_le_bytes());
-
-        let mut file = NamedTempFile::new().unwrap();
-        file.write_all(&buf).unwrap();
-        file.flush().unwrap();
+        let file = header_only_file(CATALOG_VERSION, 1, 7, 48); // nside 7, should be 2
 
         let result = Catalog::open(file.path());
         let msg = result.err().expect("expected error").to_string();
@@ -451,16 +429,7 @@ mod tests {
 
     #[test]
     fn test_open_inconsistent_npix() {
-        let mut buf = vec![0u8; HEADER_SIZE + 48 * PIXEL_ENTRY_SIZE];
-        buf[0..4].copy_from_slice(b"CCAT");
-        buf[4..8].copy_from_slice(&1u32.to_le_bytes());
-        buf[8..12].copy_from_slice(&1u32.to_le_bytes()); // order=1
-        buf[12..16].copy_from_slice(&2u32.to_le_bytes()); // nside=2 (correct)
-        buf[16..24].copy_from_slice(&999u64.to_le_bytes()); // npix=999 (should be 48)
-
-        let mut file = NamedTempFile::new().unwrap();
-        file.write_all(&buf).unwrap();
-        file.flush().unwrap();
+        let file = header_only_file(CATALOG_VERSION, 1, 2, 999); // npix 999, should be 48
 
         let result = Catalog::open(file.path());
         let msg = result.err().expect("expected error").to_string();
@@ -469,6 +438,97 @@ mod tests {
             "unexpected error: {}",
             msg
         );
+    }
+
+    // A header followed by a 48-entry table of zeros, with any version, order, nside and npix.
+    fn header_only_bytes(version: u32, order: u32, nside: u32, npix: u64) -> Vec<u8> {
+        let header = CatalogHeader {
+            order,
+            nside,
+            npix,
+            ..header(0, 0, 2016.0, 21.0)
+        };
+        let mut buf = header.to_bytes().to_vec();
+        buf[4..8].copy_from_slice(&version.to_le_bytes());
+        buf.resize(HEADER_SIZE + 48 * PIXEL_ENTRY_SIZE, 0);
+        buf
+    }
+
+    fn header_only_file(version: u32, order: u32, nside: u32, npix: u64) -> NamedTempFile {
+        write_file(&header_only_bytes(version, order, nside, npix))
+    }
+
+    #[test]
+    fn test_open_version_1_asks_for_rebuild() {
+        let file = header_only_file(1, 1, 2, 48);
+        let msg = Catalog::open(file.path())
+            .err()
+            .expect("expected error")
+            .to_string();
+        assert!(
+            msg.contains("old pixel numbering"),
+            "unexpected error: {msg}"
+        );
+        assert!(msg.contains("forge build-index"), "unexpected error: {msg}");
+    }
+
+    #[test]
+    fn test_open_rejects_order_above_29() {
+        let cases = [
+            (30, 1u32 << 30, 12u64 << 60),
+            (31, 1u32 << 31, 12u64 << 62),
+            (32, 1, 12),
+        ];
+        for (order, nside, npix) in cases {
+            let file = header_only_file(CATALOG_VERSION, order, nside, npix);
+            let msg = Catalog::open(file.path())
+                .err()
+                .expect("expected error")
+                .to_string();
+            assert!(
+                msg.contains(&format!("HEALPix order {order} is above the maximum of 29")),
+                "unexpected error: {msg}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_open_rejects_epoch_outside_model_range() {
+        for epoch in [
+            f64::NAN,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+            -0.5,
+            4000.5,
+            1e300,
+        ] {
+            let file = build_test_catalog(1, epoch, 21.0, &[]);
+            let msg = Catalog::open(file.path())
+                .err()
+                .expect("expected error")
+                .to_string();
+            assert!(msg.contains("Catalog epoch"), "epoch {epoch}: {msg}");
+        }
+        for epoch in [0.0, 1991.25, 4000.0] {
+            let file = build_test_catalog(1, epoch, 21.0, &[]);
+            assert_eq!(Catalog::open(file.path()).unwrap().header().epoch, epoch);
+        }
+    }
+
+    #[test]
+    fn test_epoch_error_prints_large_epochs_in_exponent_form() {
+        let file = build_test_catalog(1, 1e300, 21.0, &[]);
+        let msg = Catalog::open(file.path())
+            .err()
+            .expect("expected error")
+            .to_string();
+        assert!(msg.contains("Catalog epoch J1e300 is not within"), "{msg}");
+        let file = build_test_catalog(1, 5000.0, 21.0, &[]);
+        let msg = Catalog::open(file.path())
+            .err()
+            .expect("expected error")
+            .to_string();
+        assert!(msg.contains("Catalog epoch J5000 is not within"), "{msg}");
     }
 
     #[test]
@@ -558,6 +618,243 @@ mod tests {
         assert_eq!(
             s.flags,
             FLAG_HAS_PROPER_MOTION | FLAG_HAS_PARALLAX | FLAG_SOURCE_HIPPARCOS
+        );
+    }
+
+    fn hostile_header(order: u32, total_stars: u64, mag_limit: f32) -> Vec<u8> {
+        header(order, total_stars, 2016.0, mag_limit)
+            .to_bytes()
+            .to_vec()
+    }
+
+    // An order 0 file: header, 12 pixel entries given as (offset, count), then `records`
+    // zeroed star records.
+    fn hostile_file(total_stars: u64, entries: &[(u64, u32)], records: usize) -> NamedTempFile {
+        let mut buf = hostile_header(0, total_stars, 21.0);
+        for &(offset, count) in entries {
+            buf.extend_from_slice(&pixel_entry_bytes(offset, count));
+        }
+        buf.resize(buf.len() + records * STAR_RECORD_SIZE, 0);
+        write_file(&buf)
+    }
+
+    pub(crate) fn write_file(bytes: &[u8]) -> NamedTempFile {
+        let mut file = NamedTempFile::new().unwrap();
+        file.write_all(bytes).unwrap();
+        file.flush().unwrap();
+        file
+    }
+
+    fn open_error(file: &NamedTempFile) -> CatalogError {
+        match Catalog::open(file.path()) {
+            Ok(_) => panic!("hostile catalog opened"),
+            Err(e) => e,
+        }
+    }
+
+    fn assert_header_error(err: CatalogError, text: &str) {
+        let msg = err.to_string();
+        assert!(matches!(err, CatalogError::InvalidHeader { .. }), "{msg}");
+        assert!(msg.contains(text), "{msg}");
+    }
+
+    fn assert_table_error(err: CatalogError, text: &str) {
+        let msg = err.to_string();
+        assert!(matches!(err, CatalogError::CorruptTable { .. }), "{msg}");
+        assert!(msg.contains(text), "{msg}");
+    }
+
+    // Every entry after the last non-empty one points at the end of the records.
+    fn tail(entries: &[(u64, u32)], end: u64) -> Vec<(u64, u32)> {
+        let mut all = entries.to_vec();
+        all.resize(12, (end, 0));
+        all
+    }
+
+    #[test]
+    fn test_open_rejects_order_29_header_without_table() {
+        let file = write_file(&hostile_header(29, 0, 21.0));
+        assert_header_error(open_error(&file), "file length");
+    }
+
+    #[test]
+    fn test_order_29_header_fails_at_open_before_cone_search() {
+        use crate::query::cone::{cone_search, ConeSearchParams};
+        use std::sync::mpsc;
+        use std::time::Duration;
+
+        let file = write_file(&hostile_header(29, 0, 21.0));
+        let path = file.path().to_path_buf();
+        let (sender, receiver) = mpsc::channel();
+        std::thread::spawn(move || {
+            let params = ConeSearchParams {
+                ra_deg: 10.0,
+                dec_deg: 10.0,
+                radius_deg: 1.0,
+                max_mag: None,
+                max_results: None,
+                epoch: None,
+            };
+            let outcome =
+                Catalog::open(&path).map(|catalog| cone_search(&catalog, &params).is_ok());
+            sender.send(outcome.is_err()).unwrap();
+        });
+        let open_failed = receiver
+            .recv_timeout(Duration::from_secs(10))
+            .expect("open and cone_search finished within 10 s without a panic");
+        assert!(open_failed, "the order 29 header opened");
+    }
+
+    #[test]
+    fn test_open_rejects_pixel_offset_near_usize_max() {
+        let start = (HEADER_SIZE + 12 * PIXEL_ENTRY_SIZE) as u64;
+        let offset = u64::MAX - start - 7;
+        let file = hostile_file(1, &tail(&[(offset, 1)], 56), 1);
+        assert_table_error(open_error(&file), "pixel 0");
+    }
+
+    #[test]
+    fn test_open_rejects_count_of_u32_max() {
+        let file = hostile_file(1, &tail(&[(0, u32::MAX)], 56), 1);
+        assert_table_error(open_error(&file), "pixel 0: 4294967295 records");
+    }
+
+    #[test]
+    fn test_open_rejects_offset_not_a_multiple_of_56() {
+        let file = hostile_file(2, &tail(&[(0, 1), (52, 1)], 112), 2);
+        assert_table_error(
+            open_error(&file),
+            "pixel 1: offset 52 is not a multiple of 56",
+        );
+    }
+
+    #[test]
+    fn test_open_rejects_entries_out_of_pixel_order() {
+        let file = hostile_file(3, &tail(&[(56, 1), (112, 1), (0, 1)], 168), 3);
+        assert_table_error(open_error(&file), "pixel 0: offset 56 should be 0");
+    }
+
+    #[test]
+    fn test_open_rejects_overlapping_entries() {
+        let file = hostile_file(3, &tail(&[(0, 2), (0, 1)], 168), 3);
+        assert_table_error(open_error(&file), "pixel 1: offset 0 should be 112");
+    }
+
+    #[test]
+    fn test_open_rejects_counts_that_do_not_sum_to_total_stars() {
+        let file = hostile_file(2, &tail(&[(0, 1)], 56), 2);
+        assert_table_error(open_error(&file), "sum to 1");
+    }
+
+    #[test]
+    fn test_open_rejects_trailing_bytes() {
+        let mut buf = hostile_header(0, 0, 21.0);
+        buf.resize(HEADER_SIZE + 12 * PIXEL_ENTRY_SIZE + 8, 0);
+        assert_header_error(open_error(&write_file(&buf)), "file length 264 bytes");
+    }
+
+    #[test]
+    fn test_open_rejects_total_stars_that_overflow_the_file_size() {
+        let mut buf = hostile_header(0, u64::MAX, 21.0);
+        buf.resize(HEADER_SIZE + 12 * PIXEL_ENTRY_SIZE, 0);
+        assert_header_error(open_error(&write_file(&buf)), "total_stars");
+    }
+
+    #[test]
+    fn test_open_rejects_non_finite_mag_limit() {
+        for mag_limit in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+            let mut buf = hostile_header(0, 0, mag_limit);
+            buf.resize(HEADER_SIZE + 12 * PIXEL_ENTRY_SIZE, 0);
+            assert_header_error(open_error(&write_file(&buf)), "mag_limit");
+        }
+    }
+
+    #[test]
+    fn test_open_empty_file_is_too_small() {
+        let msg = open_error(&write_file(&[])).to_string();
+        assert!(msg.contains("too small: 0 bytes"), "{msg}");
+    }
+
+    // The OS message is the error's source, which error reporters print on their own line.
+    #[test]
+    fn test_io_error_message_leaves_the_os_message_to_source() {
+        use std::error::Error;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("absent.bin");
+        let err = Catalog::open(&path).err().unwrap();
+        assert_eq!(
+            err.to_string(),
+            format!("Failed to open catalog file {path:?}")
+        );
+        let source = err.source().expect("the I/O error is the source");
+        let io = source.downcast_ref::<std::io::Error>().unwrap();
+        assert_eq!(io.kind(), std::io::ErrorKind::NotFound);
+    }
+
+    #[test]
+    fn test_open_missing_file_is_io_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let err = Catalog::open(dir.path().join("absent.bin")).err().unwrap();
+        assert!(matches!(err, CatalogError::Io { .. }), "{err}");
+        assert!(err.to_string().contains("absent.bin"), "{err}");
+    }
+
+    fn sample_star() -> StarRecord {
+        StarRecord {
+            source_id: -9_999_999,
+            ra: 359.99999999,
+            dec: -89.99999999,
+            pmra: 1234.5678,
+            pmdec: -8765.4321,
+            parallax: 0.001,
+            mag: 21.49,
+            flags: FLAG_HAS_PROPER_MOTION | FLAG_SOURCE_HIPPARCOS,
+            _padding: 0,
+        }
+    }
+
+    #[test]
+    fn test_star_record_le_bytes_layout() {
+        let bytes = sample_star().to_le_bytes();
+        assert_eq!(bytes[0..8], (-9_999_999i64).to_le_bytes());
+        assert_eq!(bytes[8..16], 359.99999999f64.to_le_bytes());
+        assert_eq!(bytes[40..48], 0.001f64.to_le_bytes());
+        assert_eq!(bytes[48..52], 21.49f32.to_le_bytes());
+        assert_eq!(bytes[52..54], 33u16.to_le_bytes());
+        assert_eq!(bytes[54..56], [0, 0]);
+        assert_eq!(StarRecord::from_le_bytes(&bytes).to_le_bytes(), bytes);
+    }
+
+    // stars_in_pixel reads records in place, so the file layout must be the memory layout.
+    #[test]
+    fn test_star_record_le_bytes_match_memory_layout() {
+        let star = sample_star();
+        let memory = unsafe {
+            std::slice::from_raw_parts((&star as *const StarRecord).cast::<u8>(), STAR_RECORD_SIZE)
+        };
+        assert_eq!(star.to_le_bytes().as_slice(), memory);
+    }
+
+    #[test]
+    fn test_catalog_header_bytes_round_trip() {
+        let original = header(3, 17, 2016.0, 20.5);
+        let bytes = original.to_bytes();
+        assert_eq!(&bytes[0..8], b"CCAT\x02\0\0\0");
+        assert_eq!(bytes[44..], [0u8; 20]);
+        let parsed = CatalogHeader::parse(&bytes).unwrap();
+        assert_eq!(
+            (parsed.order, parsed.nside, parsed.npix, parsed.total_stars),
+            (3, 8, 768, 17)
+        );
+        assert_eq!((parsed.epoch, parsed.mag_limit), (2016.0, 20.5));
+    }
+
+    #[test]
+    fn test_pixel_entry_bytes_layout() {
+        let bytes = pixel_entry_bytes(0x0102_0304_0506_0708, 0x0a0b_0c0d);
+        assert_eq!(
+            bytes,
+            [8, 7, 6, 5, 4, 3, 2, 1, 0x0d, 0x0c, 0x0b, 0x0a, 0, 0, 0, 0]
         );
     }
 

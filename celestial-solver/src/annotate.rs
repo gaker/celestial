@@ -35,7 +35,7 @@ pub const COLOR_RESIDUAL: [u8; 3] = [255, 0, 255];
 /// use celestial_solver::annotate::Annotation;
 ///
 /// # let img = celestial_images::formats::image::Image::open("f.fits")?;
-/// # let catalog = celestial_catalog::query::Catalog::open("cat.bin")?;
+/// # let catalog = celestial_catalog::query::catalog::Catalog::open("cat.bin")?;
 /// let result = celestial_solver::solve(&img, &catalog).run()?;
 ///
 /// let mut ann = Annotation::from_image(&img).unwrap();
@@ -120,7 +120,7 @@ impl Annotation {
     ///
     /// ```rust,ignore
     /// # let img = celestial_images::formats::image::Image::open("f.fits")?;
-    /// # let catalog = celestial_catalog::query::Catalog::open("cat.bin")?;
+    /// # let catalog = celestial_catalog::query::catalog::Catalog::open("cat.bin")?;
     /// let result = celestial_solver::solve(&img, &catalog).run()?;
     /// let mut ann = celestial_solver::annotate::Annotation::from_image(&img).unwrap();
     /// ann.draw_detections(&result.stars, &result.pairs, 8);
@@ -163,7 +163,7 @@ impl Annotation {
     ///
     /// ```rust,ignore
     /// # let img = celestial_images::formats::image::Image::open("f.fits")?;
-    /// # let catalog = celestial_catalog::query::Catalog::open("cat.bin")?;
+    /// # let catalog = celestial_catalog::query::catalog::Catalog::open("cat.bin")?;
     /// let result = celestial_solver::solve(&img, &catalog).run()?;
     /// let mut ann = celestial_solver::annotate::Annotation::from_image(&img).unwrap();
     /// ann.draw_solve_overlay(&result.wcs, 20.0);

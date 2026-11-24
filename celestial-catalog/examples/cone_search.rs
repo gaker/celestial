@@ -1,9 +1,10 @@
-use celestial_catalog::query::{cone_search, Catalog, ConeSearchParams};
+use celestial_catalog::query::catalog::Catalog;
+use celestial_catalog::query::cone::{cone_search, ConeSearchParams, ConeSearchResult};
 
-fn main() -> anyhow::Result<()> {
-    let path = std::env::args()
-        .nth(1)
-        .expect("Usage: cone_search <catalog.bin>");
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let Some(path) = std::env::args().nth(1) else {
+        return Err("Usage: cone_search <catalog.bin>".into());
+    };
 
     let catalog = Catalog::open(&path)?;
     println!("{}", catalog.header());
@@ -18,6 +19,11 @@ fn main() -> anyhow::Result<()> {
     };
 
     let results = cone_search(&catalog, &params)?;
+    print_results(&params, &results);
+    Ok(())
+}
+
+fn print_results(params: &ConeSearchParams, results: &[ConeSearchResult]) {
     println!(
         "\n{} stars within {:.1}° of ({:.3}, {:.3}):\n",
         results.len(),
@@ -26,12 +32,10 @@ fn main() -> anyhow::Result<()> {
         params.dec_deg,
     );
 
-    for r in &results {
+    for r in results {
         println!(
             "  {:>20}  RA {:.6}°  Dec {:+.6}°  mag {:.2}  dist {:.4}°",
             r.star.source_id, r.ra_deg, r.dec_deg, r.star.mag, r.distance_deg,
         );
     }
-
-    Ok(())
 }

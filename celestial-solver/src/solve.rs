@@ -4,7 +4,7 @@
 //! full pipeline via [`Solver::run`].
 
 use anyhow::{ensure, Result};
-use celestial_catalog::query::Catalog;
+use celestial_catalog::query::catalog::Catalog;
 use celestial_coords::frames::icrs::ICRSPosition;
 use celestial_core::{angle::Angle, math::angular_separation};
 use celestial_time::julian::JulianDate;
@@ -98,7 +98,7 @@ impl Default for SolveParams {
 ///
 /// ```rust,ignore
 /// # let img = celestial_images::formats::image::Image::open("m31.fits")?;
-/// # let catalog = celestial_catalog::query::Catalog::open("cat.bin")?;
+/// # let catalog = celestial_catalog::query::catalog::Catalog::open("cat.bin")?;
 /// let result = celestial_solver::solve(&img, &catalog).run()?;
 ///
 /// println!("detected {} stars", result.stars.len());
@@ -142,7 +142,7 @@ pub struct SolveResult {
 ///
 /// ```rust,ignore
 /// use celestial_images::formats::image::Image;
-/// use celestial_catalog::query::Catalog;
+/// use celestial_catalog::query::catalog::Catalog;
 ///
 /// let img = Image::open("m31.fits")?;
 /// let catalog = Catalog::open("celestial-37M.bin")?;
@@ -189,7 +189,7 @@ impl<'a> Solver<'a> {
     /// use celestial_coords::frames::icrs::ICRSPosition;
     ///
     /// # let img = celestial_images::formats::image::Image::open("f.fits")?;
-    /// # let catalog = celestial_catalog::query::Catalog::open("cat.bin")?;
+    /// # let catalog = celestial_catalog::query::catalog::Catalog::open("cat.bin")?;
     /// let result = celestial_solver::solve(&img, &catalog)
     ///     .hint(ICRSPosition::from_degrees(83.633, 22.014)?)
     ///     .run()?;
@@ -211,7 +211,7 @@ impl<'a> Solver<'a> {
     /// use celestial_time::scales::utc::utc_from_calendar;
     ///
     /// # let img = celestial_images::formats::image::Image::open("f.fits")?;
-    /// # let catalog = celestial_catalog::query::Catalog::open("cat.bin")?;
+    /// # let catalog = celestial_catalog::query::catalog::Catalog::open("cat.bin")?;
     /// let jd = utc_from_calendar(2026, 4, 21, 20, 0, 0.0)?.to_julian_date();
     /// let result = celestial_solver::solve(&img, &catalog).epoch(jd).run()?;
     /// # Ok::<(), Box<dyn std::error::Error>>(())
@@ -231,7 +231,7 @@ impl<'a> Solver<'a> {
     ///
     /// ```rust,ignore
     /// # let img = celestial_images::formats::image::Image::open("f.fits")?;
-    /// # let catalog = celestial_catalog::query::Catalog::open("cat.bin")?;
+    /// # let catalog = celestial_catalog::query::catalog::Catalog::open("cat.bin")?;
     /// let result = celestial_solver::solve(&img, &catalog)
     ///     .focal_length_mm(500)    // integer literal auto-converts to f64
     ///     .run()?;
@@ -252,7 +252,7 @@ impl<'a> Solver<'a> {
     ///
     /// ```rust,ignore
     /// # let img = celestial_images::formats::image::Image::open("f.fits")?;
-    /// # let catalog = celestial_catalog::query::Catalog::open("cat.bin")?;
+    /// # let catalog = celestial_catalog::query::catalog::Catalog::open("cat.bin")?;
     /// let result = celestial_solver::solve(&img, &catalog)
     ///     .pixel_size_um(3.76)
     ///     .run()?;
@@ -273,7 +273,7 @@ impl<'a> Solver<'a> {
     ///
     /// ```rust,ignore
     /// # let img = celestial_images::formats::image::Image::open("f.fits")?;
-    /// # let catalog = celestial_catalog::query::Catalog::open("cat.bin")?;
+    /// # let catalog = celestial_catalog::query::catalog::Catalog::open("cat.bin")?;
     /// let result = celestial_solver::solve(&img, &catalog)
     ///     .plate_scale_arcsec(1.55)
     ///     .run()?;
@@ -298,7 +298,7 @@ impl<'a> Solver<'a> {
     /// use celestial_time::scales::utc::utc_from_calendar;
     ///
     /// # let img = celestial_images::formats::image::Image::open("frame.png")?;
-    /// # let catalog = celestial_catalog::query::Catalog::open("cat.bin")?;
+    /// # let catalog = celestial_catalog::query::catalog::Catalog::open("cat.bin")?;
     /// let meta = ImageMetadata {
     ///     hint: ICRSPosition::from_degrees(83.633, 22.014)?,
     ///     scale_arcsec: 1.5,
@@ -326,7 +326,7 @@ impl<'a> Solver<'a> {
     /// use celestial_solver::SolveParams;
     ///
     /// # let img = celestial_images::formats::image::Image::open("f.fits")?;
-    /// # let catalog = celestial_catalog::query::Catalog::open("cat.bin")?;
+    /// # let catalog = celestial_catalog::query::catalog::Catalog::open("cat.bin")?;
     /// let params = SolveParams { sip_order: None, ..SolveParams::default() };
     /// let result = celestial_solver::solve(&img, &catalog).params(params).run()?;
     /// # Ok::<(), Box<dyn std::error::Error>>(())
@@ -350,7 +350,7 @@ impl<'a> Solver<'a> {
     ///
     /// ```rust,ignore
     /// # let img = celestial_images::formats::image::Image::open("f.fits")?;
-    /// # let catalog = celestial_catalog::query::Catalog::open("cat.bin")?;
+    /// # let catalog = celestial_catalog::query::catalog::Catalog::open("cat.bin")?;
     /// let result = celestial_solver::solve(&img, &catalog).run()?;
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
@@ -823,7 +823,7 @@ mod tests {
         // it can actually fit. crpix is at (512, 512); scale = arcsec/px;
         // each grid offset in pixels maps to (xi, eta) in degrees, then we
         // tan-deproject to (ra, dec) at the given center.
-        use celestial_catalog::query::tan_deproject_star;
+        use celestial_catalog::query::quad::tan_deproject_star;
         use celestial_core::constants::DEG_TO_RAD;
         let crpix = 512.0;
         let s_deg = scale_arcsec / 3600.0;

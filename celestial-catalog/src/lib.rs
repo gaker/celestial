@@ -2,21 +2,22 @@
 //!
 //! Provides memory-mapped access to a binary catalog of ~37 million stars
 //! (Gaia DR3 + Hipparcos) organized as a HEALPix spatial index. The catalog
-//! file is memory-mapped on open — no parsing, no loading into RAM. Star
+//! file is memory-mapped on open, with no parsing and no loading into RAM. Star
 //! records are read as zero-copy `repr(C)` slices directly from the map.
 //!
 //! # Modules
 //!
 //! | Module | Purpose |
 //! |--------|---------|
-//! | [`query::catalog`] | [`Catalog`](query::Catalog) reader, [`StarRecord`](query::StarRecord), [`CatalogHeader`](query::CatalogHeader), flag constants |
-//! | [`query::cone`] | [`cone_search`](query::cone_search), [`ConeSearchParams`](query::ConeSearchParams), proper-motion propagation |
-//! | [`query::healpix`] | Pixel indexing ([`ang2pix_nest`](query::ang2pix_nest)), disc queries, angular separation |
+//! | [`query::catalog`] | [`Catalog`](query::catalog::Catalog) reader, [`StarRecord`](query::catalog::StarRecord), [`CatalogHeader`](query::catalog::CatalogHeader), flag constants |
+//! | [`query::cone`] | [`cone_search`](query::cone::cone_search), [`ConeSearchParams`](query::cone::ConeSearchParams), proper-motion propagation |
+//! | [`query::healpix`] | Pixel indexing ([`ang2pix_nest`](query::healpix::ang2pix_nest)) |
 //!
 //! # Quick Start
 //!
 //! ```ignore
-//! use celestial_catalog::query::{Catalog, cone_search, ConeSearchParams};
+//! use celestial_catalog::query::catalog::Catalog;
+//! use celestial_catalog::query::cone::{cone_search, ConeSearchParams};
 //!
 //! let catalog = Catalog::open("catalog.bin")?;
 //!
@@ -39,9 +40,10 @@
 //!
 //! # Features
 //!
-//! - **`cli`** — Enables the `forge` and `query-catalog` binaries for building
+//! - **`cli`**: Enables the `forge` and `query-catalog` binaries for building
 //!   and querying catalogs from the command line.
 
+pub mod error;
 pub mod query;
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

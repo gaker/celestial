@@ -1,74 +1,78 @@
 //! Gaia DR3 catalog ingestion
 
 use crate::cli::{Cli, IngestGaiaArgs};
-use crate::gaia::{GaiaParser, GaiaStarRaw};
+use crate::gaia::{GaiaParser, RowCounts};
+use crate::gaia_parts::{concatenate, part_exists, part_path, write_part};
 use anyhow::Context;
 use flate2::read::GzDecoder;
 use indicatif::{ProgressBar, ProgressStyle};
 use rayon::prelude::*;
 use std::fs::{self, File};
-use std::io::{BufReader, BufWriter, Read, Seek, SeekFrom, Write};
+use std::io::{BufReader, Write};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Mutex;
 
-const RECORD_SIZE: usize = 56;
-const PART_HEADER_SIZE: usize = 8;
-const FINAL_MAGIC: &[u8; 4] = b"GAIA";
-const FINAL_VERSION: u32 = 1;
+const FAILED_LOG: &str = "failed_files.log";
 
-#[repr(C)]
-struct StarRecord {
-    source_id: i64,
-    ra: f64,
-    dec: f64,
-    pmra: f64,
-    pmdec: f64,
-    parallax: f64,
-    mag: f32,
-    flags: u16,
-    _padding: u16,
-}
-
-struct FileStats {
-    kept: u64,
-    scanned: u64,
-}
-
-pub fn run(args: &IngestGaiaArgs, cli: &Cli) -> anyhow::Result<()> {
+pub(crate) fn run(args: &IngestGaiaArgs, cli: &Cli) -> anyhow::Result<()> {
     validate_args(args)?;
     let files = find_gzipped_csvs(&args.path)?;
     if files.is_empty() {
         anyhow::bail!("No .csv.gz files found in {:?}", args.path);
     }
     print_plan(args, files.len());
-    configure_thread_pool(args.threads)?;
-    let files_to_process = filter_already_processed(&files, &args.output)?;
+    let pending: Vec<PathBuf> = files
+        .iter()
+        .filter(|f| !part_exists(f, &args.output))
+        .cloned()
+        .collect();
     println!(
         "Files to process: {} (skipping {} already done)",
-        files_to_process.len(),
-        files.len() - files_to_process.len()
+        pending.len(),
+        files.len() - pending.len()
     );
-    if !files_to_process.is_empty() {
-        process_files(&files_to_process, args, cli)?;
+    let failed = process_files(&pending, args, cli)?;
+    finish(args, failed)
+}
+
+// Concatenates the part files unless --no-concat was given. A failed file has no part file,
+// so concatenating after a failure would build an incomplete catalog.
+fn finish(args: &IngestGaiaArgs, failed: usize) -> anyhow::Result<()> {
+    let log_path = args.output.join(FAILED_LOG);
+    if failed == 0 {
+        remove_stale_log(&log_path)?;
     }
     if args.no_concat {
         println!("Skipping concatenation (--no-concat)");
         return Ok(());
     }
-    concatenate_part_files(&args.output, args.mag_limit)
+    if failed > 0 {
+        anyhow::bail!(
+            "{failed} input files failed, listed in {log_path:?}; gaia_ingest.bin was not \
+             built. To build it, fix or remove those files and rerun; files that already have \
+             a part file are skipped"
+        );
+    }
+    concatenate(&args.output, args.mag_limit)
+}
+
+// A failed_files.log left by an earlier run lists files that have since succeeded.
+fn remove_stale_log(path: &Path) -> anyhow::Result<()> {
+    match fs::remove_file(path) {
+        Ok(()) => println!("Removed {path:?} from an earlier run"),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => return Err(e).with_context(|| format!("Failed to remove {path:?}")),
+    }
+    Ok(())
 }
 
 fn validate_args(args: &IngestGaiaArgs) -> anyhow::Result<()> {
-    if !args.path.exists() {
-        anyhow::bail!("Gaia directory does not exist: {:?}", args.path);
-    }
     if !args.path.is_dir() {
         anyhow::bail!("Gaia path is not a directory: {:?}", args.path);
     }
-    if !args.output.exists() {
-        fs::create_dir_all(&args.output)?;
+    if !args.mag_limit.is_finite() {
+        anyhow::bail!("Magnitude limit {} is not finite", args.mag_limit);
     }
+    fs::create_dir_all(&args.output)?;
     Ok(())
 }
 
@@ -92,35 +96,6 @@ fn is_gzipped_csv(path: &Path) -> bool {
             .is_some_and(|s| s.ends_with(".csv"))
 }
 
-fn filter_already_processed(files: &[PathBuf], output_dir: &Path) -> anyhow::Result<Vec<PathBuf>> {
-    Ok(files
-        .iter()
-        .filter(|f| !part_file_exists(f, output_dir))
-        .cloned()
-        .collect())
-}
-
-fn part_file_exists(input: &Path, output_dir: &Path) -> bool {
-    let Some(part_path) = compute_part_path(input, output_dir) else {
-        return false;
-    };
-    part_path.exists()
-        && fs::metadata(&part_path)
-            .map(|m| m.len() > 0)
-            .unwrap_or(false)
-}
-
-fn extract_numeric_portion(filename: &str) -> Option<&str> {
-    let stem = filename.strip_suffix(".csv.gz")?;
-    stem.strip_prefix("GaiaSource_")
-}
-
-fn compute_part_path(input: &Path, output_dir: &Path) -> Option<PathBuf> {
-    let filename = input.file_name()?.to_str()?;
-    let numeric = extract_numeric_portion(filename)?;
-    Some(output_dir.join(format!("gaia_part_{}.bin", numeric)))
-}
-
 fn print_plan(args: &IngestGaiaArgs, file_count: usize) {
     println!("=== Gaia DR3 Ingestion ===");
     println!("Input directory: {:?}", args.path);
@@ -133,294 +108,204 @@ fn print_plan(args: &IngestGaiaArgs, file_count: usize) {
 
 fn resolve_threads(threads: usize) -> usize {
     if threads == 0 {
-        std::thread::available_parallelism()
-            .map(|n| n.get())
-            .unwrap_or(1)
+        std::thread::available_parallelism().map_or(1, |n| n.get())
     } else {
         threads
     }
 }
 
-fn configure_thread_pool(threads: usize) -> anyhow::Result<()> {
-    rayon::ThreadPoolBuilder::new()
-        .num_threads(resolve_threads(threads))
-        .build_global()
-        .ok();
-    Ok(())
-}
-
-fn process_files(files: &[PathBuf], args: &IngestGaiaArgs, cli: &Cli) -> anyhow::Result<()> {
-    let pb = create_progress_bar(files.len() as u64);
-    let total_kept = AtomicU64::new(0);
-    let total_scanned = AtomicU64::new(0);
-    let errors = AtomicU64::new(0);
-    let failed_files: Mutex<Vec<(PathBuf, String)>> = Mutex::new(Vec::new());
-
-    files.par_iter().for_each(|file| {
-        let result = process_single_file(file, args, cli, &total_kept, &total_scanned);
-        if let Err(e) = result {
-            eprintln!(
-                "\nWarning: {:?}: {}",
-                file.file_name().unwrap_or_default(),
-                e
-            );
-            errors.fetch_add(1, Ordering::Relaxed);
-            if let Ok(mut failed) = failed_files.lock() {
-                failed.push((file.clone(), e.to_string()));
-            }
-        }
-        pb.inc(1);
+// Returns the number of files that failed. Every file failing is an error.
+fn process_files(files: &[PathBuf], args: &IngestGaiaArgs, cli: &Cli) -> anyhow::Result<usize> {
+    if files.is_empty() {
+        return Ok(0);
+    }
+    let pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(resolve_threads(args.threads))
+        .build()
+        .context("Failed to build the thread pool")?;
+    let pb = create_progress_bar(files.len() as u64)?;
+    let results: Vec<_> = pool.install(|| {
+        files
+            .par_iter()
+            .map(|file| {
+                let result = process_single_file(file, args, cli);
+                pb.inc(1);
+                result
+            })
+            .collect()
     });
-
     pb.finish_with_message("Done");
-    write_failed_log(&args.output, &failed_files)?;
-    print_summary(files.len(), &total_kept, &total_scanned, &errors)
+    let (counts, failed) = tally(files, results);
+    write_failed_log(&args.output, &failed)?;
+    print_summary(files.len(), &counts, failed.len());
+    if failed.len() == files.len() {
+        anyhow::bail!("All files failed to process");
+    }
+    Ok(failed.len())
 }
 
-fn write_failed_log(
-    output_dir: &Path,
-    failed: &Mutex<Vec<(PathBuf, String)>>,
-) -> anyhow::Result<()> {
-    let failed = failed
-        .lock()
-        .map_err(|e| anyhow::anyhow!("Lock error: {}", e))?;
+type FileResult = anyhow::Result<RowCounts>;
+
+fn tally(files: &[PathBuf], results: Vec<FileResult>) -> (RowCounts, Vec<(&Path, String)>) {
+    let mut counts = RowCounts::default();
+    let mut failed = Vec::new();
+    for (file, result) in files.iter().zip(results) {
+        match result {
+            Ok(file_counts) => counts.add(file_counts),
+            Err(e) => failed.push((file.as_path(), format!("{e:#}"))),
+        }
+    }
+    (counts, failed)
+}
+
+fn write_failed_log(output_dir: &Path, failed: &[(&Path, String)]) -> anyhow::Result<()> {
     if failed.is_empty() {
         return Ok(());
     }
-    let log_path = output_dir.join("failed_files.log");
+    let log_path = output_dir.join(FAILED_LOG);
     let mut file = File::create(&log_path)?;
-    for (path, error) in failed.iter() {
+    for (path, error) in failed {
         writeln!(file, "{}\t{}", path.display(), error)?;
     }
     println!("Failed files logged to: {:?}", log_path);
     Ok(())
 }
 
-fn create_progress_bar(total: u64) -> ProgressBar {
-    let pb = ProgressBar::new(total);
-    pb.set_style(
-        ProgressStyle::default_bar()
-            .template("{spinner:.green} [{bar:40.cyan/blue}] {pos}/{len} ({eta})")
-            .unwrap()
-            .progress_chars("#>-"),
-    );
-    pb
+fn create_progress_bar(total: u64) -> anyhow::Result<ProgressBar> {
+    let style = ProgressStyle::default_bar()
+        .template("{spinner:.green} [{bar:40.cyan/blue}] {pos}/{len} ({eta})")?
+        .progress_chars("#>-");
+    Ok(ProgressBar::new(total).with_style(style))
 }
 
-fn process_single_file(
-    path: &Path,
-    args: &IngestGaiaArgs,
-    cli: &Cli,
-    total_kept: &AtomicU64,
-    total_scanned: &AtomicU64,
-) -> anyhow::Result<()> {
-    let output_path =
-        compute_part_path(path, &args.output).context("Failed to compute output path")?;
-    let stats = stream_and_filter(path, &output_path, args.mag_limit)?;
-    total_kept.fetch_add(stats.kept, Ordering::Relaxed);
-    total_scanned.fetch_add(stats.scanned, Ordering::Relaxed);
-    if cli.verbose {
-        let name = path.file_name().unwrap_or_default();
-        eprintln!(
-            "\n{:?}: kept={}, scanned={}",
-            name, stats.kept, stats.scanned
-        );
+fn process_single_file(path: &Path, args: &IngestGaiaArgs, cli: &Cli) -> FileResult {
+    let result = ingest_file(path, &args.output, args.mag_limit);
+    match &result {
+        Err(e) => eprintln!("\nWarning: {}: {e:#}", path.display()),
+        Ok(counts) if cli.verbose => eprintln!("\n{}: {counts:?}", path.display()),
+        Ok(_) => {}
     }
-    Ok(())
+    result
 }
 
-fn stream_and_filter(input: &Path, output: &Path, mag_limit: f32) -> anyhow::Result<FileStats> {
-    let file = File::open(input)?;
-    let mut decoder = GzDecoder::new(BufReader::new(file));
-    validate_gzip_header(&mut decoder, input)?;
-    let buf_reader = BufReader::new(decoder);
-    let parser = GaiaParser::new(buf_reader, mag_limit)?;
-    let temp_path = output.with_extension("bin.tmp");
-    let stats = write_part_file(parser, &temp_path)?;
-    fs::rename(&temp_path, output)?;
-    Ok(stats)
-}
-
-fn validate_gzip_header<R: Read>(decoder: &mut GzDecoder<R>, path: &Path) -> anyhow::Result<()> {
-    let header = decoder.header();
-    if header.is_none() {
-        anyhow::bail!("Invalid or corrupt gzip file: {:?}", path);
+fn ingest_file(input: &Path, output_dir: &Path, mag_limit: f32) -> FileResult {
+    let output = part_path(input, output_dir).with_context(|| {
+        format!("{input:?} is not named GaiaSource_<range>.csv.gz, so it has no part file name")
+    })?;
+    let decoder = GzDecoder::new(BufReader::new(File::open(input)?));
+    if decoder.header().is_none() {
+        anyhow::bail!("Invalid or corrupt gzip file: {:?}", input);
     }
-    Ok(())
+    let parser = GaiaParser::new(BufReader::new(decoder), mag_limit)?;
+    write_part(parser, &output, mag_limit)
 }
 
-fn write_part_file<R: std::io::BufRead>(
-    parser: GaiaParser<R>,
-    output: &Path,
-) -> anyhow::Result<FileStats> {
-    let file = File::create(output)?;
-    let mut writer = BufWriter::new(file);
-    writer.write_all(&[0u8; PART_HEADER_SIZE])?;
-    let mut stats = FileStats {
-        kept: 0,
-        scanned: 0,
-    };
-    for result in parser {
-        stats.scanned += 1;
-        match result {
-            Ok(star) => {
-                write_star_record(&mut writer, &star)?;
-                stats.kept += 1;
-            }
-            Err(e) => {
-                // Decompression or parse error — bail immediately
-                anyhow::bail!("Error at row {}: {}", stats.scanned, e);
-            }
-        }
-    }
-    finalize_part_file(writer, stats)
-}
-
-fn finalize_part_file(mut writer: BufWriter<File>, stats: FileStats) -> anyhow::Result<FileStats> {
-    writer.flush()?;
-    let mut file = writer.into_inner()?;
-    file.seek(SeekFrom::Start(0))?;
-    file.write_all(&stats.kept.to_le_bytes())?;
-    Ok(stats)
-}
-
-fn write_star_record<W: Write>(writer: &mut W, star: &GaiaStarRaw) -> anyhow::Result<()> {
-    let record = StarRecord {
-        source_id: star.source_id,
-        ra: star.ra,
-        dec: star.dec,
-        pmra: star.pmra,
-        pmdec: star.pmdec,
-        parallax: star.parallax,
-        mag: star.mag,
-        flags: star.flags,
-        _padding: 0,
-    };
-    let bytes = unsafe {
-        std::slice::from_raw_parts(&record as *const StarRecord as *const u8, RECORD_SIZE)
-    };
-    writer.write_all(bytes)?;
-    Ok(())
-}
-
-fn print_summary(
-    file_count: usize,
-    total_kept: &AtomicU64,
-    total_scanned: &AtomicU64,
-    errors: &AtomicU64,
-) -> anyhow::Result<()> {
-    let kept = total_kept.load(Ordering::Relaxed);
-    let scanned = total_scanned.load(Ordering::Relaxed);
-    let errs = errors.load(Ordering::Relaxed);
+fn print_summary(file_count: usize, counts: &RowCounts, failed: usize) {
+    let fainter = counts.read - counts.kept - counts.bad_magnitude - counts.bad_position;
     println!();
     println!("=== Summary ===");
     println!("Files processed: {}", file_count);
-    println!("Stars scanned: {}", scanned);
-    println!("Stars kept: {}", kept);
-    if errs > 0 {
-        println!("Files with errors: {}", errs);
+    println!("Rows read: {}", counts.read);
+    println!("Stars kept: {}", counts.kept);
+    println!("Rows fainter than the limit: {}", fainter);
+    println!(
+        "Rows skipped, missing or invalid magnitude: {}",
+        counts.bad_magnitude
+    );
+    println!(
+        "Rows skipped, missing or invalid source_id, ra or dec: {}",
+        counts.bad_position
+    );
+    if failed > 0 {
+        println!("Files with errors: {}", failed);
     }
-    if errs == file_count as u64 {
-        anyhow::bail!("All files failed to process");
+}
+
+#[cfg(test)]
+pub(crate) mod tests {
+    use super::*;
+    use crate::cli::Commands;
+    use crate::gaia::tests::{csv, row};
+    use crate::intermediate::{self, Kind};
+    use flate2::write::GzEncoder;
+
+    pub(crate) fn write_gz(path: &Path, text: &str) {
+        let mut encoder = GzEncoder::new(File::create(path).unwrap(), Default::default());
+        encoder.write_all(text.as_bytes()).unwrap();
+        encoder.finish().unwrap();
     }
-    Ok(())
-}
 
-fn concatenate_part_files(output_dir: &Path, mag_limit: f32) -> anyhow::Result<()> {
-    let part_files = collect_part_files(output_dir)?;
-    if part_files.is_empty() {
-        anyhow::bail!("No part files found in {:?}", output_dir);
+    pub(crate) fn ingest(input: &Path, output: &Path, no_concat: bool) -> anyhow::Result<()> {
+        let args = || IngestGaiaArgs {
+            path: input.to_path_buf(),
+            mag_limit: 18.5,
+            output: output.to_path_buf(),
+            no_concat,
+            threads: 2,
+        };
+        let cli = Cli {
+            verbose: false,
+            command: Commands::IngestGaia(args()),
+        };
+        run(&args(), &cli)
     }
-    println!("\n=== Concatenating {} part files ===", part_files.len());
-    let final_path = output_dir.join("gaia_ingest.bin");
-    let temp_path = final_path.with_extension("bin.tmp");
-    let total_stars = write_final_catalog(&part_files, &temp_path, mag_limit)?;
-    fs::rename(&temp_path, &final_path)?;
-    println!("Written {} stars to {:?}", total_stars, final_path);
-    delete_part_files(&part_files)?;
-    Ok(())
-}
 
-fn collect_part_files(output_dir: &Path) -> anyhow::Result<Vec<PathBuf>> {
-    let mut files: Vec<PathBuf> = fs::read_dir(output_dir)?
-        .filter_map(|e| e.ok())
-        .map(|e| e.path())
-        .filter(|p| is_part_file(p))
-        .collect();
-    files.sort();
-    Ok(files)
-}
-
-fn is_part_file(path: &Path) -> bool {
-    path.file_name()
-        .and_then(|n| n.to_str())
-        .map(|n| n.starts_with("gaia_part_") && n.ends_with(".bin"))
-        .unwrap_or(false)
-}
-
-fn write_final_catalog(
-    part_files: &[PathBuf],
-    output: &Path,
-    mag_limit: f32,
-) -> anyhow::Result<u64> {
-    let total_stars = count_total_stars(part_files)?;
-    let file = File::create(output)?;
-    let mut writer = BufWriter::new(file);
-    write_final_header(&mut writer, total_stars, mag_limit)?;
-    copy_star_records(&mut writer, part_files)?;
-    writer.flush()?;
-    Ok(total_stars)
-}
-
-fn count_total_stars(part_files: &[PathBuf]) -> anyhow::Result<u64> {
-    let mut total = 0u64;
-    for path in part_files {
-        total += read_part_star_count(path)?;
+    fn setup() -> (tempfile::TempDir, PathBuf, PathBuf) {
+        let dir = tempfile::tempdir().unwrap();
+        let (input, output) = (dir.path().join("in"), dir.path().join("out"));
+        fs::create_dir(&input).unwrap();
+        let good = csv(&[row("1", "10.0", "20.0", "12.0", 31)]);
+        write_gz(&input.join("GaiaSource_000000-000001.csv.gz"), &good);
+        fs::write(input.join("GaiaSource_000002-000003.csv.gz"), b"not gzip").unwrap();
+        (dir, input, output)
     }
-    Ok(total)
-}
 
-fn read_part_star_count(path: &Path) -> anyhow::Result<u64> {
-    let mut file = File::open(path)?;
-    let mut buf = [0u8; 8];
-    file.read_exact(&mut buf)?;
-    Ok(u64::from_le_bytes(buf))
-}
-
-fn write_final_header<W: Write>(writer: &mut W, total: u64, mag_limit: f32) -> anyhow::Result<()> {
-    writer.write_all(FINAL_MAGIC)?;
-    writer.write_all(&FINAL_VERSION.to_le_bytes())?;
-    writer.write_all(&total.to_le_bytes())?;
-    writer.write_all(&mag_limit.to_le_bytes())?;
-    writer.write_all(&[0u8; 4])?;
-    Ok(())
-}
-
-fn copy_star_records<W: Write>(writer: &mut W, part_files: &[PathBuf]) -> anyhow::Result<()> {
-    let mut buf = vec![0u8; 64 * 1024];
-    for path in part_files {
-        copy_single_part(writer, path, &mut buf)?;
+    #[test]
+    fn test_failed_file_error_says_how_to_unblock_the_run() {
+        let (_dir, input, output) = setup();
+        let err = format!("{:#}", ingest(&input, &output, false).unwrap_err());
+        assert!(err.contains("fix or remove those files and rerun"), "{err}");
+        assert!(!err.contains("--no-concat"), "{err}");
     }
-    Ok(())
-}
 
-fn copy_single_part<W: Write>(writer: &mut W, path: &Path, buf: &mut [u8]) -> anyhow::Result<()> {
-    let mut file = File::open(path)?;
-    file.seek(SeekFrom::Start(PART_HEADER_SIZE as u64))?;
-    loop {
-        let n = file.read(buf)?;
-        if n == 0 {
-            break;
-        }
-        writer.write_all(&buf[..n])?;
+    #[test]
+    fn test_successful_run_deletes_a_stale_failed_files_log() {
+        let (_dir, input, output) = setup();
+        assert!(ingest(&input, &output, false).is_err());
+        fs::remove_file(input.join("GaiaSource_000002-000003.csv.gz")).unwrap();
+        ingest(&input, &output, false).unwrap();
+        assert!(!output.join("failed_files.log").exists());
     }
-    Ok(())
-}
 
-fn delete_part_files(part_files: &[PathBuf]) -> anyhow::Result<()> {
-    for path in part_files {
-        fs::remove_file(path)?;
+    #[test]
+    fn test_failed_file_stops_concatenation_and_keeps_parts() {
+        let (_dir, input, output) = setup();
+        let err = format!("{:#}", ingest(&input, &output, false).unwrap_err());
+        assert!(err.contains("1 input files failed"), "{err}");
+        assert!(!output.join("gaia_ingest.bin").exists());
+        assert!(output.join("gaia_part_000000-000001.bin").exists());
+        assert!(output.join("failed_files.log").exists());
     }
-    println!("Deleted {} part files", part_files.len());
-    Ok(())
+
+    #[test]
+    fn test_no_concat_keeps_parts_after_a_failed_file() {
+        let (_dir, input, output) = setup();
+        ingest(&input, &output, true).unwrap();
+        assert!(!output.join("gaia_ingest.bin").exists());
+        assert!(output.join("gaia_part_000000-000001.bin").exists());
+    }
+
+    #[test]
+    fn test_rerun_after_fixing_the_file_concatenates_every_part() {
+        let (_dir, input, output) = setup();
+        assert!(ingest(&input, &output, false).is_err());
+        let second = csv(&[row("2", "11.0", "21.0", "13.0", 31)]);
+        write_gz(&input.join("GaiaSource_000002-000003.csv.gz"), &second);
+        ingest(&input, &output, false).unwrap();
+        let (header, mut reader) = intermediate::open(&output, Kind::Gaia).unwrap();
+        assert_eq!(header.records, 2);
+        let ids = [0, 1].map(|_| intermediate::read_record(&mut reader).unwrap().source_id);
+        assert_eq!(ids, [1, 2]);
+        assert!(!output.join("gaia_part_000000-000001.bin").exists());
+    }
 }

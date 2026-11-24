@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-use celestial_catalog::query::{discrete_hash_key, discrete_hash_key_neighbors, Quad};
+use celestial_catalog::query::quad::{discrete_hash_key, discrete_hash_key_neighbors, Quad};
 
 use super::QuadMatch;
 
@@ -40,7 +40,11 @@ pub(super) fn find_matches(
 
 #[cfg(test)]
 mod tests {
+    use super::super::quad_stars::stars_to_quad_stars;
     use super::*;
+    use crate::detect::DetectedStar;
+    use celestial_catalog::query::quad::{neighbor_quads, QuadStar};
+    use celestial_core::constants::{DEG_TO_RAD, PI};
 
     fn quad(hash: [f64; 4]) -> Quad {
         Quad {
@@ -138,5 +142,91 @@ mod tests {
         // (plus any neighbor-bucket duplicates would also appear, but neighbors
         // of an exact hash don't collide here).
         assert!(m.len() >= 3);
+    }
+
+    // A 60-star field in tangent-plane radians, about 0.6 degrees across.
+    fn field_points() -> Vec<(f64, f64)> {
+        let mut state = 5u64;
+        let mut uniform = || {
+            state = state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            (state >> 11) as f64 / (1u64 << 53) as f64
+        };
+        (0..60)
+            .map(|_| (0.01 * uniform() - 0.005, 0.01 * uniform() - 0.005))
+            .collect()
+    }
+
+    // Detections of `points` rotated by `deg`, at 1 arcsec per pixel. A mirrored image
+    // has its y axis reversed, so stars_to_quad_stars with parity_flip = true undoes it.
+    fn detections(points: &[(f64, f64)], deg: f64, mirrored: bool) -> Vec<DetectedStar> {
+        let rad_per_px = PI / (180.0 * 3600.0);
+        let (s, c) = libm::sincos(deg * DEG_TO_RAD);
+        let y_sign = if mirrored { 1.0 } else { -1.0 };
+        points
+            .iter()
+            .enumerate()
+            .map(|(i, &(x, y))| DetectedStar {
+                x: 2048.0 - (x * c - y * s) / rad_per_px,
+                y: 2048.0 + y_sign * (x * s + y * c) / rad_per_px,
+                flux: 10_000.0 - i as f64,
+                snr: 20.0,
+                saturated: false,
+                saturated_count: 0,
+                background: 0.0,
+            })
+            .collect()
+    }
+
+    // Counts image quads that find the catalog quad built from the same four stars with
+    // the same A, B, C, D labels, which extract_pairs relies on. Detection i is catalog
+    // star i, and the flux order keeps image star i at index i.
+    fn own_quad_matches(image_quads: &[Quad], catalog_quads: &[Quad]) -> usize {
+        let index = build_hash_index(catalog_quads);
+        let mut found = std::collections::HashSet::new();
+        for m in find_matches(image_quads, catalog_quads, &index) {
+            if m.image_quad.star_indices == m.catalog_quad.star_indices {
+                found.insert(m.image_quad.star_indices);
+            }
+        }
+        found.len()
+    }
+
+    #[test]
+    fn mirrored_rotated_field_matches_through_parity_flip() {
+        let points = field_points();
+        let catalog: Vec<QuadStar> = points
+            .iter()
+            .enumerate()
+            .map(|(i, &(x, y))| QuadStar {
+                source_id: i as i64,
+                x,
+                y,
+                mag: 0.0,
+            })
+            .collect();
+        let catalog_quads = neighbor_quads(&catalog, 10, 0.0);
+        let mut counts = Vec::new();
+        for deg in [0.0, 90.0, 150.0, 180.0] {
+            let stars = detections(&points, deg, true);
+            let found: Vec<usize> = [true, false]
+                .iter()
+                .map(|&parity| {
+                    let img = stars_to_quad_stars(&stars, 4096, 4096, 1.0, 100, parity);
+                    own_quad_matches(&neighbor_quads(&img, 10, 0.0), &catalog_quads)
+                })
+                .collect();
+            counts.push((deg, catalog_quads.len(), found));
+        }
+        assert_eq!(
+            counts,
+            [
+                (0.0, 4663, vec![4663, 0]),
+                (90.0, 4663, vec![4663, 0]),
+                (150.0, 4663, vec![4663, 0]),
+                (180.0, 4663, vec![4663, 0]),
+            ]
+        );
     }
 }

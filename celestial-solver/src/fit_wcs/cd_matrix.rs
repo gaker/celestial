@@ -1,5 +1,5 @@
 use anyhow::{ensure, Result};
-use celestial_catalog::query::tan_project_star;
+use celestial_catalog::query::quad::tan_project_star;
 use celestial_core::constants::RAD_TO_DEG;
 
 use crate::match_field::StarPair;
@@ -604,7 +604,7 @@ mod tests {
         samples: &[(f64, f64)],
     ) -> Vec<StarPair> {
         // Forward-project (u, v) -> (xi, eta) via CD -> (ra, dec) via tan deprojection
-        use celestial_catalog::query::tan_deproject_star;
+        use celestial_catalog::query::quad::tan_deproject_star;
         use celestial_core::constants::DEG_TO_RAD;
 
         samples
@@ -646,7 +646,7 @@ mod tests {
         let pairs = synthesize_pairs(crval_ra, crval_dec, &cd, &samples);
 
         // Project through the "known" WCS to get (u, v, xi, eta)
-        use celestial_catalog::query::tan_project_star;
+        use celestial_catalog::query::quad::tan_project_star;
         use celestial_core::constants::RAD_TO_DEG;
         let projected: Vec<(f64, f64, f64, f64)> = pairs
             .iter()
@@ -692,7 +692,7 @@ mod tests {
         samples.push((100.0, 100.0));
         let pairs = synthesize_pairs(crval_ra, crval_dec, &cd, &samples);
 
-        use celestial_catalog::query::tan_project_star;
+        use celestial_catalog::query::quad::tan_project_star;
         use celestial_core::constants::RAD_TO_DEG;
         let mut projected: Vec<(f64, f64, f64, f64)> = pairs
             .iter()

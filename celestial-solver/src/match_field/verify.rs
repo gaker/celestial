@@ -4,7 +4,7 @@
 //! plane); a scrambled match set will not. Counting inliers under a random-sampled
 //! affine gives a scalar score used to pick the better parity orientation.
 
-use celestial_catalog::query::tan_project_star;
+use celestial_catalog::query::quad::tan_project_star;
 
 use super::StarPair;
 
@@ -119,7 +119,7 @@ pub(super) fn count_affine_inliers(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use celestial_catalog::query::tan_deproject_star;
+    use celestial_catalog::query::quad::tan_deproject_star;
 
     fn pair(px: f64, py: f64, ra: f64, dec: f64) -> StarPair {
         StarPair {

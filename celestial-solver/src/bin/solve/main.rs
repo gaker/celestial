@@ -5,7 +5,7 @@ use clap::Parser;
 use std::fs::create_dir_all;
 use std::path::{Path, PathBuf};
 
-use celestial_catalog::query::Catalog;
+use celestial_catalog::query::catalog::Catalog;
 use celestial_images::formats::format::ImageFormat;
 use celestial_images::formats::image::Image;
 use celestial_solver::annotate::Annotation;

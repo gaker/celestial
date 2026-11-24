@@ -7,7 +7,8 @@
 
 use std::collections::HashMap;
 
-use celestial_catalog::query::{ConeSearchResult, QuadStar};
+use celestial_catalog::query::cone::ConeSearchResult;
+use celestial_catalog::query::quad::QuadStar;
 
 use super::{QuadMatch, StarPair};
 use crate::detect::DetectedStar;
@@ -121,7 +122,8 @@ pub(super) fn extract_pairs(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use celestial_catalog::query::{ConeSearchResult, Quad, QuadStar};
+    use celestial_catalog::query::cone::ConeSearchResult;
+    use celestial_catalog::query::quad::{Quad, QuadStar};
 
     use crate::detect::DetectedStar;
 
@@ -156,7 +158,7 @@ mod tests {
     }
 
     fn cone_result(source_id: i64, ra: f64, dec: f64) -> ConeSearchResult {
-        let mut star: celestial_catalog::query::StarRecord = unsafe { std::mem::zeroed() };
+        let mut star = celestial_catalog::query::catalog::StarRecord::from_le_bytes(&[0; 56]);
         star.source_id = source_id;
         star.ra = ra;
         star.dec = dec;
