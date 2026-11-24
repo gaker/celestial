@@ -284,6 +284,7 @@ fn map_file(path: &Path) -> CatalogResult<Mmap> {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+    use crate::query::test_support::{catalog_bytes, header, make_star};
     use std::io::Write;
     use tempfile::NamedTempFile;
 
@@ -302,37 +303,6 @@ pub(crate) mod tests {
         assert_eq!(std::mem::align_of::<StarRecord>(), 8);
     }
 
-    pub(crate) fn make_star(source_id: i64, ra: f64, dec: f64, mag: f32, flags: u16) -> StarRecord {
-        StarRecord {
-            source_id,
-            ra,
-            dec,
-            pmra: 0.0,
-            pmdec: 0.0,
-            parallax: 0.0,
-            mag,
-            flags,
-            _padding: 0,
-        }
-    }
-
-    pub(crate) fn header(
-        order: u32,
-        total_stars: u64,
-        epoch: f64,
-        mag_limit: f32,
-    ) -> CatalogHeader {
-        let nside = 1u64 << order;
-        CatalogHeader {
-            order,
-            nside: nside as u32,
-            npix: 12 * nside * nside,
-            total_stars,
-            epoch,
-            mag_limit,
-        }
-    }
-
     // Writes a catalog with every pixel's records in pixel order. A pixel listed twice keeps
     // the stars of both lists.
     pub(crate) fn build_test_catalog(
@@ -341,23 +311,7 @@ pub(crate) mod tests {
         mag_limit: f32,
         pixel_stars: &[(u64, Vec<StarRecord>)],
     ) -> NamedTempFile {
-        let total_stars: u64 = pixel_stars.iter().map(|(_, s)| s.len() as u64).sum();
-        let header = header(order, total_stars, epoch, mag_limit);
-        let mut pixels: Vec<Vec<StarRecord>> = vec![Vec::new(); header.npix as usize];
-        for (pixel, stars) in pixel_stars {
-            pixels[*pixel as usize].extend_from_slice(stars);
-        }
-
-        let mut buf = header.to_bytes().to_vec();
-        let mut offset = 0u64;
-        for stars in &pixels {
-            buf.extend_from_slice(&pixel_entry_bytes(offset, stars.len() as u32));
-            offset += (stars.len() * STAR_RECORD_SIZE) as u64;
-        }
-        for star in pixels.iter().flatten() {
-            buf.extend_from_slice(&star.to_le_bytes());
-        }
-        write_file(&buf)
+        write_file(&catalog_bytes(order, epoch, mag_limit, pixel_stars))
     }
 
     #[test]

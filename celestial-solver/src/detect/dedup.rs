@@ -5,16 +5,7 @@ use super::DetectedStar;
 /// Assumes the input is sorted by descending flux (as produced by
 /// [`crate::detect::find_bright_stars`]). The brighter of two close detections is
 /// kept; the fainter is discarded. Runs in place.
-///
-/// # Examples
-///
-/// ```rust,ignore
-/// use celestial_solver::detect::{deduplicate, DetectedStar};
-///
-/// let mut stars: Vec<DetectedStar> = vec![/* sorted by descending flux */];
-/// deduplicate(&mut stars, 20.0);
-/// ```
-pub fn deduplicate(stars: &mut Vec<DetectedStar>, min_spacing: f64) {
+pub(super) fn deduplicate(stars: &mut Vec<DetectedStar>, min_spacing: f64) {
     let min_sq = min_spacing * min_spacing;
     let mut keep = vec![true; stars.len()];
 

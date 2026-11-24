@@ -1,14 +1,14 @@
 //! WCS solution data and pixel↔sky transforms.
 
-use std::fmt;
+use celestial_catalog::query::quad::tan_project_star;
+use celestial_core::constants::RAD_TO_DEG;
 
-use celestial_catalog::query::quad::{tan_deproject_star, tan_project_star};
-use celestial_core::constants::{DEG_TO_RAD, RAD_TO_DEG};
+use crate::metadata::plate_scale::ARCSEC_PER_UM_PER_MM;
 
 /// Per-pair fit residual.
 ///
-/// Computed by [`crate::fit_wcs::fit_wcs`] for each inlier pair. `err_x` and `err_y`
-/// are `detected - predicted` in pixel space — positive values mean the detected
+/// Computed for each pair a [`WcsSolution`] was fitted on. `err_x` and `err_y` are
+/// `detected - predicted` in pixel space. Positive values mean the detected
 /// centroid landed to the right of / below where the WCS says the catalog star should
 /// be. `err_px` is the Euclidean magnitude.
 ///
@@ -17,7 +17,7 @@ use celestial_core::constants::{DEG_TO_RAD, RAD_TO_DEG};
 /// ```rust,ignore
 /// # let img = celestial_images::formats::image::Image::open("f.fits")?;
 /// # let catalog = celestial_catalog::query::catalog::Catalog::open("cat.bin")?;
-/// let result = celestial_solver::solve(&img, &catalog).run()?;
+/// let result = celestial_solver::solve::solve(&img, &catalog).run()?;
 /// let worst = result.wcs.residuals.iter()
 ///     .max_by(|a, b| a.err_px.partial_cmp(&b.err_px).unwrap()).unwrap();
 /// println!("worst residual: {:.2}px at ({:.0}, {:.0})", worst.err_px, worst.px_x, worst.px_y);
@@ -35,13 +35,18 @@ pub struct StarResidual {
     pub err_y: f64,
     /// Euclidean residual magnitude in pixels.
     pub err_px: f64,
+    // Catalog position of the pair, in degrees. With the pixel it identifies the pair,
+    // since one detection can be paired with more than one catalog star.
+    pub(crate) ra_deg: f64,
+    pub(crate) dec_deg: f64,
 }
 
 /// Fitted TAN (gnomonic) WCS with residual statistics.
 ///
-/// Standard FITS WCS parameters plus fit diagnostics. Pixel↔sky transforms via
-/// [`WcsSolution::pixel_to_sky`] and [`WcsSolution::sky_to_pixel`]. Geometric
-/// properties via [`WcsSolution::scale_arcsec`], [`WcsSolution::rotation_deg`],
+/// Standard FITS WCS parameters plus fit diagnostics. Pixel↔sky transforms, with the
+/// SIP distortion when there is one, via [`crate::solve::SolveResult::pixel_to_sky`] and
+/// [`crate::solve::SolveResult::sky_to_pixel`]. Geometric properties via
+/// [`WcsSolution::scale_arcsec`], [`WcsSolution::rotation_deg`],
 /// [`WcsSolution::is_flipped`].
 ///
 /// # Examples
@@ -49,14 +54,15 @@ pub struct StarResidual {
 /// ```rust,ignore
 /// # let img = celestial_images::formats::image::Image::open("f.fits")?;
 /// # let catalog = celestial_catalog::query::catalog::Catalog::open("cat.bin")?;
-/// let result = celestial_solver::solve(&img, &catalog).run()?;
-/// let (ra, dec) = result.wcs.pixel_to_sky(1024.0, 768.0);
+/// let result = celestial_solver::solve::solve(&img, &catalog).run()?;
+/// let (ra, dec) = result.pixel_to_sky(1024.0, 768.0)?;
 /// println!("center: {:.4}° {:.4}°", ra, dec);
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 #[derive(Debug, Clone)]
 pub struct WcsSolution {
-    /// Reference pixel x (1-based FITS convention). Usually the image center.
+    /// Reference pixel x, with the centre of the first pixel at 0. The FITS CRPIX1 card
+    /// is this plus 1. Usually the image center.
     pub crpix1: f64,
     /// Reference pixel y.
     pub crpix2: f64,
@@ -84,7 +90,8 @@ pub struct WcsSolution {
     pub n_stars: usize,
     /// Unweighted RMS residual in pixels.
     pub rms_px: f64,
-    /// SNR-weighted RMS residual in pixels.
+    /// RMS residual in pixels, with each pair weighted by the inverse of its centroid
+    /// variance.
     pub weighted_rms_px: f64,
     /// Per-pair residuals for the final fit.
     pub residuals: Vec<StarResidual>,
@@ -93,20 +100,13 @@ pub struct WcsSolution {
 impl WcsSolution {
     /// Transforms a pixel coordinate to sky coordinates (RA, Dec in degrees).
     ///
-    /// Applies the inverse CD matrix, then de-projects from the tangent plane. Pure
-    /// linear TAN — does not account for SIP distortion. Use [`crate::fit_wcs::SipSolution`]
-    /// and its forward evaluator for SIP-corrected transforms.
-    ///
-    /// # Examples
-    ///
-    /// ```rust,ignore
-    /// # let img = celestial_images::formats::image::Image::open("f.fits")?;
-    /// # let catalog = celestial_catalog::query::catalog::Catalog::open("cat.bin")?;
-    /// let result = celestial_solver::solve(&img, &catalog).run()?;
-    /// let (ra, dec) = result.wcs.pixel_to_sky(100.0, 200.0);
-    /// # Ok::<(), Box<dyn std::error::Error>>(())
-    /// ```
-    pub fn pixel_to_sky(&self, px_x: f64, px_y: f64) -> (f64, f64) {
+    /// Applies the CD matrix, then de-projects from the tangent plane. Linear TAN
+    /// only: [`crate::solve::SolveResult::pixel_to_sky`] applies SIP as well.
+    #[cfg(test)]
+    pub(crate) fn pixel_to_sky(&self, px_x: f64, px_y: f64) -> (f64, f64) {
+        use celestial_catalog::query::quad::tan_deproject_star;
+        use celestial_core::constants::DEG_TO_RAD;
+
         let u = px_x - self.crpix1;
         let v = px_y - self.crpix2;
         let xi_deg = self.cd1_1 * u + self.cd1_2 * v;
@@ -122,28 +122,15 @@ impl WcsSolution {
     /// Transforms sky coordinates to pixel coordinates.
     ///
     /// Returns `None` for points that can't be gnomonically projected (e.g. the
-    /// anti-center of the TAN projection, more than 90° from CRVAL). Pure linear TAN,
-    /// no SIP correction.
-    ///
-    /// # Examples
-    ///
-    /// ```rust,ignore
-    /// # let img = celestial_images::formats::image::Image::open("f.fits")?;
-    /// # let catalog = celestial_catalog::query::catalog::Catalog::open("cat.bin")?;
-    /// let result = celestial_solver::solve(&img, &catalog).run()?;
-    /// if let Some((x, y)) = result.wcs.sky_to_pixel(180.0, 30.0) {
-    ///     println!("(180°, 30°) lands at ({:.1}, {:.1})", x, y);
-    /// }
-    /// # Ok::<(), Box<dyn std::error::Error>>(())
-    /// ```
-    pub fn sky_to_pixel(&self, ra_deg: f64, dec_deg: f64) -> Option<(f64, f64)> {
+    /// anti-center of the TAN projection, more than 90° from CRVAL). Linear TAN only:
+    /// [`crate::solve::SolveResult::sky_to_pixel`] applies SIP as well.
+    pub(crate) fn sky_to_pixel(&self, ra_deg: f64, dec_deg: f64) -> Option<(f64, f64)> {
         let (xi_rad, eta_rad) = tan_project_star(ra_deg, dec_deg, self.crval1, self.crval2)?;
         let xi = xi_rad * RAD_TO_DEG;
         let eta = eta_rad * RAD_TO_DEG;
-        let det = self.cd1_1 * self.cd2_2 - self.cd1_2 * self.cd2_1;
-        let px_x = (self.cd2_2 * xi - self.cd1_2 * eta) / det + self.crpix1;
-        let px_y = (-self.cd2_1 * xi + self.cd1_1 * eta) / det + self.crpix2;
-        Some((px_x, px_y))
+        let inverse = InverseCd::new(self.cd1_1, self.cd1_2, self.cd2_1, self.cd2_2);
+        let (u, v) = inverse.apply(xi, eta);
+        Some((u + self.crpix1, v + self.crpix2))
     }
 
     /// Plate scale in arcseconds per pixel along each CD-matrix axis.
@@ -157,7 +144,7 @@ impl WcsSolution {
     /// ```rust,ignore
     /// # let img = celestial_images::formats::image::Image::open("f.fits")?;
     /// # let catalog = celestial_catalog::query::catalog::Catalog::open("cat.bin")?;
-    /// let result = celestial_solver::solve(&img, &catalog).run()?;
+    /// let result = celestial_solver::solve::solve(&img, &catalog).run()?;
     /// let (sx, sy) = result.wcs.scale_arcsec();
     /// println!("{:.3} × {:.3} arcsec/px", sx, sy);
     /// # Ok::<(), Box<dyn std::error::Error>>(())
@@ -168,26 +155,44 @@ impl WcsSolution {
         (sx, sy)
     }
 
-    /// Field rotation in degrees, accounting for image flip.
+    /// Field rotation in degrees, in (-180, 180].
     ///
-    /// Zero degrees means north-up, east-left (the astronomical convention). Positive
-    /// rotation is counter-clockwise.
+    /// The angle from image up to north, positive clockwise, with pixel y growing
+    /// downwards as PixInsight displays the image. At zero, north is up, and east is
+    /// left when the image is not flipped and right when [`WcsSolution::is_flipped`]
+    /// returns `true`. At +90 north points to +x in either parity: the north arrow
+    /// turns clockwise on the display, and the camera frame turns counter-clockwise
+    /// relative to the sky.
     ///
     /// # Examples
     ///
     /// ```rust,ignore
     /// # let img = celestial_images::formats::image::Image::open("f.fits")?;
     /// # let catalog = celestial_catalog::query::catalog::Catalog::open("cat.bin")?;
-    /// let result = celestial_solver::solve(&img, &catalog).run()?;
+    /// let result = celestial_solver::solve::solve(&img, &catalog).run()?;
     /// println!("rotation: {:.2}°", result.wcs.rotation_deg());
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn rotation_deg(&self) -> f64 {
-        if self.is_flipped() {
+        // Pixel y grows downwards, as PixInsight displays it, so at zero rotation north
+        // is towards -y. Mirroring the image reverses the sign of the east axis.
+        let rotation = if self.is_flipped() {
             libm::atan2(self.cd1_2, -self.cd2_2) * RAD_TO_DEG
         } else {
-            libm::atan2(self.cd1_2, self.cd2_2) * RAD_TO_DEG
+            libm::atan2(-self.cd1_2, -self.cd2_2) * RAD_TO_DEG
+        };
+        // atan2(-0.0, x) is -pi for negative x, so a half turn would read -180 for the
+        // identity CD and +180 for the same orientation flipped.
+        if rotation <= -180.0 {
+            rotation + 360.0
+        } else {
+            rotation
         }
+    }
+
+    pub(crate) fn mean_scale_arcsec(&self) -> f64 {
+        let (sx, sy) = self.scale_arcsec();
+        (sx + sy) * 0.5
     }
 
     /// `true` if the image is mirrored relative to the sky (CD matrix determinant is
@@ -202,7 +207,7 @@ impl WcsSolution {
     /// ```rust,ignore
     /// # let img = celestial_images::formats::image::Image::open("f.fits")?;
     /// # let catalog = celestial_catalog::query::catalog::Catalog::open("cat.bin")?;
-    /// let result = celestial_solver::solve(&img, &catalog).run()?;
+    /// let result = celestial_solver::solve::solve(&img, &catalog).run()?;
     /// if result.wcs.is_flipped() {
     ///     println!("image is flipped");
     /// }
@@ -224,7 +229,7 @@ impl WcsSolution {
     /// ```rust,ignore
     /// # let img = celestial_images::formats::image::Image::open("f.fits")?;
     /// # let catalog = celestial_catalog::query::catalog::Catalog::open("cat.bin")?;
-    /// let result = celestial_solver::solve(&img, &catalog).run()?;
+    /// let result = celestial_solver::solve::solve(&img, &catalog).run()?;
     /// if let Some(f) = result.wcs.effective_focal_mm() {
     ///     println!("effective focal length: {:.0}mm", f);
     /// }
@@ -237,7 +242,7 @@ impl WcsSolution {
         if avg_scale <= 0.0 {
             return None;
         }
-        Some(206.265 * pixel_um / avg_scale)
+        Some(ARCSEC_PER_UM_PER_MM * pixel_um / avg_scale)
     }
 
     pub(crate) fn nearest_residual(&self, px: f64, py: f64, k: usize) -> (f64, f64) {
@@ -264,49 +269,32 @@ impl WcsSolution {
             });
         (sum_ex / take as f64, sum_ey / take as f64)
     }
+}
 
-    pub(crate) fn fmt_bounds(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let w = self.width as f64;
-        let h = self.height as f64;
-        let corners = [
-            ("top-left", 0.0, 0.0),
-            ("top-right", w, 0.0),
-            ("bottom-left", 0.0, h),
-            ("bottom-right", w, h),
-        ];
-        writeln!(f, "Image bounds:")?;
-        for (label, px, py) in &corners {
-            let (ra, dec) = self.pixel_to_sky(*px, *py);
-            let (ex, ey) = self.nearest_residual(*px, *py, 5);
-            writeln!(
-                f,
-                "   {:<17} RA: {}  Dec: {}  ex: {:+.6} px  ey: {:+.6} px",
-                label,
-                fmt_ra(ra),
-                fmt_dec(dec),
-                ex,
-                ey
-            )?;
+// The inverse of a CD matrix: maps a tangent-plane offset (xi, eta) in degrees to a
+// pixel offset from CRPIX. Every pixel the solver predicts from a sky position goes
+// through it, so the fit, its residuals and the matching round the same way.
+#[derive(Debug, Clone, Copy)]
+pub(super) struct InverseCd {
+    cd: [f64; 4],
+    det: f64,
+}
+
+impl InverseCd {
+    pub(super) fn new(cd1_1: f64, cd1_2: f64, cd2_1: f64, cd2_2: f64) -> Self {
+        Self {
+            cd: [cd1_1, cd1_2, cd2_1, cd2_2],
+            det: cd1_1 * cd2_2 - cd1_2 * cd2_1,
         }
-        Ok(())
     }
-}
 
-pub(crate) fn fmt_ra(ra_deg: f64) -> String {
-    let ra_h = ra_deg / 15.0;
-    let hh = ra_h as i32;
-    let mm = ((ra_h - hh as f64) * 60.0) as i32;
-    let ss = (ra_h - hh as f64 - mm as f64 / 60.0) * 3600.0;
-    format!("{:02} {:02} {:06.3}", hh, mm, ss)
-}
-
-pub(crate) fn fmt_dec(dec_deg: f64) -> String {
-    let sign = if dec_deg < 0.0 { "-" } else { "+" };
-    let abs = libm::fabs(dec_deg);
-    let dd = abs as i32;
-    let mm = ((abs - dd as f64) * 60.0) as i32;
-    let ss = (abs - dd as f64 - mm as f64 / 60.0) * 3600.0;
-    format!("{}{:02} {:02} {:05.2}", sign, dd, mm, ss)
+    pub(super) fn apply(&self, xi: f64, eta: f64) -> (f64, f64) {
+        let [cd1_1, cd1_2, cd2_1, cd2_2] = self.cd;
+        (
+            (cd2_2 * xi - cd1_2 * eta) / self.det,
+            (-cd2_1 * xi + cd1_1 * eta) / self.det,
+        )
+    }
 }
 
 pub(crate) fn fmt_fov_component(arcmin: f64) -> String {
@@ -321,28 +309,52 @@ pub(crate) fn fmt_fov_component(arcmin: f64) -> String {
     }
 }
 
+// A TAN WCS for tests of a `width` x `height` image: CRVAL `crval`, CRPIX at
+// (width / 2, height / 2), the diagonal CD matrix `(cd1_1, cd2_2)` in deg/px, and no fit
+// or camera data.
+#[cfg(test)]
+impl WcsSolution {
+    pub(crate) fn diagonal(
+        crval: (f64, f64),
+        (cd1_1, cd2_2): (f64, f64),
+        (width, height): (usize, usize),
+    ) -> Self {
+        Self {
+            crpix1: width as f64 / 2.0,
+            crpix2: height as f64 / 2.0,
+            crval1: crval.0,
+            crval2: crval.1,
+            cd1_1,
+            cd1_2: 0.0,
+            cd2_1: 0.0,
+            cd2_2,
+            width,
+            height,
+            focal_mm: None,
+            pixel_um: None,
+            n_stars: 0,
+            rms_px: 0.0,
+            weighted_rms_px: 0.0,
+            residuals: Vec::new(),
+        }
+    }
+
+    // North up and east left at `scale_arcsec` per pixel.
+    pub(crate) fn north_up(crval: (f64, f64), scale_arcsec: f64, size: (usize, usize)) -> Self {
+        let s = scale_arcsec / 3600.0;
+        Self::diagonal(crval, (-s, s), size)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn sample_wcs() -> WcsSolution {
         WcsSolution {
-            crpix1: 1024.0,
-            crpix2: 768.0,
-            crval1: 180.0,
-            crval2: 0.0,
-            cd1_1: 0.001,
-            cd1_2: 0.0,
-            cd2_1: 0.0,
-            cd2_2: 0.001,
-            width: 2048,
-            height: 1536,
             focal_mm: Some(1000.0),
             pixel_um: Some(3.76),
-            n_stars: 0,
-            rms_px: 0.0,
-            weighted_rms_px: 0.0,
-            residuals: Vec::new(),
+            ..WcsSolution::diagonal((180.0, 0.0), (0.001, 0.001), (2048, 1536))
         }
     }
 
@@ -355,14 +367,23 @@ mod tests {
             (900.0, 700.0),
             (1024.0, 900.0),
         ];
-        for (px_x, px_y) in test_points {
-            let (ra, dec) = wcs.pixel_to_sky(px_x, px_y);
-            let (px_x2, px_y2) = wcs.sky_to_pixel(ra, dec).unwrap();
-            // round trip passes through tan projection (f64 trig), so we
-            // allow a very tight tolerance rather than exact equality.
-            assert!((px_x - px_x2).abs() < 1e-9, "x {} -> {}", px_x, px_x2);
-            assert!((px_y - px_y2).abs() < 1e-9, "y {} -> {}", px_y, px_y2);
-        }
+        let round_trip: Vec<(f64, f64)> = test_points
+            .iter()
+            .map(|&(px_x, px_y)| {
+                let (ra, dec) = wcs.pixel_to_sky(px_x, px_y);
+                wcs.sky_to_pixel(ra, dec).unwrap()
+            })
+            .collect();
+        // Two points come back up to 6.6e-12 px from where they started in x.
+        assert_eq!(
+            round_trip,
+            [
+                (1024.0, 768.0),
+                (1099.9999999999934, 800.0),
+                (899.9999999999942, 700.0),
+                (1024.0, 900.0)
+            ]
+        );
     }
 
     #[test]
@@ -388,23 +409,65 @@ mod tests {
         assert_eq!(sy, 7.2);
     }
 
+    // Pixel y grows downwards, so an identity CD puts north down and east right: a half
+    // turn from north up, east left.
     #[test]
-    fn rotation_deg_identity_is_zero() {
+    fn rotation_deg_identity_is_a_half_turn() {
         let wcs = sample_wcs();
-        // cd1_2 = 0, cd2_2 > 0 -> atan2(0, 1) = 0
-        assert_eq!(wcs.rotation_deg(), 0.0);
+        // atan2(-cd1_2, -cd2_2) = atan2(-0, -0.001) = -180, reported as 180
+        assert_eq!(wcs.rotation_deg(), 180.0);
     }
 
     #[test]
-    fn rotation_deg_quarter_turn_is_ninety() {
+    fn rotation_deg_quarter_turn_is_minus_ninety() {
         let mut wcs = sample_wcs();
-        // 90° rotation: cd1_1=0, cd1_2=scale, cd2_1=-scale, cd2_2=0
         wcs.cd1_1 = 0.0;
         wcs.cd1_2 = 0.001;
         wcs.cd2_1 = -0.001;
         wcs.cd2_2 = 0.0;
-        // det > 0 so not flipped; atan2(0.001, 0) * RAD_TO_DEG = 90
-        assert!((wcs.rotation_deg() - 90.0).abs() < 1e-12);
+        // det > 0 so not flipped; atan2(-0.001, -0) * RAD_TO_DEG = -90
+        assert_eq!(wcs.rotation_deg(), -90.0);
+    }
+
+    fn with_cd(cd: [f64; 4]) -> WcsSolution {
+        let mut wcs = sample_wcs();
+        (wcs.cd1_1, wcs.cd1_2, wcs.cd2_1, wcs.cd2_2) = (cd[0], cd[1], cd[2], cd[3]);
+        wcs
+    }
+
+    // Unflipped CD for rotation t, with pixel y down: -s * [[cos t, sin t], [-sin t, cos t]].
+    // At t = 0 east is left (cd1_1 < 0) and north is up (cd2_2 < 0).
+    #[test]
+    fn rotation_deg_unflipped_quarter_turns() {
+        let s = 0.001;
+        let cases = [
+            ([-s, 0.0, 0.0, -s], 0.0),
+            ([0.0, -s, s, 0.0], 90.0),
+            ([0.0, s, -s, 0.0], -90.0),
+            ([s, 0.0, 0.0, s], 180.0),
+        ];
+        for (cd, rotation) in cases {
+            let wcs = with_cd(cd);
+            assert!(!wcs.is_flipped());
+            assert_eq!(wcs.rotation_deg(), rotation, "CD {cd:?}");
+        }
+    }
+
+    // Flipped CD for rotation t, with pixel y down: s * [[cos t, sin t], [sin t, -cos t]].
+    #[test]
+    fn rotation_deg_flipped_quarter_turns() {
+        let s = 0.001;
+        let cases = [
+            ([s, 0.0, 0.0, -s], 0.0),
+            ([0.0, s, s, 0.0], 90.0),
+            ([0.0, -s, -s, 0.0], -90.0),
+            ([-s, 0.0, 0.0, s], 180.0),
+        ];
+        for (cd, rotation) in cases {
+            let wcs = with_cd(cd);
+            assert!(wcs.is_flipped());
+            assert_eq!(wcs.rotation_deg(), rotation, "CD {cd:?}");
+        }
     }
 
     #[test]
@@ -414,7 +477,7 @@ mod tests {
         wcs.cd1_1 = -0.001;
         assert!(wcs.is_flipped());
         // flipped branch: atan2(cd1_2=0, -cd2_2=-0.001) = atan2(0, -1) = pi -> 180°
-        assert!((wcs.rotation_deg().abs() - 180.0).abs() < 1e-12);
+        assert_eq!(wcs.rotation_deg(), 180.0);
     }
 
     #[test]
@@ -435,16 +498,17 @@ mod tests {
     #[test]
     fn effective_focal_mm_recovers_input_focal() {
         // with pixel_um = 3.76 and scale = 3.6 arcsec/px (cd=0.001 deg/px = 3.6"/px)
-        // effective focal = 206.265 * 3.76 / 3.6 = 215.39...
+        // effective focal = 206.2648 * 3.76 / 3.6 = 215.43...
         let mut wcs = sample_wcs();
         wcs.cd1_1 = 0.001;
         wcs.cd1_2 = 0.0;
         wcs.cd2_1 = 0.0;
         wcs.cd2_2 = 0.001;
         wcs.pixel_um = Some(3.76);
-        let f = wcs.effective_focal_mm().unwrap();
-        let expected = 206.265 * 3.76 / 3.6;
-        assert!((f - expected).abs() < 1e-9, "focal {} vs {}", f, expected);
+        assert_eq!(
+            wcs.effective_focal_mm(),
+            Some(ARCSEC_PER_UM_PER_MM * 3.76 / 3.6)
+        );
     }
 
     #[test]
@@ -468,6 +532,8 @@ mod tests {
                 err_x: 1.0,
                 err_y: 0.0,
                 err_px: 1.0,
+                ra_deg: 0.0,
+                dec_deg: 0.0,
             },
             StarResidual {
                 px_x: 200.0,
@@ -475,6 +541,8 @@ mod tests {
                 err_x: 0.0,
                 err_y: 2.0,
                 err_px: 2.0,
+                ra_deg: 0.0,
+                dec_deg: 0.0,
             },
             StarResidual {
                 px_x: 500.0,
@@ -482,6 +550,8 @@ mod tests {
                 err_x: 100.0,
                 err_y: 100.0,
                 err_px: 141.4,
+                ra_deg: 0.0,
+                dec_deg: 0.0,
             },
         ];
         // Query near the first two residuals; k=2 should exclude the far one
@@ -508,28 +578,13 @@ mod tests {
             err_x: 4.0,
             err_y: 6.0,
             err_px: 7.2,
+            ra_deg: 0.0,
+            dec_deg: 0.0,
         }];
         // request 10 nearest but only 1 exists
         let (ex, ey) = wcs.nearest_residual(0.0, 0.0, 10);
         assert_eq!(ex, 4.0);
         assert_eq!(ey, 6.0);
-    }
-
-    #[test]
-    fn fmt_ra_formats_decimal_degrees_as_hms() {
-        // 180° = 12h
-        assert_eq!(fmt_ra(180.0), "12 00 00.000");
-        // 0° = 00h
-        assert_eq!(fmt_ra(0.0), "00 00 00.000");
-        // 15° = 1h
-        assert_eq!(fmt_ra(15.0), "01 00 00.000");
-    }
-
-    #[test]
-    fn fmt_dec_shows_sign_and_dms() {
-        assert_eq!(fmt_dec(0.0), "+00 00 00.00");
-        assert_eq!(fmt_dec(45.5), "+45 30 00.00");
-        assert_eq!(fmt_dec(-30.25), "-30 15 00.00");
     }
 
     #[test]

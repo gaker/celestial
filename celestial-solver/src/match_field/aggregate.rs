@@ -5,7 +5,7 @@
 //! picks the best catalog for each image star, resolves catalog collisions, and
 //! drops singletons.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use celestial_catalog::query::cone::ConeSearchResult;
 use celestial_catalog::query::quad::QuadStar;
@@ -15,91 +15,24 @@ use crate::detect::DetectedStar;
 
 #[derive(Debug, Clone, Copy)]
 pub(super) struct VoteEntry {
-    pub px_x: f64,
-    pub px_y: f64,
-    pub ra: f64,
-    pub dec: f64,
-    pub snr: f64,
-    pub votes: usize,
+    pub(super) px_x: f64,
+    pub(super) px_y: f64,
+    pub(super) ra: f64,
+    pub(super) dec: f64,
+    pub(super) snr: f64,
+    votes: usize,
 }
 
 #[derive(Debug, Clone, Copy)]
-pub(super) struct BestMatch {
-    pub cat_id: i64,
-    pub entry: VoteEntry,
+struct BestMatch {
+    cat_id: i64,
+    entry: VoteEntry,
 }
 
-pub(super) fn extract_pairs(
-    matches: &[QuadMatch],
-    detected: &[DetectedStar],
-    image_stars: &[QuadStar],
-    catalog_stars: &[QuadStar],
-    catalog_results: &[ConeSearchResult],
-) -> Vec<StarPair> {
-    let ra_dec: HashMap<i64, (f64, f64)> = catalog_results
-        .iter()
-        .map(|r| (r.star.source_id, (r.ra_deg, r.dec_deg)))
-        .collect();
-
-    let mut votes: HashMap<(i64, i64), VoteEntry> = HashMap::new();
-    for m in matches {
-        for i in 0..4 {
-            let img_idx = m.image_quad.star_indices[i];
-            let cat_idx = m.catalog_quad.star_indices[i];
-            if img_idx >= image_stars.len() || cat_idx >= catalog_stars.len() {
-                continue;
-            }
-            let img_star = &image_stars[img_idx];
-            let cat_id = catalog_stars[cat_idx].source_id;
-            let Some(&(ra, dec)) = ra_dec.get(&cat_id) else {
-                continue;
-            };
-            let det_idx = img_star.source_id as usize;
-            let det = &detected[det_idx];
-            let key = (img_star.source_id, cat_id);
-            let entry = votes.entry(key).or_insert(VoteEntry {
-                px_x: det.x,
-                px_y: det.y,
-                ra,
-                dec,
-                snr: det.snr,
-                votes: 0,
-            });
-            entry.votes += 1;
-        }
-    }
-
-    let mut by_image: HashMap<i64, BestMatch> = HashMap::new();
-    for (&(img_id, cat_id), entry) in &votes {
-        by_image
-            .entry(img_id)
-            .and_modify(|best| {
-                if entry.votes > best.entry.votes
-                    || (entry.votes == best.entry.votes && cat_id < best.cat_id)
-                {
-                    *best = BestMatch {
-                        cat_id,
-                        entry: *entry,
-                    };
-                }
-            })
-            .or_insert(BestMatch {
-                cat_id,
-                entry: *entry,
-            });
-    }
-
-    let mut used_cat: HashMap<i64, (i64, usize)> = HashMap::new();
-    for (&img_id, best) in &by_image {
-        used_cat
-            .entry(best.cat_id)
-            .and_modify(|e| {
-                if best.entry.votes > e.1 || (best.entry.votes == e.1 && img_id < e.0) {
-                    *e = (img_id, best.entry.votes);
-                }
-            })
-            .or_insert((img_id, best.entry.votes));
-    }
+pub(super) fn extract_pairs(matches: &[QuadMatch], sources: &VoteSources<'_>) -> Vec<StarPair> {
+    let votes = count_votes(matches, sources);
+    let by_image = best_catalog_per_image(&votes);
+    let used_cat = claim_catalog_stars(&by_image);
 
     let mut pairs: Vec<StarPair> = by_image
         .iter()
@@ -115,8 +48,121 @@ pub(super) fn extract_pairs(
             snr: best.entry.snr,
         })
         .collect();
-    pairs.sort_by_key(|p| std::cmp::Reverse(p.votes));
+    pairs.sort_by(StarPair::cmp_rank);
     pairs
+}
+
+// Resolves quad star indices to detections and catalog positions.
+pub(super) struct VoteSources<'a> {
+    detected: &'a [DetectedStar],
+    image_stars: &'a [QuadStar],
+    catalog_stars: &'a [QuadStar],
+    ra_dec: HashMap<i64, (f64, f64)>,
+}
+
+impl<'a> VoteSources<'a> {
+    pub(super) fn new(
+        detected: &'a [DetectedStar],
+        image_stars: &'a [QuadStar],
+        catalog_stars: &'a [QuadStar],
+        catalog_results: &[ConeSearchResult],
+    ) -> Self {
+        Self {
+            detected,
+            image_stars,
+            catalog_stars,
+            ra_dec: catalog_results
+                .iter()
+                .map(|r| (r.star.source_id, (r.ra_deg, r.dec_deg)))
+                .collect(),
+        }
+    }
+
+    // The (image id, catalog id) key and a zero-vote entry for one quad slot, or None
+    // when an index is out of range or the catalog star has no cone-search position.
+    pub(super) fn slot_entry(
+        &self,
+        img_idx: usize,
+        cat_idx: usize,
+    ) -> Option<((i64, i64), VoteEntry)> {
+        let img_star = self.image_stars.get(img_idx)?;
+        let cat_id = self.catalog_stars.get(cat_idx)?.source_id;
+        let &(ra, dec) = self.ra_dec.get(&cat_id)?;
+        let det = self
+            .detected
+            .get(usize::try_from(img_star.source_id).ok()?)?;
+        let entry = VoteEntry {
+            px_x: det.x,
+            px_y: det.y,
+            ra,
+            dec,
+            snr: det.snr,
+            votes: 0,
+        };
+        Some(((img_star.source_id, cat_id), entry))
+    }
+}
+
+// BTreeMap keeps every later step independent of hasher state: iteration runs in
+// (image id, catalog id) order.
+fn count_votes(
+    matches: &[QuadMatch],
+    sources: &VoteSources<'_>,
+) -> BTreeMap<(i64, i64), VoteEntry> {
+    let mut votes = BTreeMap::new();
+    for m in matches {
+        let slots = m
+            .image_quad
+            .star_indices
+            .iter()
+            .zip(&m.catalog_quad.star_indices);
+        for (&img_idx, &cat_idx) in slots {
+            if let Some((key, fresh)) = sources.slot_entry(img_idx, cat_idx) {
+                votes.entry(key).or_insert(fresh).votes += 1;
+            }
+        }
+    }
+    votes
+}
+
+// For each image star, the catalog star with the most votes; ties go to the lower
+// catalog id.
+fn best_catalog_per_image(votes: &BTreeMap<(i64, i64), VoteEntry>) -> BTreeMap<i64, BestMatch> {
+    let mut by_image: BTreeMap<i64, BestMatch> = BTreeMap::new();
+    for (&(img_id, cat_id), entry) in votes {
+        let candidate = BestMatch {
+            cat_id,
+            entry: *entry,
+        };
+        by_image
+            .entry(img_id)
+            .and_modify(|best| {
+                if entry.votes > best.entry.votes
+                    || (entry.votes == best.entry.votes && cat_id < best.cat_id)
+                {
+                    *best = candidate;
+                }
+            })
+            .or_insert(candidate);
+    }
+    by_image
+}
+
+// For each catalog star, the image star that claims it with the most votes; ties go
+// to the lower image id. Values are (image id, votes).
+fn claim_catalog_stars(by_image: &BTreeMap<i64, BestMatch>) -> BTreeMap<i64, (i64, usize)> {
+    let mut used_cat: BTreeMap<i64, (i64, usize)> = BTreeMap::new();
+    for (&img_id, best) in by_image {
+        used_cat
+            .entry(best.cat_id)
+            .and_modify(|e| {
+                if best.entry.votes > e.1 || (best.entry.votes == e.1 && img_id < e.0) {
+                    *e = (img_id, best.entry.votes);
+                }
+            })
+            .or_insert((img_id, best.entry.votes));
+    }
+    used_cat
 }
 
 #[cfg(test)]
@@ -190,7 +236,7 @@ mod tests {
         let img = vec![img_star(0)];
         let cat = vec![cat_star(1000)];
         let res = vec![cone_result(1000, 10.0, 20.0)];
-        let pairs = extract_pairs(&[], &detected, &img, &cat, &res);
+        let pairs = extract_pairs(&[], &VoteSources::new(&detected, &img, &cat, &res));
         assert!(pairs.is_empty());
     }
 
@@ -204,7 +250,7 @@ mod tests {
             .map(|i| cone_result(1000 + i as i64, i as f64, i as f64))
             .collect();
         let m = vec![quad_match([0, 1, 2, 3], [0, 1, 2, 3])];
-        let pairs = extract_pairs(&m, &detected, &img, &cat, &res);
+        let pairs = extract_pairs(&m, &VoteSources::new(&detected, &img, &cat, &res));
         assert!(pairs.is_empty(), "singletons must be filtered");
     }
 
@@ -227,7 +273,7 @@ mod tests {
             quad_match([0, 1, 2, 3], [0, 1, 2, 3]),
             quad_match([0, 1, 2, 4], [0, 1, 2, 4]),
         ];
-        let pairs = extract_pairs(&m, &detected, &img, &cat, &res);
+        let pairs = extract_pairs(&m, &VoteSources::new(&detected, &img, &cat, &res));
         // Stars 0, 1, 2 got 2 votes each; 3 and 4 only 1.
         assert_eq!(pairs.len(), 3);
         for p in &pairs {
@@ -254,7 +300,7 @@ mod tests {
             quad_match([0, 1, 2, 4], [0, 1, 2, 4]),
             quad_match([0, 3, 4, 5], [0, 3, 4, 5]),
         ];
-        let pairs = extract_pairs(&m, &detected, &img, &cat, &res);
+        let pairs = extract_pairs(&m, &VoteSources::new(&detected, &img, &cat, &res));
         for w in pairs.windows(2) {
             assert!(w[0].votes >= w[1].votes);
         }
@@ -272,7 +318,7 @@ mod tests {
             quad_match([99, 99, 99, 99], [99, 99, 99, 99]),
             quad_match([99, 99, 99, 99], [99, 99, 99, 99]),
         ];
-        let pairs = extract_pairs(&m, &detected, &img, &cat, &res);
+        let pairs = extract_pairs(&m, &VoteSources::new(&detected, &img, &cat, &res));
         assert!(pairs.is_empty());
     }
 
@@ -287,7 +333,7 @@ mod tests {
             quad_match([0, 1, 2, 3], [0, 1, 2, 3]),
             quad_match([0, 1, 2, 3], [0, 1, 2, 3]),
         ];
-        let pairs = extract_pairs(&m, &detected, &img, &cat, &res);
+        let pairs = extract_pairs(&m, &VoteSources::new(&detected, &img, &cat, &res));
         assert!(pairs.is_empty());
     }
 
@@ -322,7 +368,7 @@ mod tests {
             quad_match([1, 2, 3, 4], [0, 2, 3, 4]),
             quad_match([1, 2, 3, 4], [0, 2, 3, 4]),
         ];
-        let pairs = extract_pairs(&m, &detected, &img, &cat, &res);
+        let pairs = extract_pairs(&m, &VoteSources::new(&detected, &img, &cat, &res));
         let cat7000 = pairs.iter().find(|p| p.ra_deg == 5.0);
         assert!(cat7000.is_some(), "img 0 should claim cat 7000");
         assert_eq!(cat7000.unwrap().votes, 3);
@@ -360,7 +406,7 @@ mod tests {
             quad_match([0, 1, 2, 3], [4, 1, 2, 3]),
             quad_match([0, 1, 2, 3], [4, 1, 2, 3]),
         ];
-        let pairs = extract_pairs(&m, &detected, &img, &cat, &res);
+        let pairs = extract_pairs(&m, &VoteSources::new(&detected, &img, &cat, &res));
         // Img 0 had two catalog candidates; by_image's and_modify branch picks 8000 (3 votes).
         let img0_pair = pairs.iter().find(|p| p.ra_deg == 1.0);
         assert!(
@@ -397,9 +443,94 @@ mod tests {
             quad_match([1, 2, 3, 4], [0, 2, 3, 4]),
             quad_match([1, 2, 3, 4], [0, 2, 3, 4]),
         ];
-        let pairs = extract_pairs(&m, &detected, &img, &cat, &res);
+        let pairs = extract_pairs(&m, &VoteSources::new(&detected, &img, &cat, &res));
         // Img 0 and img 1 tied at 2 votes for cat 7000; lower id wins → only one pair at ra=5.0.
         let cat7000 = pairs.iter().filter(|p| p.ra_deg == 5.0).count();
         assert_eq!(cat7000, 1);
+    }
+
+    type PairBits = (u64, u64, u64, u64, usize, u64);
+
+    fn pair_bits(pairs: &[StarPair]) -> Vec<PairBits> {
+        pairs
+            .iter()
+            .map(|p| {
+                (
+                    p.px_x.to_bits(),
+                    p.px_y.to_bits(),
+                    p.ra_deg.to_bits(),
+                    p.dec_deg.to_bits(),
+                    p.votes,
+                    p.snr.to_bits(),
+                )
+            })
+            .collect()
+    }
+
+    // 16 image stars in four disjoint quads, each quad matched twice, so every pair
+    // has 2 votes. Stars 0..8 share snr 50; stars 8..16 have distinct snr.
+    struct TiedVotes {
+        detected: Vec<DetectedStar>,
+        img: Vec<QuadStar>,
+        cat: Vec<QuadStar>,
+        res: Vec<ConeSearchResult>,
+        matches: Vec<QuadMatch>,
+    }
+
+    fn tied_votes() -> TiedVotes {
+        let detected = (0..16)
+            .map(|i| {
+                let snr = if i < 8 { 50.0 } else { 10.0 + i as f64 };
+                det(100.0 - i as f64, 3.0 * i as f64, snr)
+            })
+            .collect();
+        let matches = (0..4)
+            .flat_map(|q| {
+                let idx = [4 * q, 4 * q + 1, 4 * q + 2, 4 * q + 3];
+                [quad_match(idx, idx), quad_match(idx, idx)]
+            })
+            .collect();
+        TiedVotes {
+            detected,
+            img: (0..16).map(|i| img_star(i as i64)).collect(),
+            cat: (0..16).map(|i| cat_star(1000 + i as i64)).collect(),
+            res: (0..16)
+                .map(|i| cone_result(1000 + i as i64, i as f64, -(i as f64)))
+                .collect(),
+            matches,
+        }
+    }
+
+    #[test]
+    fn extract_pairs_is_identical_across_calls() {
+        let t = tied_votes();
+        let first = extract_pairs(
+            &t.matches,
+            &VoteSources::new(&t.detected, &t.img, &t.cat, &t.res),
+        );
+        for _ in 0..20 {
+            let again = extract_pairs(
+                &t.matches,
+                &VoteSources::new(&t.detected, &t.img, &t.cat, &t.res),
+            );
+            assert_eq!(pair_bits(&again), pair_bits(&first));
+        }
+    }
+
+    #[test]
+    fn extract_pairs_breaks_vote_ties_by_snr_then_pixel_position() {
+        let t = tied_votes();
+        let pairs = extract_pairs(
+            &t.matches,
+            &VoteSources::new(&t.detected, &t.img, &t.cat, &t.res),
+        );
+        // Stars 7..0 (snr 50, ascending px_x), then stars 15..8 (snr 25..18).
+        let expected: Vec<f64> = (0..8)
+            .rev()
+            .chain((8..16).rev())
+            .map(|i| i as f64)
+            .collect();
+        let ra: Vec<f64> = pairs.iter().map(|p| p.ra_deg).collect();
+        assert_eq!(ra, expected);
     }
 }

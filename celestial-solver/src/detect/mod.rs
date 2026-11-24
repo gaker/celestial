@@ -9,21 +9,30 @@
 //! use celestial_solver::detect::{find_bright_stars, DetectionParams};
 //!
 //! let image: Vec<u16> = vec![/* raw16 from an astro camera */];
-//! let stars = find_bright_stars(&image, 4656, 3520, &DetectionParams::default());
+//! let stars = find_bright_stars(&image, 4656, 3520, &DetectionParams::default())?;
 //! ```
 
 mod background;
 mod centroid;
-pub mod components;
+mod components;
 mod dedup;
-mod pixel;
-pub mod structure;
+mod params;
+pub mod pixel;
+mod saturation;
+pub(crate) mod stats;
+mod structure;
+#[cfg(test)]
+pub(crate) mod test_images;
 
+use crate::error::SolveError;
+use background::{estimate_background, BackgroundMap};
+use centroid::{centroid_regions, CentroidSettings};
+use components::StarRegion;
+use dedup::deduplicate;
+use params::check_params;
+use pixel::Pixel;
 use rayon::prelude::*;
-
-pub use background::estimate_background;
-pub use dedup::deduplicate;
-pub use pixel::Pixel;
+use saturation::estimate_saturation;
 
 /// A star detected in the image.
 ///
@@ -38,7 +47,7 @@ pub use pixel::Pixel;
 /// use celestial_solver::detect::{find_bright_stars, DetectionParams};
 ///
 /// let image = vec![0u16; 128 * 128];
-/// let stars = find_bright_stars(&image, 128, 128, &DetectionParams::default());
+/// let stars = find_bright_stars(&image, 128, 128, &DetectionParams::default())?;
 /// for s in &stars {
 ///     println!("({:.2}, {:.2}) flux={:.0} snr={:.1}", s.x, s.y, s.flux, s.snr);
 /// }
@@ -93,12 +102,14 @@ pub struct DetectionParams {
     /// If `true`, don't reject components with multiple intensity maxima as unresolved
     /// pairs.
     pub allow_clustered: bool,
-    /// Border margin in pixels — detections closer than this to the edge are dropped.
+    /// Border margin in pixels. A region whose bounding box is closer than this to an
+    /// edge is dropped, because its PSF is truncated. 0 keeps regions that touch an edge.
     pub border_margin: usize,
     /// Minimum spacing (pixels) between detections after deduplication.
     pub min_spacing: f64,
-    /// Explicit saturation threshold in ADU. `None` auto-estimates from pixel data for
-    /// float types or uses the native type ceiling for integer types.
+    /// Explicit saturation threshold in ADU. `None` estimates it from the pixel data for
+    /// every pixel type: when two or more pixels share the image maximum and it is above
+    /// the background, the threshold is 90% of that maximum; otherwise there is none.
     pub saturation_adu: Option<f64>,
     /// Maximum number of saturated pixels in a region before the whole region is
     /// rejected.
@@ -126,31 +137,27 @@ impl Default for DetectionParams {
     }
 }
 
-/// Per-pixel background estimate across the image.
-///
-/// Produced by [`estimate_background`]. The `map` is row-major, same dimensions as the
-/// source image, in f64. `noise` is the sigma-clipped standard deviation of the
-/// background residuals — useful as a SNR denominator.
-#[derive(Debug, Clone)]
-pub struct BackgroundMap {
-    /// Background estimate at every pixel, row-major.
-    pub map: Vec<f64>,
-    /// Sigma-clipped standard deviation of background residuals.
-    pub noise: f64,
-    /// Image width in pixels.
-    pub width: usize,
-    /// Image height in pixels.
-    pub height: usize,
-}
-
 /// Detects stars in an image. The main entry point to this module.
 ///
 /// Runs background estimation, structure-map construction, connected-components
 /// labeling, centroiding, SNR filtering, and deduplication. Output is sorted by
-/// descending flux.
+/// descending flux. Non-finite pixels (NaN marks blank pixels) are ignored, and no
+/// star is reported with its centroid on one.
 ///
 /// Generic over any type implementing [`Pixel`]: `u8`, `i8`, `u16`, `i16`, `u32`,
 /// `i32`, `u64`, `i64`, `f32` and `f64` are all supported.
+///
+/// # Errors
+///
+/// [`SolveError::InvalidDimensions`] for a zero width or height,
+/// [`SolveError::BufferLength`] when `image.len() != width * height`,
+/// [`SolveError::NoFinitePixels`] when every pixel is NaN or infinite,
+/// [`SolveError::NonFiniteStatistic`] when the background or its noise overflows, and
+/// [`SolveError::InvalidParameter`] when a field of `params` is out of range:
+/// `mesh_size` of 0, `structure_layers` above 10,
+/// `min_structure_size` above `max_structure_size`, `min_coverage` outside 0 to 1,
+/// `min_snr` or `min_spacing` negative or not finite, or `saturation_adu` negative or
+/// NaN. `saturation_adu` of `+inf` means no pixel counts as saturated.
 ///
 /// # Examples
 ///
@@ -159,24 +166,79 @@ pub struct BackgroundMap {
 ///
 /// // u16 raw from an astro camera
 /// let image: Vec<u16> = vec![0; 4656 * 3520];
-/// let stars = find_bright_stars(&image, 4656, 3520, &DetectionParams::default());
+/// let stars = find_bright_stars(&image, 4656, 3520, &DetectionParams::default())?;
 /// ```
 pub fn find_bright_stars<T: Pixel>(
     image: &[T],
     width: usize,
     height: usize,
     params: &DetectionParams,
-) -> Vec<DetectedStar> {
+) -> Result<Vec<DetectedStar>, SolveError> {
+    check_params(params)?;
     let t = std::time::Instant::now();
-    let bg = estimate_background(image, width, height, params.mesh_size);
+    let bg = estimate_background(image, width, height, params.mesh_size)?;
     log::info!(
         "[detect]   background: {:?} (noise={:.2})",
         t.elapsed(),
         bg.noise
     );
+    // A noise of 0 means every finite residual is equal (or at most one pixel is
+    // finite), so no pixel stands above the background. Returning here also keeps the
+    // SNR from dividing by 0.
+    if bg.noise == 0.0 {
+        return Ok(Vec::new());
+    }
 
+    let regions = find_regions(image, &bg, params);
+    let settings = centroid_settings(image, &bg, params);
+    let stars = centroid_regions(image, &bg, &regions, &settings, params.max_saturated_pixels);
+    Ok(brightest_first(stars, params.min_spacing))
+}
+
+fn centroid_settings<T: Pixel>(
+    image: &[T],
+    bg: &BackgroundMap,
+    params: &DetectionParams,
+) -> CentroidSettings {
+    CentroidSettings {
+        saturation_limit: params
+            .saturation_adu
+            .unwrap_or_else(|| estimate_saturation(image, &bg.map)),
+        min_snr: params.min_snr,
+        allow_clustered: params.allow_clustered,
+        background_noise: bg.noise,
+    }
+}
+
+// `stars` by descending flux, without those within `min_spacing` of a brighter one.
+fn brightest_first(mut stars: Vec<DetectedStar>, min_spacing: f64) -> Vec<DetectedStar> {
     let t = std::time::Instant::now();
-    let mask = structure::build_structure_map(image, &bg, params.structure_layers);
+    stars.sort_by(|a, b| b.flux.total_cmp(&a.flux));
+    deduplicate(&mut stars, min_spacing);
+    log::info!(
+        "[detect]   sort+dedup: {:?} ({} after dedup)",
+        t.elapsed(),
+        stars.len()
+    );
+    stars
+}
+
+// The reference pixel (CRPIX) of every WCS fit and the origin of the quad-star tangent
+// plane. Detection coordinates are 0-based: the centre of the first pixel is 0.0, so
+// the image spans -0.5 to width - 0.5 and this point is half a pixel right of and
+// below its geometric centre. In PixInsight's frame, where the first pixel's outer
+// corner is 0.0, it is (width + 1, height + 1) / 2.
+pub(crate) fn image_centre(width: usize, height: usize) -> (f64, f64) {
+    (width as f64 / 2.0, height as f64 / 2.0)
+}
+
+fn find_regions<T: Pixel>(
+    image: &[T],
+    bg: &BackgroundMap,
+    params: &DetectionParams,
+) -> Vec<StarRegion> {
+    let t = std::time::Instant::now();
+    let mask = structure::build_structure_map(image, bg, params.structure_layers);
     let mask_count: usize = mask.par_iter().map(|&v| v as usize).sum();
     log::info!(
         "[detect]   structure:  {:?} ({mask_count} px set)",
@@ -186,192 +248,32 @@ pub fn find_bright_stars<T: Pixel>(
     let t = std::time::Instant::now();
     let regions = components::find_connected_components(
         &mask,
-        width,
-        height,
+        bg.width,
+        bg.height,
         params.min_structure_size,
         params.max_structure_size,
         params.min_coverage,
+        params.border_margin,
     );
     log::info!(
         "[detect]   components: {:?} ({} regions)",
         t.elapsed(),
         regions.len()
     );
-
-    let t = std::time::Instant::now();
-    let saturation_limit = match params.saturation_adu {
-        Some(adu) => adu,
-        None => estimate_saturation(image),
-    };
-
-    enum CentroidOutcome {
-        Star(DetectedStar),
-        RejectedSnr,
-        RejectedSat,
-    }
-
-    let outcomes: Vec<CentroidOutcome> = regions
-        .par_iter()
-        .map(|region| {
-            let star = centroid::centroid_region(
-                image,
-                width,
-                height,
-                region,
-                saturation_limit,
-                params.min_snr,
-                params.allow_clustered,
-            );
-            match star {
-                None => CentroidOutcome::RejectedSnr,
-                Some(s) if s.saturated_count > params.max_saturated_pixels => {
-                    CentroidOutcome::RejectedSat
-                }
-                Some(s) => CentroidOutcome::Star(s),
-            }
-        })
-        .collect();
-
-    let mut rejected_snr = 0_usize;
-    let mut rejected_sat = 0_usize;
-    let mut stars: Vec<DetectedStar> = Vec::with_capacity(outcomes.len());
-    for o in outcomes {
-        match o {
-            CentroidOutcome::Star(s) => stars.push(s),
-            CentroidOutcome::RejectedSnr => rejected_snr += 1,
-            CentroidOutcome::RejectedSat => rejected_sat += 1,
-        }
-    }
-    log::info!(
-        "[detect]   centroid:   {:?} ({} passed, {} rej_snr, {} rej_sat)",
-        t.elapsed(),
-        stars.len(),
-        rejected_snr,
-        rejected_sat
-    );
-
-    let t = std::time::Instant::now();
-    stars.sort_by(|a, b| {
-        b.flux
-            .partial_cmp(&a.flux)
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
-
-    deduplicate(&mut stars, params.min_spacing);
-    log::info!(
-        "[detect]   sort+dedup: {:?} ({} after dedup)",
-        t.elapsed(),
-        stars.len()
-    );
-
-    stars
-}
-
-fn estimate_saturation<T: Pixel>(image: &[T]) -> f64 {
-    let mut max_val = 0.0_f64;
-    let mut count_at_max: u32 = 0;
-    for &v in image {
-        let v = v.to_f64();
-        if v > max_val {
-            max_val = v;
-            count_at_max = 1;
-        } else if v == max_val {
-            count_at_max += 1;
-        }
-    }
-    if count_at_max >= 2 {
-        max_val * 0.9
-    } else {
-        f64::INFINITY
-    }
+    regions
 }
 
 #[cfg(test)]
 mod tests {
+    use super::test_images::{
+        add_gaussian, gaussian_image, gaussian_profile, quantised_frame, sample_sigma_about_10,
+    };
     use super::*;
 
-    fn gaussian_image(
-        w: usize,
-        h: usize,
-        cx: f64,
-        cy: f64,
-        peak: f32,
-        sigma: f64,
-        bg_level: f32,
-    ) -> Vec<f32> {
-        let mut image = vec![bg_level; w * h];
-        for y in 0..h {
-            for x in 0..w {
-                let dx = x as f64 - cx;
-                let dy = y as f64 - cy;
-                let r_sq = dx * dx + dy * dy;
-                let g = libm::exp(-r_sq / (2.0 * sigma * sigma));
-                image[y * w + x] = bg_level + peak * g as f32;
-            }
-        }
-        image
-    }
-
-    fn add_gaussian(
-        image: &mut [f32],
-        w: usize,
-        h: usize,
-        cx: f64,
-        cy: f64,
-        peak: f32,
-        sigma: f64,
-    ) {
-        for y in 0..h {
-            for x in 0..w {
-                let dx = x as f64 - cx;
-                let dy = y as f64 - cy;
-                let r_sq = dx * dx + dy * dy;
-                let g = libm::exp(-r_sq / (2.0 * sigma * sigma));
-                image[y * w + x] += peak * g as f32;
-            }
-        }
-    }
-
     #[test]
-    fn estimate_saturation_unique_max_returns_infinity() {
-        let image: Vec<f32> = (0..100).map(|i| i as f32).collect();
-        assert_eq!(estimate_saturation(&image), f64::INFINITY);
-    }
-
-    #[test]
-    fn estimate_saturation_tied_max_returns_fraction() {
-        let image = vec![10.0_f32, 50.0, 30.0, 50.0, 20.0];
-        let limit = estimate_saturation(&image);
-        assert!((limit - 45.0).abs() < 1e-5, "expected ~45.0, got {limit}");
-    }
-
-    #[test]
-    fn estimate_saturation_many_at_max() {
-        let mut image = vec![0.0_f32; 1000];
-        for v in image.iter_mut().take(50) {
-            *v = 65535.0;
-        }
-        let limit = estimate_saturation(&image);
-        assert!((limit - 65535.0 * 0.9).abs() < 1e-1);
-    }
-
-    #[test]
-    fn estimate_saturation_empty_image() {
-        let image: Vec<f32> = vec![];
-        assert_eq!(estimate_saturation(&image), f64::INFINITY);
-    }
-
-    #[test]
-    fn estimate_saturation_single_pixel() {
-        let image = vec![1000.0_f32];
-        assert_eq!(estimate_saturation(&image), f64::INFINITY);
-    }
-
-    #[test]
-    fn estimate_saturation_all_zero() {
-        let image = vec![0.0_f32; 100];
-        let limit = estimate_saturation(&image);
-        assert_eq!(limit, 0.0);
+    fn image_centre_is_half_the_size_in_detection_pixels() {
+        assert_eq!(image_centre(4944, 3284), (2472.0, 1642.0));
+        assert_eq!(image_centre(2327, 1761), (1163.5, 880.5));
     }
 
     #[test]
@@ -379,7 +281,7 @@ mod tests {
         let w = 128;
         let h = 128;
         let image = vec![100.0_f32; w * h];
-        let stars = find_bright_stars(&image, w, h, &DetectionParams::default());
+        let stars = find_bright_stars(&image, w, h, &DetectionParams::default()).unwrap();
         assert!(
             stars.is_empty(),
             "flat field should produce no stars, got {}",
@@ -391,15 +293,16 @@ mod tests {
     fn find_bright_stars_detects_single_star() {
         let w = 128;
         let h = 128;
-        let image = gaussian_image(w, h, 64.0, 64.0, 5000.0, 2.0, 100.0);
-        let stars = find_bright_stars(&image, w, h, &DetectionParams::default());
+        let image = gaussian_image(w, h, (64.0, 64.0), 5000.0, 2.0, 100.0);
+        let stars = find_bright_stars(&image, w, h, &DetectionParams::default()).unwrap();
 
         assert_eq!(stars.len(), 1, "expected 1 star, got {}", stars.len());
         let s = &stars[0];
-        assert!((s.x - 64.0).abs() < 0.5, "cx={}, expected ~64.0", s.x);
-        assert!((s.y - 64.0).abs() < 0.5, "cy={}, expected ~64.0", s.y);
-        assert!(s.flux > 0.0);
-        assert!(s.snr > 5.0);
+        // The Gaussian is centred on (64, 64).
+        assert_eq!(
+            (s.x, s.y, s.flux, s.snr),
+            (64.0, 64.0, 89720.26708984375, 6116156.423986896)
+        );
     }
 
     #[test]
@@ -407,11 +310,11 @@ mod tests {
         let w = 256;
         let h = 256;
         let mut image = vec![100.0_f32; w * h];
-        add_gaussian(&mut image, w, h, 64.0, 64.0, 1000.0, 2.0);
-        add_gaussian(&mut image, w, h, 192.0, 64.0, 5000.0, 2.0);
-        add_gaussian(&mut image, w, h, 128.0, 192.0, 3000.0, 2.0);
+        add_gaussian(&mut image, w, h, (64.0, 64.0), 1000.0, 2.0);
+        add_gaussian(&mut image, w, h, (192.0, 64.0), 5000.0, 2.0);
+        add_gaussian(&mut image, w, h, (128.0, 192.0), 3000.0, 2.0);
 
-        let stars = find_bright_stars(&image, w, h, &DetectionParams::default());
+        let stars = find_bright_stars(&image, w, h, &DetectionParams::default()).unwrap();
         assert_eq!(stars.len(), 3);
 
         for pair in stars.windows(2) {
@@ -428,13 +331,13 @@ mod tests {
     fn find_bright_stars_respects_min_snr() {
         let w = 128;
         let h = 128;
-        let image = gaussian_image(w, h, 64.0, 64.0, 5000.0, 2.0, 100.0);
+        let image = gaussian_image(w, h, (64.0, 64.0), 5000.0, 2.0, 100.0);
 
         let strict = DetectionParams {
             min_snr: 1.0e9,
             ..DetectionParams::default()
         };
-        let stars = find_bright_stars(&image, w, h, &strict);
+        let stars = find_bright_stars(&image, w, h, &strict).unwrap();
         assert!(
             stars.is_empty(),
             "impossibly high min_snr should reject all stars"
@@ -446,14 +349,14 @@ mod tests {
         let w = 128;
         let h = 128;
         let mut image = vec![100.0_f32; w * h];
-        add_gaussian(&mut image, w, h, 64.0, 64.0, 5000.0, 2.0);
-        add_gaussian(&mut image, w, h, 67.0, 64.0, 3000.0, 2.0);
+        add_gaussian(&mut image, w, h, (64.0, 64.0), 5000.0, 2.0);
+        add_gaussian(&mut image, w, h, (67.0, 64.0), 3000.0, 2.0);
 
         let params = DetectionParams {
             min_spacing: 20.0,
             ..DetectionParams::default()
         };
-        let stars = find_bright_stars(&image, w, h, &params);
+        let stars = find_bright_stars(&image, w, h, &params).unwrap();
         assert_eq!(
             stars.len(),
             1,
@@ -465,52 +368,195 @@ mod tests {
     fn find_bright_stars_detects_on_u16_image() {
         let w = 128;
         let h = 128;
-        let mut image = vec![500u16; w * h];
-        for y in 0..h {
-            for x in 0..w {
-                let dx = x as f64 - 64.0;
-                let dy = y as f64 - 64.0;
-                let r_sq = dx * dx + dy * dy;
-                let g = libm::exp(-r_sq / 8.0);
-                image[y * w + x] = image[y * w + x].saturating_add((30_000.0 * g) as u16);
-            }
-        }
-        let stars = find_bright_stars(&image, w, h, &DetectionParams::default());
+        let image: Vec<u16> = gaussian_profile(w, h, (64.0, 64.0), 2.0)
+            .map(|g| 500u16.saturating_add((30_000.0 * g) as u16))
+            .collect();
+        let stars = find_bright_stars(&image, w, h, &DetectionParams::default()).unwrap();
         assert_eq!(stars.len(), 1, "u16 image should detect one star");
-        assert!((stars[0].x - 64.0).abs() < 0.5);
-        assert!((stars[0].y - 64.0).abs() < 0.5);
+        // The Gaussian is centred on (64, 64); the centroid's y is 1.4e-14 px from it.
+        assert_eq!((stars[0].x, stars[0].y), (64.0, 63.999999999999986));
     }
 
     #[test]
     fn find_bright_stars_detects_on_u8_image() {
         let w = 128;
         let h = 128;
-        let mut image = vec![20u8; w * h];
-        for y in 0..h {
-            for x in 0..w {
-                let dx = x as f64 - 64.0;
-                let dy = y as f64 - 64.0;
-                let r_sq = dx * dx + dy * dy;
-                let g = libm::exp(-r_sq / 8.0);
-                image[y * w + x] = image[y * w + x].saturating_add((200.0 * g) as u8);
-            }
-        }
-        let stars = find_bright_stars(&image, w, h, &DetectionParams::default());
+        let image: Vec<u8> = gaussian_profile(w, h, (64.0, 64.0), 2.0)
+            .map(|g| 20u8.saturating_add((200.0 * g) as u8))
+            .collect();
+        let stars = find_bright_stars(&image, w, h, &DetectionParams::default()).unwrap();
         assert_eq!(stars.len(), 1, "u8 image should detect one star");
+    }
+
+    fn one_centred_star(w: usize, h: usize) -> Vec<f32> {
+        gaussian_image(w, h, (w as f64 / 2.0, h as f64 / 2.0), 5000.0, 2.0, 100.0)
+    }
+
+    #[test]
+    fn find_bright_stars_on_one_mesh_cell_64x64() {
+        let stars = find_bright_stars(
+            &one_centred_star(64, 64),
+            64,
+            64,
+            &DetectionParams::default(),
+        )
+        .unwrap();
+        assert_eq!(stars.len(), 1);
+    }
+
+    #[test]
+    fn find_bright_stars_on_one_mesh_column_64x200() {
+        let stars = find_bright_stars(
+            &one_centred_star(64, 200),
+            64,
+            200,
+            &DetectionParams::default(),
+        )
+        .unwrap();
+        assert_eq!(stars.len(), 1);
+    }
+
+    #[test]
+    fn find_bright_stars_on_one_mesh_row_200x64() {
+        let stars = find_bright_stars(
+            &one_centred_star(200, 64),
+            200,
+            64,
+            &DetectionParams::default(),
+        )
+        .unwrap();
+        assert_eq!(stars.len(), 1);
+    }
+
+    #[test]
+    fn find_bright_stars_on_1x1_image() {
+        let stars = find_bright_stars(&[100.0_f32], 1, 1, &DetectionParams::default()).unwrap();
+        assert_eq!(stars.len(), 0);
+    }
+
+    #[test]
+    fn find_bright_stars_rejects_0x0_image() {
+        let image: Vec<f32> = Vec::new();
+        let err = find_bright_stars(&image, 0, 0, &DetectionParams::default()).unwrap_err();
+        assert!(matches!(
+            err,
+            SolveError::InvalidDimensions {
+                width: 0,
+                height: 0
+            }
+        ));
+    }
+
+    #[test]
+    fn find_bright_stars_rejects_zero_mesh_size() {
+        let params = DetectionParams {
+            mesh_size: 0,
+            ..DetectionParams::default()
+        };
+        let err = find_bright_stars(&one_centred_star(128, 128), 128, 128, &params).unwrap_err();
+        assert!(matches!(
+            err,
+            SolveError::InvalidParameter {
+                name: "mesh_size",
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn find_bright_stars_rejects_short_buffer() {
+        let image = one_centred_star(128, 128);
+        let err =
+            find_bright_stars(&image[..1000], 128, 128, &DetectionParams::default()).unwrap_err();
+        assert!(matches!(
+            err,
+            SolveError::BufferLength {
+                width: 128,
+                height: 128,
+                expected: 16384,
+                actual: 1000
+            }
+        ));
+    }
+
+    #[test]
+    fn find_bright_stars_drops_stars_inside_border_margin() {
+        let image = gaussian_image(128, 128, (6.0, 64.0), 5000.0, 2.0, 100.0);
+        let stars = find_bright_stars(&image, 128, 128, &DetectionParams::default()).unwrap();
+        assert_eq!(stars.len(), 0);
+        let margin_1 = DetectionParams {
+            border_margin: 1,
+            ..DetectionParams::default()
+        };
+        let stars = find_bright_stars(&image, 128, 128, &margin_1).unwrap();
+        assert_eq!(stars.len(), 1);
+    }
+
+    #[test]
+    fn find_bright_stars_rejects_nan_and_oversized_params() {
+        let image = one_centred_star(128, 128);
+        let nan_snr = DetectionParams {
+            min_snr: f64::NAN,
+            ..DetectionParams::default()
+        };
+        let err = find_bright_stars(&image, 128, 128, &nan_snr).unwrap_err();
+        assert!(matches!(
+            err,
+            SolveError::InvalidParameter {
+                name: "min_snr",
+                ..
+            }
+        ));
+        let layers = DetectionParams {
+            structure_layers: 11,
+            ..DetectionParams::default()
+        };
+        let err = find_bright_stars(&image, 128, 128, &layers).unwrap_err();
+        assert!(matches!(
+            err,
+            SolveError::InvalidParameter {
+                name: "structure_layers",
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn find_bright_stars_ignores_a_blank_border() {
+        let mut image = one_centred_star(128, 128);
+        let clean = find_bright_stars(&image, 128, 128, &DetectionParams::default()).unwrap();
+        for row in image.chunks_mut(128) {
+            row[..16].fill(f32::NAN);
+        }
+        let stars = find_bright_stars(&image, 128, 128, &DetectionParams::default()).unwrap();
+        assert_eq!(stars.len(), 1);
+        assert_eq!((stars[0].x, stars[0].y), (clean[0].x, clean[0].y));
+    }
+
+    #[test]
+    fn find_bright_stars_never_reports_a_star_at_a_nan_pixel() {
+        let mut image = one_centred_star(128, 128);
+        image[64 * 128 + 64] = f32::NAN;
+        let params = DetectionParams {
+            allow_clustered: true,
+            ..DetectionParams::default()
+        };
+        let stars = find_bright_stars(&image, 128, 128, &params).unwrap();
+        assert_eq!(stars.len(), 0);
     }
 
     #[test]
     fn find_bright_stars_respects_saturation_adu_override() {
         let w = 128;
         let h = 128;
-        let image = gaussian_image(w, h, 64.0, 64.0, 5000.0, 2.0, 100.0);
+        let image = gaussian_image(w, h, (64.0, 64.0), 5000.0, 2.0, 100.0);
 
         let params = DetectionParams {
             saturation_adu: Some(500.0),
             max_saturated_pixels: 0,
             ..DetectionParams::default()
         };
-        let stars = find_bright_stars(&image, w, h, &params);
+        let stars = find_bright_stars(&image, w, h, &params).unwrap();
         assert!(
             stars.is_empty(),
             "star above saturation_adu with zero tolerance should be rejected, got {} stars",
@@ -521,8 +567,75 @@ mod tests {
             saturation_adu: Some(50000.0),
             ..DetectionParams::default()
         };
-        let stars = find_bright_stars(&image, w, h, &params);
+        let stars = find_bright_stars(&image, w, h, &params).unwrap();
         assert_eq!(stars.len(), 1, "star below saturation_adu should survive");
         assert!(!stars[0].saturated);
+    }
+
+    #[test]
+    fn find_bright_stars_snr_is_finite_on_a_quantised_frame() {
+        let image = quantised_frame(&[(40, 40, 22), (90, 80, 16)]);
+        let noise = sample_sigma_about_10(&image);
+        let stars = find_bright_stars(&image, 128, 128, &DetectionParams::default()).unwrap();
+        let snrs: Vec<f64> = stars.iter().map(|s| s.snr).collect();
+        assert_eq!(snrs, vec![(22.0 - 10.0) / noise, (16.0 - 10.0) / noise]);
+    }
+
+    #[test]
+    fn find_bright_stars_rejects_negative_and_meaningless_params() {
+        let image = one_centred_star(128, 128);
+        let d = DetectionParams::default();
+        let bad = [
+            DetectionParams {
+                min_snr: -1.0,
+                ..d.clone()
+            },
+            DetectionParams {
+                min_snr: f64::INFINITY,
+                ..d.clone()
+            },
+            DetectionParams {
+                min_coverage: -1.0,
+                ..d.clone()
+            },
+            DetectionParams {
+                min_coverage: 1.5,
+                ..d.clone()
+            },
+            DetectionParams {
+                min_spacing: -5.0,
+                ..d.clone()
+            },
+            DetectionParams {
+                min_spacing: f64::INFINITY,
+                ..d.clone()
+            },
+            DetectionParams {
+                saturation_adu: Some(-1.0),
+                ..d.clone()
+            },
+            DetectionParams {
+                saturation_adu: Some(f64::NEG_INFINITY),
+                ..d.clone()
+            },
+            DetectionParams {
+                min_structure_size: 10,
+                max_structure_size: 9,
+                ..d.clone()
+            },
+        ];
+        for p in &bad {
+            assert!(find_bright_stars(&image, 128, 128, p).is_err(), "{p:?}");
+        }
+        let no_limit = DetectionParams {
+            saturation_adu: Some(f64::INFINITY),
+            ..d
+        };
+        assert_eq!(
+            find_bright_stars(&image, 128, 128, &no_limit)
+                .unwrap()
+                .len(),
+            1
+        );
     }
 }

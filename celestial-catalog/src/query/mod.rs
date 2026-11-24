@@ -12,4 +12,6 @@ mod disc;
 mod format;
 pub mod healpix;
 pub mod quad;
+#[cfg(any(test, feature = "test-support"))]
+pub mod test_support;
 pub mod validate;

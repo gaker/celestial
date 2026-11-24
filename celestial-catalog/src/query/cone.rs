@@ -203,8 +203,9 @@ fn apply_proper_motion(star: &StarRecord, from: &TT, to: &TT) -> CatalogResult<(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::query::catalog::tests::{build_test_catalog, make_star};
+    use crate::query::catalog::tests::build_test_catalog;
     use crate::query::healpix::ang2pix_nest;
+    use crate::query::test_support::make_star;
     use celestial_core::constants::{DEG_TO_RAD, RAD_TO_DEG};
     use std::collections::BTreeMap;
 

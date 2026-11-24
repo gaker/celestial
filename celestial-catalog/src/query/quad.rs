@@ -178,22 +178,28 @@ fn spine_frame(sa: &QuadStar, sb: &QuadStar, p: &QuadStar) -> Option<(f64, f64)>
     ))
 }
 
+// The `k` stars nearest `stars[seed]`, nearest first. Equal distances are ordered by x,
+// then y, so the choice does not depend on the order of `stars`; only stars at the same
+// position fall back to their index.
 fn knn_indices(stars: &[QuadStar], seed: usize, k: usize) -> Vec<usize> {
-    let sx = stars[seed].x;
-    let sy = stars[seed].y;
-    let mut dists: Vec<(usize, f64)> = stars
-        .iter()
-        .enumerate()
-        .filter(|(i, _)| *i != seed)
-        .map(|(i, s)| {
-            let dx = s.x - sx;
-            let dy = s.y - sy;
-            (i, dx * dx + dy * dy)
-        })
+    let centre = &stars[seed];
+    let mut others: Vec<(f64, usize)> = (0..stars.len())
+        .filter(|&i| i != seed)
+        .map(|i| (distance_sq(centre, &stars[i]), i))
         .collect();
-    dists.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(Ordering::Equal));
-    dists.truncate(k);
-    dists.into_iter().map(|(i, _)| i).collect()
+    let closer = |a: &(f64, usize), b: &(f64, usize)| {
+        let (sa, sb) = (&stars[a.1], &stars[b.1]);
+        a.0.total_cmp(&b.0)
+            .then(sa.x.total_cmp(&sb.x))
+            .then(sa.y.total_cmp(&sb.y))
+            .then(a.1.cmp(&b.1))
+    };
+    if k < others.len() {
+        others.select_nth_unstable_by(k, closer);
+        others.truncate(k);
+    }
+    others.sort_by(closer);
+    others.into_iter().map(|(_, i)| i).collect()
 }
 
 pub fn neighbor_quads(stars: &[QuadStar], k_neighbors: usize, min_spine_sq: f64) -> Vec<Quad> {
@@ -240,9 +246,12 @@ fn seed_combinations(seed: usize, neighbors: &[usize]) -> Vec<[usize; 4]> {
     sets
 }
 
+// Hash cells per unit of a hash value: each cell is 0.01 wide.
+const HASH_CELLS_PER_UNIT: f64 = 100.0;
+
 // Bins one hash value into a 0.01-wide cell.
 fn hash_bin(value: f64) -> i32 {
-    libm::floor(value * 100.0) as i32
+    libm::floor(value * HASH_CELLS_PER_UNIT) as i32
 }
 
 // Packs four cells into a key, 16 bits each, offset by 500 so small negative cells stay
@@ -251,6 +260,41 @@ fn pack_bins(bins: [i32; 4]) -> u64 {
     bins.iter().enumerate().fold(0, |key, (i, &bin)| {
         key | ((bin.wrapping_add(500) as u64 & 0xFFFF) << (16 * i))
     })
+}
+
+// How close a code must be to a labelling boundary for the other labelling to be looked
+// up. `discrete_hash_key_neighbors` reaches codes less than two cells away in each
+// component, so a position error the lookup can absorb changes cx + dx, or cx - dx, by
+// less than four cells. Codes farther from the boundary than that either keep their
+// labels or could not be found under either labelling.
+const RELABEL_MARGIN: f64 = 4.0 / HASH_CELLS_PER_UNIT;
+
+// The quad under each other labelling that a small position error can give the same four
+// stars (Lang et al. 2010, sec. 2.2): A and B swapped when cx + dx is within
+// `RELABEL_MARGIN` of 1, C and D swapped when cx is within it of dx, and both when both
+// hold. Swapping A and B maps each point (x, y) to (1 - x, -y), which also reverses the
+// order of C and D. Star indices are permuted to match each code.
+pub fn relabelled_quads(quad: &Quad) -> Vec<Quad> {
+    let [cx, cy, dx, dy] = quad.hash;
+    let swap_ab = libm::fabs(cx + dx - 1.0) <= RELABEL_MARGIN;
+    let swap_cd = libm::fabs(cx - dx) <= RELABEL_MARGIN;
+    let mut labellings = Vec::new();
+    if swap_ab {
+        labellings.push(([1.0 - dx, -dy, 1.0 - cx, -cy], [1, 0, 3, 2]));
+    }
+    if swap_cd {
+        labellings.push(([dx, dy, cx, cy], [0, 1, 3, 2]));
+    }
+    if swap_ab && swap_cd {
+        labellings.push(([1.0 - cx, -cy, 1.0 - dx, -dy], [1, 0, 2, 3]));
+    }
+    labellings
+        .into_iter()
+        .map(|(hash, slots)| Quad {
+            hash,
+            star_indices: slots.map(|slot| quad.star_indices[slot]),
+        })
+        .collect()
 }
 
 pub fn discrete_hash_key(hash: &[f64; 4]) -> u64 {
@@ -634,6 +678,101 @@ mod tests {
                 (150.0, 4663, 4663),
                 (180.0, 4663, 4663)
             ]
+        );
+    }
+
+    // A star at the origin with four neighbours at distance exactly 1, each with three
+    // closer satellites of its own. With k = 3 the origin's quad takes three of the four
+    // tied neighbours, and no other seed builds a quad with the origin and three of them.
+    fn tied_neighbour_field() -> Vec<(f64, f64, f32)> {
+        let mut field = vec![(0.0, 0.0, 5.0)];
+        for (x, y) in [(1.0, 0.0), (0.0, 1.0), (-1.0, 0.0), (0.0, -1.0)] {
+            field.push((x, y, 5.0));
+            for (u, v) in [(0.3, 0.0), (0.25, 0.1), (0.25, -0.1)] {
+                field.push((x + u * x - v * y, y + u * y + v * x, 5.0));
+            }
+        }
+        field
+    }
+
+    // Each quad as its sorted star positions, the quads sorted.
+    fn quads_by_position(stars: &[QuadStar], k: usize) -> Vec<[(f64, f64); 4]> {
+        let mut quads: Vec<[(f64, f64); 4]> = neighbor_quads(stars, k, 0.0)
+            .iter()
+            .map(|q| {
+                let mut p = q.star_indices.map(|i| (stars[i].x, stars[i].y));
+                p.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.total_cmp(&b.1)));
+                p
+            })
+            .collect();
+        quads.sort_by(|a, b| {
+            let key = |q: &[(f64, f64); 4]| q.map(|(x, y)| [x, y]).concat();
+            key(a)
+                .iter()
+                .zip(key(b).iter())
+                .map(|(u, v)| u.total_cmp(v))
+                .find(|o| o.is_ne())
+                .unwrap_or(Ordering::Equal)
+        });
+        quads
+    }
+
+    #[test]
+    fn neighbor_quads_do_not_depend_on_input_order_at_tied_distances() {
+        let field = tied_neighbour_field();
+        let forward = make_stars(&field);
+        let mut reversed_field = field.clone();
+        reversed_field.reverse();
+        let reversed = make_stars(&reversed_field);
+        assert_eq!(
+            quads_by_position(&forward, 3),
+            quads_by_position(&reversed, 3)
+        );
+    }
+
+    // cx + dx is exactly 1, and every coordinate is a binary fraction, so the code of the
+    // other A/B labelling has no rounding error.
+    #[test]
+    fn relabelled_quads_give_the_code_of_the_swapped_spine() {
+        let stars = make_stars(&[
+            (0.0, 0.0, 5.0),
+            (1.0, 0.0, 5.0),
+            (0.375, 0.25, 5.0),
+            (0.625, -0.5, 5.0),
+        ]);
+        let quad = Quad {
+            hash: [0.375, 0.25, 0.625, -0.5],
+            star_indices: [0, 1, 2, 3],
+        };
+        let relabelled = relabelled_quads(&quad);
+        assert_eq!(relabelled.len(), 1);
+        let (hash, order) = normalize_quad_ordered(&stars, 1, 0, 2, 3).unwrap();
+        assert_eq!(relabelled[0].hash, hash);
+        assert_eq!(relabelled[0].star_indices, order);
+    }
+
+    #[test]
+    fn relabelled_quads_cover_each_boundary_within_the_margin() {
+        let count = |hash: [f64; 4]| {
+            relabelled_quads(&Quad {
+                hash,
+                star_indices: [0, 1, 2, 3],
+            })
+            .len()
+        };
+        assert_eq!(count([0.2, 0.3, 0.6, -0.1]), 0);
+        assert_eq!(count([0.3, 0.3, 0.68, -0.1]), 1);
+        assert_eq!(count([0.4, 0.3, 0.43, -0.1]), 1);
+        assert_eq!(count([0.49, 0.3, 0.52, -0.1]), 3);
+        assert_eq!(
+            relabelled_quads(&Quad {
+                hash: [0.49, 0.3, 0.52, -0.1],
+                star_indices: [7, 8, 9, 10],
+            })
+            .iter()
+            .map(|q| q.star_indices)
+            .collect::<Vec<_>>(),
+            [[8, 7, 10, 9], [7, 8, 10, 9], [8, 7, 9, 10]]
         );
     }
 

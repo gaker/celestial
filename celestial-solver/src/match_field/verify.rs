@@ -1,257 +1,178 @@
-//! Geometric verification of candidate pairs via RANSAC affine fit.
+//! Verification of quad-match hypotheses for one parity orientation.
 //!
-//! A correct quad match set will lie on a single affine transform (pixel → tangent
-//! plane); a scrambled match set will not. Counting inliers under a random-sampled
-//! affine gives a scalar score used to pick the better parity orientation.
+//! Each quad match proposes that four detections are four catalog stars. The affine
+//! model of those four pairs is verified with `crate::log_odds`, leaving the four
+//! detections out of the score, as Lang et al. 2010 (sec. 2.2 and 2.4) verify every
+//! matched quad. Matches are tried in the order the hash lookup found them, and the
+//! first one whose log-odds passes is accepted.
 
-use celestial_catalog::query::quad::tan_project_star;
+use std::collections::BTreeSet;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
-use super::StarPair;
+use super::aggregate::VoteSources;
+use super::{QuadMatch, StarPair};
+use crate::log_odds::field::Field;
+use crate::log_odds::{FitStars, Hypothesis, ACCEPT_LOG_ODDS};
 
-pub(super) fn verify_pairs(pairs: &[StarPair], center_ra: f64, center_dec: f64) -> usize {
-    if pairs.len() < 3 {
-        return 0;
-    }
+pub(super) struct Accepted {
+    pub(super) log_odds: f64,
+    // The position of the hypothesis in `FirstPass` order.
+    pub(super) position: usize,
+    // `det(CD) < 0` for the accepted model, which can differ from the sign the image quads
+    // were built for when a quad is nearly symmetric.
+    pub(super) flipped: bool,
+    // The aggregated pairs that support the accepted model, plus its quad's own pairs.
+    pub(super) pairs: Vec<StarPair>,
+}
 
-    let mut projected: Vec<(f64, f64, f64, f64)> = pairs
-        .iter()
-        .filter_map(|p| {
-            tan_project_star(p.ra_deg, p.dec_deg, center_ra, center_dec)
-                .map(|(xi, eta)| (p.px_x, p.px_y, xi, eta))
-        })
-        .collect();
-    if projected.len() < 3 {
-        return 0;
-    }
-    projected.sort_by(|a, b| {
-        a.0.partial_cmp(&b.0)
-            .unwrap_or(std::cmp::Ordering::Equal)
-            .then(a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal))
-    });
+pub(super) struct ParityVerdict {
+    // Quad matches with a determined affine model, each verified once.
+    pub(super) n_hypotheses: usize,
+    pub(super) best_log_odds: f64,
+    pub(super) accepted: Option<Accepted>,
+}
 
-    let n = projected.len();
-    let inlier_px = 10.0;
-    let trials = 1000;
-    let mut best_inliers = 0usize;
+// The first hypothesis to pass among attempts that verify at the same time, in the order
+// that takes hypothesis k of each of the `attempts` in turn: hypothesis k of attempt `a`
+// is at position k * attempts + a. An attempt stops before a position later than one
+// that has passed. Every hypothesis before the first to pass is therefore verified
+// however the attempts are scheduled, and the first to pass does not depend on timing.
+pub(super) struct FirstPass {
+    attempts: usize,
+    // Only the order of this atomic's own writes matters, so its loads and stores are
+    // relaxed.
+    first: AtomicUsize,
+}
 
-    let mut rng: u64 = 0xCAFE_BABE_DEAD_BEEF;
-    let mut next = || -> usize {
-        rng ^= rng << 13;
-        rng ^= rng >> 7;
-        rng ^= rng << 17;
-        (rng as usize) % n
-    };
-
-    for _ in 0..trials {
-        let a = next();
-        let b = next();
-        let c = next();
-        if a == b || b == c || a == c {
-            continue;
+impl FirstPass {
+    pub(super) fn new(attempts: usize) -> Self {
+        Self {
+            attempts,
+            first: AtomicUsize::new(usize::MAX),
         }
+    }
 
-        let Some(affine) = fit_affine_3pt(&projected, a, b, c) else {
+    fn position(&self, attempt: usize, k: usize) -> usize {
+        k.saturating_mul(self.attempts).saturating_add(attempt)
+    }
+
+    fn follows_a_pass(&self, position: usize) -> bool {
+        position > self.first.load(Ordering::Relaxed)
+    }
+
+    fn record(&self, position: usize) {
+        self.first.fetch_min(position, Ordering::Relaxed);
+    }
+}
+
+// Verifies `matches` for attempt `attempt` of `first`, until one passes or a hypothesis
+// of another attempt passed at an earlier position.
+pub(super) fn verify_quad_matches(
+    field: &Field<'_>,
+    candidates: (&[QuadMatch], &VoteSources<'_>, &[StarPair]),
+    first: &FirstPass,
+    attempt: usize,
+) -> ParityVerdict {
+    let (matches, sources, pairs) = candidates;
+    let mut verdict = ParityVerdict {
+        n_hypotheses: 0,
+        best_log_odds: f64::NEG_INFINITY,
+        accepted: None,
+    };
+    let mut seen = BTreeSet::new();
+    let fresh = matches
+        .iter()
+        .filter(|m| seen.insert((m.image_quad.star_indices, m.catalog_quad.star_indices)));
+    for m in fresh {
+        let position = first.position(attempt, verdict.n_hypotheses);
+        if first.follows_a_pass(position) {
+            break;
+        }
+        let quad = quad_pairs(m, sources);
+        let Some(hypothesis) = Hypothesis::new(field, &quad) else {
             continue;
         };
-        let count = count_affine_inliers(&projected, &affine, inlier_px);
-        if count > best_inliers {
-            best_inliers = count;
+        verdict.n_hypotheses += 1;
+        let log_odds = hypothesis.log_odds(FitStars::Excluded, true);
+        verdict.best_log_odds = f64::max(verdict.best_log_odds, log_odds);
+        if log_odds > ACCEPT_LOG_ODDS {
+            first.record(position);
+            verdict.accepted = Some(Accepted {
+                log_odds,
+                position,
+                flipped: hypothesis.is_flipped(),
+                pairs: supporting_pairs(&hypothesis, pairs, quad),
+            });
+            break;
         }
     }
-
-    best_inliers
+    verdict
 }
 
-pub(super) fn fit_affine_3pt(
-    pts: &[(f64, f64, f64, f64)],
-    a: usize,
-    b: usize,
-    c: usize,
-) -> Option<[f64; 6]> {
-    let (x0, y0, u0, v0) = pts[a];
-    let (x1, y1, u1, v1) = pts[b];
-    let (x2, y2, u2, v2) = pts[c];
-
-    let det = (x1 - x0) * (y2 - y0) - (x2 - x0) * (y1 - y0);
-    if libm::fabs(det) < 1e-20 {
-        return None;
-    }
-    let inv = 1.0 / det;
-
-    let a11 = ((u1 - u0) * (y2 - y0) - (u2 - u0) * (y1 - y0)) * inv;
-    let a12 = ((u2 - u0) * (x1 - x0) - (u1 - u0) * (x2 - x0)) * inv;
-    let a21 = ((v1 - v0) * (y2 - y0) - (v2 - v0) * (y1 - y0)) * inv;
-    let a22 = ((v2 - v0) * (x1 - x0) - (v1 - v0) * (x2 - x0)) * inv;
-    let tx = u0 - a11 * x0 - a12 * y0;
-    let ty = v0 - a21 * x0 - a22 * y0;
-
-    Some([a11, a12, tx, a21, a22, ty])
-}
-
-pub(super) fn count_affine_inliers(
-    pts: &[(f64, f64, f64, f64)],
-    affine: &[f64; 6],
-    threshold_px: f64,
-) -> usize {
-    let det = affine[0] * affine[4] - affine[1] * affine[3];
-    if libm::fabs(det) < 1e-30 {
-        return 0;
-    }
-    let inv00 = affine[4] / det;
-    let inv01 = -affine[1] / det;
-    let inv10 = -affine[3] / det;
-    let inv11 = affine[0] / det;
-    let thr_sq = threshold_px * threshold_px;
-
-    pts.iter()
-        .filter(|(px, py, xi, eta)| {
-            let pred_xi = affine[0] * px + affine[1] * py + affine[2];
-            let pred_eta = affine[3] * px + affine[4] * py + affine[5];
-            let du = xi - pred_xi;
-            let dv = eta - pred_eta;
-            let dpx = inv00 * du + inv01 * dv;
-            let dpy = inv10 * du + inv11 * dv;
-            dpx * dpx + dpy * dpy < thr_sq
+fn quad_pairs(m: &QuadMatch, sources: &VoteSources<'_>) -> Vec<StarPair> {
+    let slots = m
+        .image_quad
+        .star_indices
+        .iter()
+        .zip(&m.catalog_quad.star_indices);
+    slots
+        .filter_map(|(&img_idx, &cat_idx)| sources.slot_entry(img_idx, cat_idx))
+        .map(|(_, e)| StarPair {
+            px_x: e.px_x,
+            px_y: e.px_y,
+            ra_deg: e.ra,
+            dec_deg: e.dec,
+            votes: 1,
+            snr: e.snr,
         })
-        .count()
+        .collect()
+}
+
+// The pairs the accepted model supports, in `StarPair::cmp_rank` order: the aggregated
+// pairs it supports, which keep their votes, then the scored detections it matches to
+// its references, then the quad's own pairs. A later pair is kept only when its
+// detection and its catalog star are both unused.
+fn supporting_pairs(
+    hypothesis: &Hypothesis<'_>,
+    pairs: &[StarPair],
+    quad: Vec<StarPair>,
+) -> Vec<StarPair> {
+    let mut kept: Vec<StarPair> = pairs
+        .iter()
+        .filter(|p| hypothesis.supports(p))
+        .cloned()
+        .collect();
+    for p in hypothesis.matched_pairs().into_iter().chain(quad) {
+        let taken = kept.iter().any(|k| {
+            (k.px_x, k.px_y) == (p.px_x, p.px_y) || (k.ra_deg, k.dec_deg) == (p.ra_deg, p.dec_deg)
+        });
+        if !taken {
+            kept.push(p);
+        }
+    }
+    kept.sort_by(StarPair::cmp_rank);
+    kept
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use celestial_catalog::query::quad::tan_deproject_star;
-
-    fn pair(px: f64, py: f64, ra: f64, dec: f64) -> StarPair {
-        StarPair {
-            px_x: px,
-            px_y: py,
-            ra_deg: ra,
-            dec_deg: dec,
-            votes: 2,
-            snr: 10.0,
-        }
-    }
 
     #[test]
-    fn fit_affine_identity_recovers_identity() {
-        // Build a set of points where xi=px, eta=py, pick three non-collinear.
-        let pts = vec![
-            (0.0, 0.0, 0.0, 0.0),
-            (1.0, 0.0, 1.0, 0.0),
-            (0.0, 1.0, 0.0, 1.0),
-        ];
-        let affine = fit_affine_3pt(&pts, 0, 1, 2).unwrap();
-        assert_eq!(affine[0], 1.0);
-        assert_eq!(affine[1], 0.0);
-        assert_eq!(affine[2], 0.0);
-        assert_eq!(affine[3], 0.0);
-        assert_eq!(affine[4], 1.0);
-        assert_eq!(affine[5], 0.0);
-    }
-
-    #[test]
-    fn fit_affine_recovers_scale_and_translation() {
-        // xi = 2*px + 5, eta = 3*py - 4 (pure scale + translation, no rotation).
-        let pts = vec![
-            (0.0, 0.0, 5.0, -4.0),
-            (1.0, 0.0, 7.0, -4.0),
-            (0.0, 1.0, 5.0, -1.0),
-        ];
-        let a = fit_affine_3pt(&pts, 0, 1, 2).unwrap();
-        assert_eq!(a[0], 2.0);
-        assert_eq!(a[1], 0.0);
-        assert_eq!(a[2], 5.0);
-        assert_eq!(a[3], 0.0);
-        assert_eq!(a[4], 3.0);
-        assert_eq!(a[5], -4.0);
-    }
-
-    #[test]
-    fn fit_affine_collinear_points_return_none() {
-        // Three points on the x-axis → zero-area triangle.
-        let pts = vec![
-            (0.0, 0.0, 0.0, 0.0),
-            (1.0, 0.0, 1.0, 0.0),
-            (2.0, 0.0, 2.0, 0.0),
-        ];
-        assert!(fit_affine_3pt(&pts, 0, 1, 2).is_none());
-    }
-
-    #[test]
-    fn count_affine_inliers_identity_counts_exact_matches() {
-        let pts = vec![
-            (0.0, 0.0, 0.0, 0.0),
-            (10.0, 0.0, 10.0, 0.0),
-            (0.0, 10.0, 0.0, 10.0),
-            (100.0, 100.0, 100.0, 100.0),
-        ];
-        let identity = [1.0, 0.0, 0.0, 0.0, 1.0, 0.0];
-        assert_eq!(count_affine_inliers(&pts, &identity, 0.5), 4);
-    }
-
-    #[test]
-    fn count_affine_inliers_excludes_far_points() {
-        // Identity maps px→xi, py→eta. Any offset in xi/eta shows up equally in pixel units.
-        let pts = vec![
-            (0.0, 0.0, 0.0, 0.0),         // on-model → in
-            (10.0, 0.0, 10.0, 0.0),       // on-model → in
-            (20.0, 0.0, 20.0 + 5.0, 0.0), // 5-px offset → out at threshold 1.0
-        ];
-        let identity = [1.0, 0.0, 0.0, 0.0, 1.0, 0.0];
-        assert_eq!(count_affine_inliers(&pts, &identity, 1.0), 2);
-    }
-
-    #[test]
-    fn count_affine_inliers_singular_affine_returns_zero() {
-        // det(A) = 1*0 - 0*1 = 0 → degenerate model.
-        let pts = vec![(0.0, 0.0, 0.0, 0.0)];
-        let singular = [1.0, 0.0, 0.0, 1.0, 0.0, 0.0];
-        assert_eq!(count_affine_inliers(&pts, &singular, 10.0), 0);
-    }
-
-    #[test]
-    fn verify_pairs_returns_zero_below_three_pairs() {
-        let pairs = vec![pair(0.0, 0.0, 180.0, 0.0), pair(1.0, 0.0, 180.001, 0.0)];
-        assert_eq!(verify_pairs(&pairs, 180.0, 0.0), 0);
-    }
-
-    #[test]
-    fn verify_pairs_scores_consistent_affine_set() {
-        // 25 pairs, each constructed so (ra, dec) is the tangent-plane deprojection
-        // of (xi, eta) around a known center. All lie on a single affine in pixel↔
-        // tangent space — RANSAC must score them as nearly-all inliers.
-        let center_ra = 180.0;
-        let center_dec = 30.0;
-        let mut pairs = Vec::new();
-        for i in 0..5 {
-            for j in 0..5 {
-                // xi, eta in radians; verify_pairs re-projects via tan_project_star.
-                let xi = (i as f64 - 2.0) * 0.01;
-                let eta = (j as f64 - 2.0) * 0.01;
-                let (ra, dec) = tan_deproject_star(xi, eta, center_ra, center_dec);
-                pairs.push(pair(xi * 1000.0, eta * 1000.0, ra, dec));
-            }
-        }
-        let score = verify_pairs(&pairs, center_ra, center_dec);
-        assert!(score >= 20, "expected at least 20 inliers, got {score}");
-    }
-
-    #[test]
-    fn verify_pairs_scrambled_pairs_score_low() {
-        // Random-looking pixel↔sky assignments — no affine fits them all.
-        let pairs = vec![
-            pair(0.0, 0.0, 180.0, 30.0),
-            pair(100.0, 0.0, 45.0, -20.0),
-            pair(0.0, 100.0, 270.0, 60.0),
-            pair(50.0, 50.0, 10.0, 0.0),
-            pair(200.0, 100.0, 120.0, -40.0),
-            pair(30.0, 200.0, 300.0, 15.0),
-        ];
-        let score = verify_pairs(&pairs, 180.0, 30.0);
-        // Fixed RNG, so this is deterministic. Scrambled → score below inlier ceiling.
-        assert!(
-            score < pairs.len(),
-            "scrambled pairs should not all be inliers; got {score}"
+    fn first_pass_stops_positions_after_the_earliest_pass() {
+        let first = FirstPass::new(2);
+        assert_eq!(first.position(1, 3), 7);
+        assert!(!first.follows_a_pass(7));
+        first.record(5);
+        assert_eq!(
+            (first.follows_a_pass(5), first.follows_a_pass(6)),
+            (false, true)
+        );
+        // A later pass does not move the first one.
+        first.record(9);
+        assert_eq!(
+            (first.follows_a_pass(5), first.follows_a_pass(6)),
+            (false, true)
         );
     }
 }

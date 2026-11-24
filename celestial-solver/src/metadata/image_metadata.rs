@@ -4,13 +4,13 @@ use celestial_time::julian::JulianDate;
 
 use super::error::MetadataError;
 use super::hint::hint_from_image;
-use super::plate_scale::plate_scale_from_image;
+use super::plate_scale::{plate_scale_from_image, positive};
 use super::time::jd_from_image;
 
 /// Everything the solver needs to start a solve: position hint, plate scale, epoch.
 ///
 /// Build this from an [`Image`] via [`metadata_from_image`], or construct it by hand
-/// for images without headers and pass it to [`crate::Solver::with_metadata`].
+/// for images without headers and pass it to [`crate::solve::Solver::with_metadata`].
 ///
 /// `focal_mm` and `pixel_um` are optional — they're only used by the WCS fitter as
 /// sanity-check priors. `scale_arcsec` is the authoritative plate scale.
@@ -18,7 +18,7 @@ use super::time::jd_from_image;
 /// # Examples
 ///
 /// ```rust,ignore
-/// use celestial_solver::metadata::ImageMetadata;
+/// use celestial_solver::metadata::image_metadata::ImageMetadata;
 /// use celestial_coords::frames::icrs::ICRSPosition;
 /// use celestial_time::scales::utc::utc_from_calendar;
 ///
@@ -45,20 +45,43 @@ pub struct ImageMetadata {
     pub pixel_um: Option<f64>,
 }
 
+impl ImageMetadata {
+    // An error when the plate scale, or a focal length or pixel size that is set, is not
+    // finite and positive, or the epoch is not finite. The hint is an `ICRSPosition`,
+    // which is finite by construction.
+    pub(crate) fn validate(&self) -> Result<(), MetadataError> {
+        positive("plate scale", self.scale_arcsec)?;
+        let jd = self.epoch.jd1() + self.epoch.jd2();
+        if !jd.is_finite() {
+            return Err(MetadataError::NonFiniteValue {
+                field: "epoch",
+                value: jd,
+            });
+        }
+        if let Some(focal) = self.focal_mm {
+            positive("focal length", focal)?;
+        }
+        if let Some(pixel) = self.pixel_um {
+            positive("pixel size", pixel)?;
+        }
+        Ok(())
+    }
+}
+
 /// Selective overrides for header-driven metadata.
 ///
 /// Each `Some` field bypasses its corresponding header lookup. Each `None` field
 /// falls through to the header. Constructed directly when using
-/// [`metadata_from_image`]; set via builder methods ([`crate::Solver::focal_length_mm`]
-/// etc.) when using the [`crate::Solver`].
+/// [`metadata_from_image`]; set via builder methods ([`crate::solve::Solver::focal_length_mm`]
+/// etc.) when using the [`crate::solve::Solver`].
 ///
 /// `scale_arcsec` takes priority over `focal_mm` / `pixel_um` — set it and the
-/// `206.265 * pixel_um / focal_mm` calculation is skipped.
+/// `206.2648 * pixel_um / focal_mm` calculation is skipped.
 ///
 /// # Examples
 ///
 /// ```rust,ignore
-/// use celestial_solver::metadata::{metadata_from_image, MetadataOverrides};
+/// use celestial_solver::metadata::image_metadata::{metadata_from_image, MetadataOverrides};
 ///
 /// # let img = celestial_images::formats::image::Image::open("f.fits")?;
 /// let overrides = MetadataOverrides {
@@ -90,13 +113,14 @@ pub struct MetadataOverrides {
 ///
 /// # Errors
 ///
-/// Returns [`MetadataError`] when a required piece of metadata is missing from both
-/// the overrides and the headers — no position hint, no epoch, or no plate scale.
+/// Returns [`MetadataError`] when the position hint, the epoch or the plate scale is
+/// missing from both the overrides and the headers, when a plate scale, focal length or
+/// pixel size is not finite and positive, or when the epoch is not finite.
 ///
 /// # Examples
 ///
 /// ```rust,ignore
-/// use celestial_solver::metadata::{metadata_from_image, MetadataOverrides};
+/// use celestial_solver::metadata::image_metadata::{metadata_from_image, MetadataOverrides};
 ///
 /// # let img = celestial_images::formats::image::Image::open("f.fits")?;
 /// let meta = metadata_from_image(&img, &MetadataOverrides::default())?;
@@ -114,21 +138,29 @@ pub fn metadata_from_image(
         Some(e) => e,
         None => jd_from_image(img)?,
     };
-
-    let (scale_arcsec, focal_mm, pixel_um) = if let Some(direct) = overrides.scale_arcsec {
-        (direct, overrides.focal_mm, overrides.pixel_um)
-    } else {
-        let scale = plate_scale_from_image(img, overrides.focal_mm, overrides.pixel_um)?;
-        (scale.arcsec_per_pixel, scale.focal_mm, scale.pixel_um)
-    };
-
-    Ok(ImageMetadata {
+    let (scale_arcsec, focal_mm, pixel_um) = plate_scale(img, overrides)?;
+    let meta = ImageMetadata {
         hint,
         scale_arcsec,
         epoch,
         focal_mm,
         pixel_um,
-    })
+    };
+    meta.validate()?;
+    Ok(meta)
+}
+
+// The plate scale in arcseconds per pixel, the focal length and the pixel size: the
+// override scale with the override optics, or the scale from the optics and headers.
+fn plate_scale(
+    img: &Image,
+    overrides: &MetadataOverrides,
+) -> Result<(f64, Option<f64>, Option<f64>), MetadataError> {
+    if let Some(direct) = overrides.scale_arcsec {
+        return Ok((direct, overrides.focal_mm, overrides.pixel_um));
+    }
+    let scale = plate_scale_from_image(img, overrides.focal_mm, overrides.pixel_um)?;
+    Ok((scale.arcsec_per_pixel, scale.focal_mm, scale.pixel_um))
 }
 
 #[cfg(test)]
@@ -155,7 +187,10 @@ mod tests {
         assert_eq!(meta.hint.dec().degrees(), 20.0);
         assert_eq!(meta.focal_mm, Some(1000.0));
         assert_eq!(meta.pixel_um, Some(5.0));
-        assert_eq!(meta.scale_arcsec, 206.265 * 5.0 / 1000.0);
+        assert_eq!(
+            meta.scale_arcsec,
+            crate::metadata::plate_scale::ARCSEC_PER_UM_PER_MM * 5.0 / 1000.0
+        );
     }
 
     #[test]
@@ -207,5 +242,36 @@ mod tests {
         };
         let meta = metadata_from_image(&img, &overrides).unwrap();
         assert_eq!(meta.focal_mm, Some(800.0));
+    }
+
+    #[test]
+    fn non_finite_or_non_positive_overrides_are_rejected() {
+        let img = full_image();
+        let scale = |scale_arcsec: f64| MetadataOverrides {
+            scale_arcsec: Some(scale_arcsec),
+            ..Default::default()
+        };
+        let cases = [
+            (scale(f64::NAN), "plate scale must be finite, got NaN"),
+            (scale(-1.5), "plate scale must be positive, got -1.5"),
+            (
+                MetadataOverrides {
+                    focal_mm: Some(f64::INFINITY),
+                    ..scale(1.5)
+                },
+                "focal length must be finite, got inf",
+            ),
+            (
+                MetadataOverrides {
+                    epoch: Some(JulianDate::new(f64::NAN, 0.0)),
+                    ..Default::default()
+                },
+                "epoch must be finite, got NaN",
+            ),
+        ];
+        for (overrides, expected) in cases {
+            let err = metadata_from_image(&img, &overrides).err();
+            assert_eq!(err.map(|e| e.to_string()).as_deref(), Some(expected));
+        }
     }
 }

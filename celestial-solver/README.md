@@ -32,14 +32,15 @@ use celestial_catalog::query::catalog::Catalog;
 let img = Image::open("lights/m31_001.fits")?;
 let catalog = Catalog::open("celestial-37M.bin")?;
 
-let result = celestial_solver::solve(&img, &catalog).run()?;
+let result = celestial_solver::solve::solve(&img, &catalog).run()?;
 
 println!("RMS: {:.3} px, {} stars matched", result.wcs.rms_px, result.wcs.n_stars);
-println!("Center: {:.4}°, {:.4}°", result.wcs.crval1, result.wcs.crval2);
+println!("Projection origin: {:.4}°, {:.4}°", result.wcs.crval1, result.wcs.crval2);
 ```
 
-The solver reads `CRVAL1/2` (or `OBJCTRA/OBJCTDEC`, or `RA/DEC`) for the position hint,
-`DATE-OBS`/`MJD-OBS` for the epoch, and `FOCALLEN` + `XPIXSZ` for the plate scale.
+The solver reads the header's celestial WCS at the image centre (or `CRVAL1/2`, `RA/DEC`,
+or `OBJCTRA/OBJCTDEC`) for the position hint, `MJD-OBS`/`DATE-OBS` for the epoch, and
+`FOCALLEN` + `XPIXSZ` for the plate scale.
 
 ### Writing the solution back to the image
 
@@ -59,7 +60,7 @@ The builder exposes one setter per piece of metadata. Missing fields fall back t
 
 ```rust,ignore
 // Scope has a focal reducer; FOCALLEN in the header reflects the bare OTA
-let result = celestial_solver::solve(&img, &catalog)
+let result = celestial_solver::solve::solve(&img, &catalog)
     .focal_length_mm(500)      // accepts any T: Into<f64>
     .run()?;
 ```
@@ -69,7 +70,7 @@ let result = celestial_solver::solve(&img, &catalog)
 For PNG, raw TIFF, or any image where the metadata lives elsewhere:
 
 ```rust,ignore
-use celestial_solver::metadata::ImageMetadata;
+use celestial_solver::metadata::image_metadata::ImageMetadata;
 use celestial_coords::frames::icrs::ICRSPosition;
 use celestial_time::scales::utc::utc_from_calendar;
 
@@ -81,7 +82,7 @@ let meta = ImageMetadata {
     pixel_um: None,
 };
 
-let result = celestial_solver::solve(&img, &catalog)
+let result = celestial_solver::solve::solve(&img, &catalog)
     .with_metadata(meta)
     .run()?;
 ```
@@ -91,27 +92,37 @@ let result = celestial_solver::solve(&img, &catalog)
 `solve()` accepts any `Image` regardless of its pixel type. Raw8 from a planetary cam, raw16
 from a DSO session, stacked f32 masters — all handled natively, no conversion required.
 
-Saturation detection uses the pixel type's native ceiling (`u8::MAX`, `u16::MAX`, …) for
-integer types; for floats it falls back to a tied-maximum heuristic.
+Saturation is estimated from the data for every pixel type: when two or more pixels share
+the image maximum and it is above the background, the limit is 90% of that maximum. Set
+`DetectionParams::saturation_adu` to override it. NaN pixels are treated as blank and
+skipped.
 
 ## CLI
 
-`cargo install celestial-solver` installs the `image-solver` binary:
+The `image-solver` binary is behind the `cli` feature:
 
-```text
-image-solver --image m31.fits --catalog celestial-37M.bin --output m31_solved.fits
-
-Projection origin .... RA: 00h42m44.3s  Dec: +41°16'09"
-Resolution ........... 1.447 arcsec/px
-Rotation ............. 0.142° (flipped)
-Focal distance ....... 2032 mm
-Pixel size ........... 3.76 µm
-Control points ....... 84
-RMS ................. 0.21 px
+```sh
+cargo install celestial-solver --features cli
 ```
 
-Pass `--focal-length` / `--pixel-size` to override the headers, `--debug <DIR>` to dump
-detection/quad/overlay PNGs for diagnostics.
+It prints the solution report to stdout, and timings and log messages to stderr. An
+excerpt of the report:
+
+```text
+image-solver --image m106.fit --catalog celestial-37M.bin --output m106_solved.fits
+
+Projection ............... Gnomonic (TAN-SIP)
+Projection origin ........ [1164.500000 880.500000] px -> [RA: 12 18 54.266  Dec: +47 18 38.81]
+Resolution ............... 0.575 arcsec/px (linear approximation)
+Rotation ................. -85.785 deg (linear approximation)
+Focal distance ........... 2725.60 mm
+Pixel size ............... 7.60 um
+Control points ........... 24
+SIP RMS .................. 0.2055 px
+```
+
+Pass `--focal-length` / `--pixel-size` to override the headers, `--debug <DIR>` to write
+detection and solve-overlay PNGs for diagnostics.
 
 ## Pipeline
 

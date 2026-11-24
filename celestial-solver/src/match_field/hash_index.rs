@@ -2,7 +2,9 @@
 
 use std::collections::HashMap;
 
-use celestial_catalog::query::quad::{discrete_hash_key, discrete_hash_key_neighbors, Quad};
+use celestial_catalog::query::quad::{
+    discrete_hash_key, discrete_hash_key_neighbors, relabelled_quads, Quad,
+};
 
 use super::QuadMatch;
 
@@ -16,6 +18,10 @@ pub(super) fn build_hash_index(quads: &[Quad]) -> HashMap<u64, Vec<usize>> {
     map
 }
 
+// Each image quad is looked up under its own labels and under every relabelling that a
+// small position error could have given the same stars, so a catalog quad labelled the
+// other way across a boundary is still found. A match carries the image quad with the
+// star order of the code that matched.
 pub(super) fn find_matches(
     image_quads: &[Quad],
     catalog_quads: &[Quad],
@@ -23,28 +29,37 @@ pub(super) fn find_matches(
 ) -> Vec<QuadMatch> {
     let mut matches = Vec::new();
     for iq in image_quads {
-        let keys = discrete_hash_key_neighbors(&iq.hash);
-        for key in &keys {
-            if let Some(indices) = index.get(key) {
-                for &ci in indices {
-                    matches.push(QuadMatch {
-                        image_quad: iq.clone(),
-                        catalog_quad: catalog_quads[ci].clone(),
-                    });
-                }
-            }
+        for quad in std::iter::once(iq.clone()).chain(relabelled_quads(iq)) {
+            push_bin_matches(&quad, catalog_quads, index, &mut matches);
         }
     }
     matches
 }
 
+fn push_bin_matches(
+    image_quad: &Quad,
+    catalog_quads: &[Quad],
+    index: &HashMap<u64, Vec<usize>>,
+    matches: &mut Vec<QuadMatch>,
+) {
+    for key in &discrete_hash_key_neighbors(&image_quad.hash) {
+        for &ci in index.get(key).into_iter().flatten() {
+            matches.push(QuadMatch {
+                image_quad: image_quad.clone(),
+                catalog_quad: catalog_quads[ci].clone(),
+            });
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::super::quad_stars::stars_to_quad_stars;
+    use super::super::quad_stars::{stars_to_quad_stars, CdSign};
+    use super::super::MatchParams;
     use super::*;
     use crate::detect::DetectedStar;
     use celestial_catalog::query::quad::{neighbor_quads, QuadStar};
-    use celestial_core::constants::{DEG_TO_RAD, PI};
+    use celestial_core::constants::{ARCSEC_TO_RAD, DEG_TO_RAD};
 
     fn quad(hash: [f64; 4]) -> Quad {
         Quad {
@@ -159,9 +174,10 @@ mod tests {
     }
 
     // Detections of `points` rotated by `deg`, at 1 arcsec per pixel. A mirrored image
-    // has its y axis reversed, so stars_to_quad_stars with parity_flip = true undoes it.
+    // has its y axis reversed, so its det(CD) is negative, and stars_to_quad_stars with
+    // CdSign::Negative undoes the mirror.
     fn detections(points: &[(f64, f64)], deg: f64, mirrored: bool) -> Vec<DetectedStar> {
-        let rad_per_px = PI / (180.0 * 3600.0);
+        let rad_per_px = ARCSEC_TO_RAD;
         let (s, c) = libm::sincos(deg * DEG_TO_RAD);
         let y_sign = if mirrored { 1.0 } else { -1.0 };
         points
@@ -193,8 +209,45 @@ mod tests {
         found.len()
     }
 
+    fn spine_quad(c: (f64, f64), d: (f64, f64)) -> Vec<Quad> {
+        let points = [(0.0, 0.0), (1.0, 0.0), c, d];
+        let stars: Vec<QuadStar> = points
+            .iter()
+            .enumerate()
+            .map(|(i, &(x, y))| QuadStar {
+                source_id: i as i64,
+                x,
+                y,
+                mag: 0.0,
+            })
+            .collect();
+        neighbor_quads(&stars, 3, 0.0)
+    }
+
+    // In each case one star moves by 0.01 between the catalog and the image, which takes
+    // the quad across a labelling boundary: cx + dx crosses 1, which swaps A and B, or
+    // cx crosses dx, which swaps C and D. The image quad's own code is then far from the
+    // catalog's, and only the relabelled code finds it.
     #[test]
-    fn mirrored_rotated_field_matches_through_parity_flip() {
+    fn find_matches_finds_quads_labelled_across_a_boundary() {
+        let cases = [
+            (((0.3, 0.2), (0.695, -0.3)), ((0.3, 0.2), (0.705, -0.3))),
+            (((0.4, 0.2), (0.405, -0.3)), ((0.41, 0.2), (0.405, -0.3))),
+        ];
+        for ((cat_c, cat_d), (img_c, img_d)) in cases {
+            let catalog_quads = spine_quad(cat_c, cat_d);
+            let image_quads = spine_quad(img_c, img_d);
+            assert_ne!(catalog_quads[0].star_indices, image_quads[0].star_indices);
+            assert_eq!(
+                own_quad_matches(&image_quads, &catalog_quads),
+                1,
+                "{cat_c:?} {cat_d:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn mirrored_rotated_field_matches_with_a_negative_cd_sign() {
         let points = field_points();
         let catalog: Vec<QuadStar> = points
             .iter()
@@ -207,13 +260,14 @@ mod tests {
             })
             .collect();
         let catalog_quads = neighbor_quads(&catalog, 10, 0.0);
+        let params = MatchParams::default();
         let mut counts = Vec::new();
         for deg in [0.0, 90.0, 150.0, 180.0] {
             let stars = detections(&points, deg, true);
-            let found: Vec<usize> = [true, false]
+            let found: Vec<usize> = [CdSign::Negative, CdSign::Positive]
                 .iter()
-                .map(|&parity| {
-                    let img = stars_to_quad_stars(&stars, 4096, 4096, 1.0, 100, parity);
+                .map(|&cd_sign| {
+                    let img = stars_to_quad_stars(&stars, (4096, 4096), 1.0, &params, cd_sign);
                     own_quad_matches(&neighbor_quads(&img, 10, 0.0), &catalog_quads)
                 })
                 .collect();

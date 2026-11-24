@@ -1,10 +1,12 @@
-use anyhow::{ensure, Result};
 use celestial_catalog::query::quad::tan_project_star;
 use celestial_core::constants::RAD_TO_DEG;
 
+use crate::error::SolveError;
 use crate::match_field::StarPair;
 
-use super::solution::StarResidual;
+use super::median_clip::median_clip;
+use super::normal_equations::solve_normal_equations;
+use super::solution::{InverseCd, StarResidual};
 
 #[derive(Debug, Clone, Copy)]
 pub(super) struct CdParams {
@@ -28,102 +30,30 @@ pub(super) struct WcsParams {
     pub(super) cd2_2: f64,
 }
 
-pub(super) fn ransac_fit(
-    projected: &[(f64, f64, f64, f64)],
-    pairs: &[StarPair],
-    inlier_threshold: f64,
-) -> Result<Vec<bool>> {
-    let n = projected.len();
-    let max_trials = 1000;
-    let mut best_inliers = 0usize;
-    let mut best_mask = vec![false; n];
+// The inverse of an affine CD fit: maps a tangent-plane position back to a pixel offset.
+pub(super) struct InverseAffine {
+    cd: InverseCd,
+    xi0: f64,
+    eta0: f64,
+}
 
-    let max_v = pairs.iter().map(|p| p.votes).max().unwrap_or(0);
-    let high_vote: Vec<usize> = pairs
-        .iter()
-        .enumerate()
-        .filter(|(_, p)| p.votes >= max_v / 3)
-        .map(|(i, _)| i)
-        .filter(|&i| i < n)
-        .collect();
-
-    let sample_pool = if high_vote.len() >= 3 {
-        &high_vote
-    } else {
-        return Ok(vec![true; n]);
-    };
-
-    let mut rng_state: u64 = 0xDEAD_BEEF_CAFE_1234;
-    let mut next_rand = || -> u64 {
-        rng_state ^= rng_state << 13;
-        rng_state ^= rng_state >> 7;
-        rng_state ^= rng_state << 17;
-        rng_state
-    };
-
-    let all_on = vec![true; n];
-
-    for _ in 0..max_trials {
-        let a = sample_pool[next_rand() as usize % sample_pool.len()];
-        let b = sample_pool[next_rand() as usize % sample_pool.len()];
-        let c = sample_pool[next_rand() as usize % sample_pool.len()];
-        if a == b || b == c || a == c {
-            continue;
-        }
-
-        let mut sample_mask = vec![false; n];
-        sample_mask[a] = true;
-        sample_mask[b] = true;
-        sample_mask[c] = true;
-
-        let Ok(cd_sample) = fit_cd_matrix_6(projected, &sample_mask) else {
-            continue;
-        };
-        if libm::fabs(cd_sample.cd1_1 * cd_sample.cd2_2 - cd_sample.cd1_2 * cd_sample.cd2_1) < 1e-30
-        {
-            continue;
-        }
-
-        let errs = compute_pixel_errors(projected, &all_on, cd_sample);
-        let inlier_count = errs.iter().filter(|&&e| e <= inlier_threshold).count();
-
-        if inlier_count > best_inliers {
-            best_inliers = inlier_count;
-            best_mask = errs.iter().map(|&e| e <= inlier_threshold).collect();
-
-            if let Ok(cd_refined) = fit_cd_matrix_6(projected, &best_mask) {
-                let errs2 = compute_pixel_errors(projected, &all_on, cd_refined);
-                let refined = errs2.iter().filter(|&&e| e <= inlier_threshold).count();
-                if refined >= inlier_count {
-                    best_inliers = refined;
-                    best_mask = errs2.iter().map(|&e| e <= inlier_threshold).collect();
-                }
-            }
+impl InverseAffine {
+    pub(super) fn new(p: CdParams) -> Self {
+        Self {
+            cd: InverseCd::new(p.cd1_1, p.cd1_2, p.cd2_1, p.cd2_2),
+            xi0: p.xi0,
+            eta0: p.eta0,
         }
     }
 
-    ensure!(
-        best_inliers >= 3,
-        "RANSAC found no consistent model ({} pairs)",
-        n
-    );
-    log::debug!("RANSAC: {} inliers from {} pairs", best_inliers, n);
-    Ok(best_mask)
-}
-
-fn fit_cd_matrix_6(projected: &[(f64, f64, f64, f64)], mask: &[bool]) -> Result<CdParams> {
-    let (cd1_1, cd1_2, xi0) = solve_3x3(projected, mask, |t| t.2)?;
-    let (cd2_1, cd2_2, eta0) = solve_3x3(projected, mask, |t| t.3)?;
-    let det = cd1_1 * cd2_2 - cd1_2 * cd2_1;
-    ensure!(libm::fabs(det) > 1e-30, "singular CD matrix");
-    Ok(CdParams {
-        cd1_1,
-        cd1_2,
-        xi0,
-        cd2_1,
-        cd2_2,
-        eta0,
-    })
+    // Distance in pixels between the row's pixel offset and the one the model predicts
+    // from the row's tangent-plane position.
+    pub(super) fn pixel_error(&self, row: &(f64, f64, f64, f64)) -> f64 {
+        let (pred_u, pred_v) = self.cd.apply(row.2 - self.xi0, row.3 - self.eta0);
+        let ex = row.0 - pred_u;
+        let ey = row.1 - pred_v;
+        libm::sqrt(ex * ex + ey * ey)
+    }
 }
 
 pub(super) fn compute_pixel_errors(
@@ -131,27 +61,11 @@ pub(super) fn compute_pixel_errors(
     mask: &[bool],
     p: CdParams,
 ) -> Vec<f64> {
-    let det = p.cd1_1 * p.cd2_2 - p.cd1_2 * p.cd2_1;
-    let inv_00 = p.cd2_2 / det;
-    let inv_01 = -p.cd1_2 / det;
-    let inv_10 = -p.cd2_1 / det;
-    let inv_11 = p.cd1_1 / det;
-
+    let model = InverseAffine::new(p);
     projected
         .iter()
-        .enumerate()
-        .map(|(i, row)| {
-            if !mask[i] {
-                return 0.0;
-            }
-            let dxi = row.2 - p.xi0;
-            let deta = row.3 - p.eta0;
-            let pred_u = inv_00 * dxi + inv_01 * deta;
-            let pred_v = inv_10 * dxi + inv_11 * deta;
-            let ex = row.0 - pred_u;
-            let ey = row.1 - pred_v;
-            libm::sqrt(ex * ex + ey * ey)
-        })
+        .zip(mask)
+        .map(|(row, &on)| if on { model.pixel_error(row) } else { 0.0 })
         .collect()
 }
 
@@ -159,11 +73,10 @@ pub(super) fn fit_cd_weighted(
     projected: &[(f64, f64, f64, f64)],
     mask: &[bool],
     weights: &[f64],
-) -> Result<CdParams> {
+) -> Result<CdParams, SolveError> {
     let (cd1_1, cd1_2, xi0) = solve_3x3_weighted(projected, mask, weights, |t| t.2)?;
     let (cd2_1, cd2_2, eta0) = solve_3x3_weighted(projected, mask, weights, |t| t.3)?;
-    let det = cd1_1 * cd2_2 - cd1_2 * cd2_1;
-    ensure!(libm::fabs(det) > 1e-30, "singular CD matrix");
+    check_cd_determinant(cd1_1 * cd2_2 - cd1_2 * cd2_1)?;
     Ok(CdParams {
         cd1_1,
         cd1_2,
@@ -174,62 +87,31 @@ pub(super) fn fit_cd_weighted(
     })
 }
 
-pub(super) fn sigma_clip_loop_weighted(
+// A CD matrix whose determinant is NaN or at most 1e-30 in size is singular.
+pub(super) fn check_cd_determinant(det: f64) -> Result<(), SolveError> {
+    let size = libm::fabs(det);
+    if size.is_nan() || size <= 1e-30 {
+        return Err(SolveError::fit_failed("singular CD matrix"));
+    }
+    Ok(())
+}
+
+// Clips the pairs whose unweighted residual exceeds `clip_threshold` and refits the CD
+// matrix with `weights` after each pass, until a pass clips nothing or fewer than 3
+// pairs remain. The median ignores the weights, so a group of heavily weighted pairs
+// that pulls the fit towards itself does not raise the threshold.
+pub(super) fn median_clip_loop(
     projected: &[(f64, f64, f64, f64)],
     mask: &mut [bool],
     cd: &mut CdParams,
     weights: &[f64],
-) -> Result<()> {
-    for iter in 0..10 {
-        let errs = compute_pixel_errors(projected, mask, *cd);
-        let mut sum_sr2 = 0.0_f64;
-        let mut n_active = 0_usize;
-        for (i, &e) in errs.iter().enumerate() {
-            if !mask[i] {
-                continue;
-            }
-            sum_sr2 += weights[i] * e * e;
-            n_active += 1;
-        }
-        if n_active < 3 {
-            break;
-        }
-
-        let sr_rms = libm::sqrt(sum_sr2 / n_active as f64);
-        let threshold = 3.0 * sr_rms;
-
-        let mut rejected = 0usize;
-        for (i, &e) in errs.iter().enumerate() {
-            if mask[i] && e * libm::sqrt(weights[i]) > threshold {
-                mask[i] = false;
-                rejected += 1;
-            }
-        }
-
-        let n_active = mask.iter().filter(|&&m| m).count();
-        let rms = libm::sqrt(
-            errs.iter()
-                .enumerate()
-                .filter(|(i, _)| mask[*i])
-                .map(|(_, &e)| e * e)
-                .sum::<f64>()
-                / n_active.max(1) as f64,
-        );
-        log::debug!(
-            "fit_wcs iter {}: {} stars, rms={:.3}px, rejected {}",
-            iter,
-            n_active,
-            rms,
-            rejected
-        );
-
-        if rejected == 0 || n_active < 3 {
-            break;
-        }
-
-        *cd = fit_cd_weighted(projected, mask, weights)?;
-    }
-    Ok(())
+) -> Result<(), SolveError> {
+    median_clip(
+        mask,
+        cd,
+        |cd, mask| compute_pixel_errors(projected, mask, *cd),
+        |mask| fit_cd_weighted(projected, mask, weights),
+    )
 }
 
 fn solve_3x3_weighted(
@@ -237,7 +119,7 @@ fn solve_3x3_weighted(
     mask: &[bool],
     weights: &[f64],
     target: impl Fn(&(f64, f64, f64, f64)) -> f64,
-) -> Result<(f64, f64, f64)> {
+) -> Result<(f64, f64, f64), SolveError> {
     let mut s_uu = 0.0_f64;
     let mut s_uv = 0.0_f64;
     let mut s_u = 0.0_f64;
@@ -266,85 +148,10 @@ fn solve_3x3_weighted(
         s_b += w * b;
     }
 
-    let a = [[s_uu, s_uv, s_u], [s_uv, s_vv, s_v], [s_u, s_v, s_1]];
-    let rhs = [s_ub, s_vb, s_b];
-    solve_3x3_system(&a, &rhs)
-}
-
-fn solve_3x3(
-    data: &[(f64, f64, f64, f64)],
-    mask: &[bool],
-    target: impl Fn(&(f64, f64, f64, f64)) -> f64,
-) -> Result<(f64, f64, f64)> {
-    let mut s_uu = 0.0_f64;
-    let mut s_uv = 0.0_f64;
-    let mut s_u = 0.0_f64;
-    let mut s_vv = 0.0_f64;
-    let mut s_v = 0.0_f64;
-    let mut s_1 = 0.0_f64;
-    let mut s_ub = 0.0_f64;
-    let mut s_vb = 0.0_f64;
-    let mut s_b = 0.0_f64;
-
-    for (i, row) in data.iter().enumerate() {
-        if !mask[i] {
-            continue;
-        }
-        let (u, v) = (row.0, row.1);
-        let b = target(row);
-        s_uu += u * u;
-        s_uv += u * v;
-        s_u += u;
-        s_vv += v * v;
-        s_v += v;
-        s_1 += 1.0;
-        s_ub += u * b;
-        s_vb += v * b;
-        s_b += b;
-    }
-
-    let a = [[s_uu, s_uv, s_u], [s_uv, s_vv, s_v], [s_u, s_v, s_1]];
-    let rhs = [s_ub, s_vb, s_b];
-    solve_3x3_system(&a, &rhs)
-}
-
-fn solve_3x3_system(a: &[[f64; 3]; 3], b: &[f64; 3]) -> Result<(f64, f64, f64)> {
-    let mut m = [[0.0_f64; 4]; 3];
-    for i in 0..3 {
-        for j in 0..3 {
-            m[i][j] = a[i][j];
-        }
-        m[i][3] = b[i];
-    }
-
-    for col in 0..3 {
-        let mut pivot_row = col;
-        let mut pivot_val = libm::fabs(m[col][col]);
-        for (row, mr) in m.iter().enumerate().skip(col + 1) {
-            let v = libm::fabs(mr[col]);
-            if v > pivot_val {
-                pivot_val = v;
-                pivot_row = row;
-            }
-        }
-        ensure!(pivot_val > 1e-30, "singular normal equations in 3x3");
-        if pivot_row != col {
-            m.swap(col, pivot_row);
-        }
-        let diag = m[col][col];
-        let col_snapshot = m[col];
-        for mr in m.iter_mut().skip(col + 1) {
-            let factor = mr[col] / diag;
-            for (x, &mc) in mr[col..].iter_mut().zip(col_snapshot[col..].iter()) {
-                *x -= factor * mc;
-            }
-        }
-    }
-
-    let z = m[2][3] / m[2][2];
-    let y = (m[1][3] - m[1][2] * z) / m[1][1];
-    let x = (m[0][3] - m[0][1] * y - m[0][2] * z) / m[0][0];
-    Ok((x, y, z))
+    let mut a = [s_uu, s_uv, s_u, s_uv, s_vv, s_v, s_u, s_v, s_1];
+    let mut x = [s_ub, s_vb, s_b];
+    solve_normal_equations(&mut a, &mut x, 3)?;
+    Ok((x[0], x[1], x[2]))
 }
 
 pub(super) fn compute_residuals(pairs: &[&StarPair], wcs: WcsParams) -> Vec<StarResidual> {
@@ -352,101 +159,60 @@ pub(super) fn compute_residuals(pairs: &[&StarPair], wcs: WcsParams) -> Vec<Star
     if libm::fabs(det) < 1e-30 {
         return Vec::new();
     }
-    let inv_00 = wcs.cd2_2 / det;
-    let inv_01 = -wcs.cd1_2 / det;
-    let inv_10 = -wcs.cd2_1 / det;
-    let inv_11 = wcs.cd1_1 / det;
-
+    let inverse = InverseCd::new(wcs.cd1_1, wcs.cd1_2, wcs.cd2_1, wcs.cd2_2);
     pairs
         .iter()
-        .filter_map(|p| {
-            let (xi_rad, eta_rad) =
-                tan_project_star(p.ra_deg, p.dec_deg, wcs.crval_ra, wcs.crval_dec)?;
-            let xi = xi_rad * RAD_TO_DEG;
-            let eta = eta_rad * RAD_TO_DEG;
-            let pred_x = inv_00 * xi + inv_01 * eta + wcs.crpix1;
-            let pred_y = inv_10 * xi + inv_11 * eta + wcs.crpix2;
-            let err_x = p.px_x - pred_x;
-            let err_y = p.px_y - pred_y;
-            let err_px = libm::sqrt(err_x * err_x + err_y * err_y);
-            Some(StarResidual {
-                px_x: p.px_x,
-                px_y: p.px_y,
-                err_x,
-                err_y,
-                err_px,
-            })
-        })
+        .filter_map(|p| pair_residual(p, &wcs, &inverse))
         .collect()
 }
 
-pub(super) fn rms_error(residuals: &[StarResidual]) -> f64 {
-    if residuals.is_empty() {
-        return 0.0;
-    }
-    let sum_sq: f64 = residuals.iter().map(|r| r.err_px * r.err_px).sum();
-    libm::sqrt(sum_sq / residuals.len() as f64)
+// The residual of `p` under `wcs`, whose CD matrix inverts to `inverse`. `None` when the
+// pair has no gnomonic projection about the CRVAL.
+fn pair_residual(p: &StarPair, wcs: &WcsParams, inverse: &InverseCd) -> Option<StarResidual> {
+    let (xi_rad, eta_rad) = tan_project_star(p.ra_deg, p.dec_deg, wcs.crval_ra, wcs.crval_dec)?;
+    let xi = xi_rad * RAD_TO_DEG;
+    let eta = eta_rad * RAD_TO_DEG;
+    let (u, v) = inverse.apply(xi, eta);
+    let (pred_x, pred_y) = (u + wcs.crpix1, v + wcs.crpix2);
+    let err_x = p.px_x - pred_x;
+    let err_y = p.px_y - pred_y;
+    let err_px = libm::sqrt(err_x * err_x + err_y * err_y);
+    Some(StarResidual {
+        px_x: p.px_x,
+        px_y: p.px_y,
+        err_x,
+        err_y,
+        err_px,
+        ra_deg: p.ra_deg,
+        dec_deg: p.dec_deg,
+    })
 }
 
-pub(super) fn weighted_rms_error(residuals: &[StarResidual], weights: &[f64]) -> f64 {
-    if residuals.is_empty() {
+// The RMS of the residual sizes `errors` in pixels. 0 when there are none.
+pub(super) fn rms_error(errors: impl IntoIterator<Item = f64>) -> f64 {
+    let (sum_sq, n) = errors
+        .into_iter()
+        .fold((0.0_f64, 0_usize), |(s, n), e| (s + e * e, n + 1));
+    if n == 0 {
         return 0.0;
     }
-    let mut sum_w = 0.0_f64;
-    let mut sum_we2 = 0.0_f64;
-    for (r, &w) in residuals.iter().zip(weights.iter()) {
-        sum_w += w;
-        sum_we2 += w * r.err_px * r.err_px;
-    }
+    libm::sqrt(sum_sq / n as f64)
+}
+
+// The RMS of the residual sizes `errors`, each weighted by its entry of `weights`. 0 when
+// the weights sum to 0 or less.
+pub(super) fn weighted_rms_error(errors: impl IntoIterator<Item = f64>, weights: &[f64]) -> f64 {
+    let (sum_w, sum_we2) = errors
+        .into_iter()
+        .zip(weights)
+        .fold((0.0_f64, 0.0_f64), |(sw, swe), (e, &w)| {
+            (sw + w, swe + w * e * e)
+        });
     if sum_w > 0.0 {
         libm::sqrt(sum_we2 / sum_w)
     } else {
         0.0
     }
-}
-
-pub(super) fn solve_normal_equations(a: &mut [f64], b: &mut [f64], n: usize) -> Result<Vec<f64>> {
-    for col in 0..n {
-        let mut pivot_row = col;
-        let mut pivot_val = libm::fabs(a[col * n + col]);
-        for row in (col + 1)..n {
-            let v = libm::fabs(a[row * n + col]);
-            if v > pivot_val {
-                pivot_val = v;
-                pivot_row = row;
-            }
-        }
-        ensure!(
-            pivot_val > 1e-30,
-            "singular SIP normal equations at col {}",
-            col
-        );
-        if pivot_row != col {
-            for k in 0..n {
-                a.swap(col * n + k, pivot_row * n + k);
-            }
-            b.swap(col, pivot_row);
-        }
-        let diag = a[col * n + col];
-        for row in (col + 1)..n {
-            let factor = a[row * n + col] / diag;
-            for k in col..n {
-                let above = a[col * n + k];
-                a[row * n + k] -= factor * above;
-            }
-            b[row] -= factor * b[col];
-        }
-    }
-
-    let mut x = vec![0.0_f64; n];
-    for i in (0..n).rev() {
-        let mut sum = b[i];
-        for j in (i + 1)..n {
-            sum -= a[i * n + j] * x[j];
-        }
-        x[i] = sum / a[i * n + i];
-    }
-    Ok(x)
 }
 
 #[cfg(test)]
@@ -461,6 +227,8 @@ mod tests {
             err_x,
             err_y,
             err_px,
+            ra_deg: 0.0,
+            dec_deg: 0.0,
         }
     }
 
@@ -477,79 +245,68 @@ mod tests {
 
     #[test]
     fn rms_error_empty_returns_zero() {
-        assert_eq!(rms_error(&[]), 0.0);
+        assert_eq!(rms_error([]), 0.0);
     }
 
     #[test]
     fn rms_error_matches_hand_calculation() {
         // residuals with err_px 3, 4 -> sqrt((9+16)/2) = sqrt(12.5)
-        let residuals = vec![residual(3.0, 0.0), residual(0.0, 4.0)];
-        let rms = rms_error(&residuals);
+        let residuals = [residual(3.0, 0.0), residual(0.0, 4.0)];
+        let rms = rms_error(residuals.iter().map(|r| r.err_px));
         assert_eq!(rms, libm::sqrt(12.5));
     }
 
     #[test]
     fn weighted_rms_error_empty_returns_zero() {
-        assert_eq!(weighted_rms_error(&[], &[]), 0.0);
+        assert_eq!(weighted_rms_error([], &[]), 0.0);
     }
 
     #[test]
     fn weighted_rms_error_zero_weight_returns_zero() {
-        let residuals = vec![residual(3.0, 0.0)];
+        let residuals = [residual(3.0, 0.0)];
         let weights = vec![0.0];
-        assert_eq!(weighted_rms_error(&residuals, &weights), 0.0);
+        assert_eq!(weighted_rms_error([residuals[0].err_px], &weights), 0.0);
     }
 
     #[test]
     fn weighted_rms_error_shifts_toward_heavily_weighted_residuals() {
         // equal weights: rms = sqrt((9+16)/2) = sqrt(12.5)
-        let residuals = vec![residual(3.0, 0.0), residual(0.0, 4.0)];
-        let equal = weighted_rms_error(&residuals, &[1.0, 1.0]);
+        let residuals = [residual(3.0, 0.0), residual(0.0, 4.0)];
+        let sizes = || residuals.iter().map(|r| r.err_px);
+        let equal = weighted_rms_error(sizes(), &[1.0, 1.0]);
         assert_eq!(equal, libm::sqrt(12.5));
 
         // heavier on the bigger residual -> rms pulled up
-        let skewed_big = weighted_rms_error(&residuals, &[1.0, 100.0]);
+        let skewed_big = weighted_rms_error(sizes(), &[1.0, 100.0]);
         assert!(skewed_big > equal);
 
         // heavier on the smaller residual -> rms pulled down
-        let skewed_small = weighted_rms_error(&residuals, &[100.0, 1.0]);
+        let skewed_small = weighted_rms_error(sizes(), &[100.0, 1.0]);
         assert!(skewed_small < equal);
     }
 
+    // Pairs on one line in the pixel plane fix no CD matrix. Rounding leaves pivots far
+    // above 1e-30 but below the working precision of the sums, so an absolute floor
+    // returned a CD matrix of about 1e12 deg/px for some of these lines.
     #[test]
-    fn solve_normal_equations_identity_returns_b() {
-        // 3x3 identity matrix, b = [1, 2, 3]
-        let mut a = vec![1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0];
-        let mut b = vec![1.0, 2.0, 3.0];
-        let x = solve_normal_equations(&mut a, &mut b, 3).unwrap();
-        assert_eq!(x, vec![1.0, 2.0, 3.0]);
-    }
-
-    #[test]
-    fn solve_normal_equations_diagonal_returns_componentwise_divide() {
-        // diag(2, 4, 8), b = [2, 8, 24] -> x = [1, 2, 3]
-        let mut a = vec![2.0, 0.0, 0.0, 0.0, 4.0, 0.0, 0.0, 0.0, 8.0];
-        let mut b = vec![2.0, 8.0, 24.0];
-        let x = solve_normal_equations(&mut a, &mut b, 3).unwrap();
-        assert_eq!(x, vec![1.0, 2.0, 3.0]);
-    }
-
-    #[test]
-    fn solve_normal_equations_needs_pivoting_still_works() {
-        // first-column pivot is zero, so row swap is required
-        let mut a = vec![0.0, 1.0, 2.0, 0.0];
-        let mut b = vec![3.0, 4.0];
-        // x_0 = 4/2 = 2, x_1 = 3/1 = 3
-        let x = solve_normal_equations(&mut a, &mut b, 2).unwrap();
-        assert_eq!(x, vec![2.0, 3.0]);
-    }
-
-    #[test]
-    fn solve_normal_equations_singular_errors() {
-        // rank-1 matrix: row 1 = 2x row 0
-        let mut a = vec![1.0, 2.0, 2.0, 4.0];
-        let mut b = vec![1.0, 2.0];
-        assert!(solve_normal_equations(&mut a, &mut b, 2).is_err());
+    fn fit_cd_weighted_rejects_pairs_on_a_line() {
+        for (step, slope) in [(0.1, 3.0), (0.7, 0.3), (1.1, 1.7), (13.3, 0.1)] {
+            let rows: Vec<(f64, f64, f64, f64)> = (1..=5)
+                .map(|k| {
+                    let u = step * k as f64;
+                    let v = u * slope;
+                    (u, v, 0.001 * u, 0.002 * v)
+                })
+                .collect();
+            for n in [3, 5] {
+                let fit = fit_cd_weighted(&rows[..n], &vec![true; n], &vec![1.0; n]);
+                assert!(
+                    matches!(fit, Err(SolveError::FitFailed { .. })),
+                    "step {step}, slope {slope}, {n} rows: {:?}",
+                    fit.map(|c| (c.cd1_1, c.cd1_2, c.cd2_1, c.cd2_2))
+                );
+            }
+        }
     }
 
     #[test]
@@ -576,7 +333,7 @@ mod tests {
         let residuals = compute_residuals(&refs, wcs);
         assert_eq!(residuals.len(), 1);
         // At the tangent point, predicted = crpix exactly.
-        assert!(residuals[0].err_px < 1e-12);
+        assert_eq!(residuals[0].err_px, 0.0);
     }
 
     #[test]
@@ -660,16 +417,21 @@ mod tests {
         let weights = vec![1.0; projected.len()];
         let fit = fit_cd_weighted(&projected, &mask, &weights).unwrap();
 
-        // numerical round trip through tan projection; should recover within
-        // a very tight tolerance
-        assert!((fit.cd1_1 - 0.001).abs() < 1e-12);
-        assert!((fit.cd2_2 - 0.001).abs() < 1e-12);
-        assert!(fit.cd1_2.abs() < 1e-12);
-        assert!(fit.cd2_1.abs() < 1e-12);
+        // The pairs were synthesized with CD = diag(0.001, 0.001). The fitted terms
+        // differ from it by at most 4.3e-17 deg/px, 4.3e-14 of the scale.
+        assert_eq!(
+            (fit.cd1_1, fit.cd1_2, fit.cd2_1, fit.cd2_2),
+            (
+                0.0010000000000000425,
+                5.16672658535462e-19,
+                -1.3862385157639302e-21,
+                0.0010000000000000002
+            )
+        );
     }
 
     #[test]
-    fn sigma_clip_loop_removes_obvious_outlier() {
+    fn median_clip_loop_removes_obvious_outlier() {
         let crval_ra = 180.0;
         let crval_dec = 0.0;
         let cd = CdParams {
@@ -715,7 +477,7 @@ mod tests {
         projected[last].0 += 500.0;
         projected[last].1 -= 500.0;
 
-        sigma_clip_loop_weighted(&projected, &mut mask, &mut cd_fit, &weights).unwrap();
+        median_clip_loop(&projected, &mut mask, &mut cd_fit, &weights).unwrap();
         // outlier must be flagged
         assert!(!mask[last], "expected outlier to be rejected");
         // clean points must be kept

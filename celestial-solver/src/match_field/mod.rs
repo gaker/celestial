@@ -1,34 +1,37 @@
 //! Star-quad hash matching against a catalog.
 //!
 //! Builds four-star quads from detections and from a cone-searched catalog region,
-//! then matches them by geometric hash. The output is a set of individual [`StarPair`]s
-//! (image pixel ↔ catalog RA/Dec), aggregated across all matched quads with vote
-//! counts.
+//! then matches them by geometric hash. Each quad match is a hypothesis, verified by
+//! the Bayesian log-odds that it is real rather than chance. The output is a set of
+//! individual [`StarPair`]s (image pixel ↔ catalog RA/Dec), aggregated across all
+//! matched quads with vote counts, that support the accepted hypothesis.
 
 mod aggregate;
+mod catalog_side;
 mod hash_index;
-mod quad_stars;
+mod parity;
+pub(crate) mod quad_stars;
+mod uniform;
 mod verify;
 
-use anyhow::Result;
-use celestial_catalog::query::quad::{neighbor_quads, Quad};
+use celestial_catalog::query::quad::Quad;
 use celestial_coords::frames::icrs::ICRSPosition;
-use celestial_core::constants::PI;
 use celestial_images::formats::image::Image;
 use celestial_time::julian::JulianDate;
-use rayon::prelude::*;
 
 use crate::detect::DetectedStar;
+use crate::error::SolveError;
+use crate::input;
+use crate::log_odds::field::Field;
 
-use aggregate::extract_pairs;
-use hash_index::{build_hash_index, find_matches};
-use quad_stars::{catalog_cone_search, search_radius, stars_to_quad_stars};
-use verify::verify_pairs;
+use catalog_side::search_catalog;
+use parity::ParitySearch;
 
-/// Tuning for [`match_field`].
+/// Tuning for the quad matching stage of the solve.
 ///
-/// `max_stars` caps the number of brightest detections considered — more costs cubic
-/// matching time; fewer risks missing the right solution in sparse fields.
+/// `max_stars` caps the number of detections used for quads, the brightest of each cell
+/// of a grid over the image. More cost matching time; fewer risk missing the right
+/// solution in sparse fields.
 /// `search_radius_deg` overrides the cone search radius (default: auto-computed from
 /// image dimensions and plate scale).
 ///
@@ -44,11 +47,14 @@ use verify::verify_pairs;
 /// ```
 #[derive(Debug, Clone)]
 pub struct MatchParams {
-    /// Maximum brightest detections to use when building image quads.
+    /// Maximum number of detections to build image quads from: the brightest of each cell
+    /// of a grid over the image, in cells of about `k_neighbors` of them. At least 4.
     pub max_stars: usize,
-    /// How many nearest-neighbor stars to consider when building quads per anchor.
+    /// How many nearest-neighbor stars to consider when building quads per anchor. At
+    /// least 3.
     pub k_neighbors: usize,
-    /// Catalog cone search radius override, in degrees. `None` auto-computes.
+    /// Catalog cone search radius override, in degrees, above 0 and at most 180. `None`
+    /// auto-computes.
     pub search_radius_deg: Option<f64>,
 }
 
@@ -64,7 +70,7 @@ impl Default for MatchParams {
 
 /// A geometric quad match: one image-side quad paired with a catalog-side quad.
 ///
-/// Produced by [`match_field`]. The two quads have similar four-star topology (edge
+/// Produced by the quad matching stage. The two quads have similar four-star topology (edge
 /// ratios and interior angles) under the current hashing scheme.
 #[derive(Debug, Clone)]
 pub struct QuadMatch {
@@ -84,7 +90,7 @@ pub struct QuadMatch {
 /// ```rust,ignore
 /// # let img = celestial_images::formats::image::Image::open("f.fits")?;
 /// # let catalog = celestial_catalog::query::catalog::Catalog::open("cat.bin")?;
-/// let result = celestial_solver::solve(&img, &catalog).run()?;
+/// let result = celestial_solver::solve::solve(&img, &catalog).run()?;
 /// let top = &result.pairs[0];
 /// println!("pixel ({:.1}, {:.1}) = sky ({:.4}°, {:.4}°)", top.px_x, top.px_y, top.ra_deg, top.dec_deg);
 /// # Ok::<(), Box<dyn std::error::Error>>(())
@@ -105,7 +111,24 @@ pub struct StarPair {
     pub snr: f64,
 }
 
-/// Output of [`match_field`].
+impl StarPair {
+    // Total order used wherever pair order affects a result: votes descending, then
+    // snr descending, then pixel position, then sky position.
+    pub(crate) fn cmp_rank(&self, other: &Self) -> std::cmp::Ordering {
+        other
+            .votes
+            .cmp(&self.votes)
+            .then(other.snr.total_cmp(&self.snr))
+            .then(self.px_x.total_cmp(&other.px_x))
+            .then(self.px_y.total_cmp(&other.px_y))
+            .then(self.ra_deg.total_cmp(&other.ra_deg))
+            .then(self.dec_deg.total_cmp(&other.dec_deg))
+    }
+}
+
+/// Output of the quad matching stage, in [`SolveResult::field_match`].
+///
+/// [`SolveResult::field_match`]: crate::solve::SolveResult::field_match
 ///
 /// Exposes the raw quad-star sets and quad matches alongside the aggregated
 /// [`StarPair`]s. Pairs are what the WCS fitter consumes; the other fields are
@@ -118,35 +141,31 @@ pub struct FieldMatch {
     pub catalog_stars: Vec<celestial_catalog::query::quad::QuadStar>,
     /// Every quad match found.
     pub matches: Vec<QuadMatch>,
-    /// Aggregated pixel↔sky pairs derived from the matched quads.
+    /// Pixel↔sky pairs that support the verified hypothesis: the aggregated quad-match
+    /// pairs it supports, the detections it places on catalog stars, and its own quad
+    /// pairs.
     pub pairs: Vec<StarPair>,
 }
 
 /// Matches detected stars against a catalog via four-star quad hashing.
 ///
-/// Builds quads from the brightest `params.max_stars` detections, cone-searches the
-/// catalog around `hint` with a radius derived from the image geometry, builds
-/// catalog quads, and matches by geometric hash. Tries both parity orientations and
-/// returns the better result.
+/// Builds quads from up to `params.max_stars` detections, the brightest of each cell of a
+/// grid over the image, cone-searches the catalog around `hint` with a radius derived
+/// from the image geometry, builds catalog quads from the brightest stars of cells of
+/// the same area at the same density, and matches by geometric hash. Each quad match in
+/// both parity orientations is a hypothesis, accepted only when the Bayesian log-odds
+/// that it is real rather than chance exceeds ln(1e9) (Lang et al. 2010, sec. 2.4).
+/// Returns the pairs that support the first accepted hypothesis.
 ///
 /// # Errors
 ///
-/// Returns an error when the cone search fails or no quad matches are found.
-///
-/// # Examples
-///
-/// ```rust,ignore
-/// use celestial_solver::match_field::{match_field, MatchParams};
-///
-/// # let stars = vec![];
-/// # let img = celestial_images::formats::image::Image::open("f.fits")?;
-/// # let catalog = celestial_catalog::query::catalog::Catalog::open("cat.bin")?;
-/// # let hint = celestial_coords::frames::icrs::ICRSPosition::from_degrees(180.0, 30.0)?;
-/// # let epoch = celestial_time::julian::JulianDate::new(2_400_000.5, 0.0);
-/// let field = match_field(&stars, &img, &catalog, &hint, 1.5, epoch, &MatchParams::default())?;
-/// # Ok::<(), Box<dyn std::error::Error>>(())
-/// ```
-pub fn match_field(
+/// Returns [`SolveError::InvalidParameter`] when `scale_arcsec` is not finite and
+/// positive, a set `params.search_radius_deg` is not above 0 and at most 180,
+/// `params.max_stars` is below 4, `params.k_neighbors` is below 3, `epoch` is not
+/// finite, or a star's position or SNR is not finite; [`SolveError::NoStars`] when
+/// `stars` is empty; [`SolveError::Catalog`] when the cone search fails; and
+/// [`SolveError::NoMatch`] when no quad match passes verification.
+pub(crate) fn match_field(
     stars: &[DetectedStar],
     image: &Image,
     catalog: &celestial_catalog::query::catalog::Catalog,
@@ -154,170 +173,55 @@ pub fn match_field(
     scale_arcsec: f64,
     epoch: JulianDate,
     params: &MatchParams,
-) -> Result<FieldMatch> {
-    let w = image.width();
-    let h = image.height();
-    let ra = hint.ra().degrees();
-    let dec = hint.dec().degrees();
-
-    let radius = search_radius(w, h, scale_arcsec, params.search_radius_deg);
-    let field_rad = radius * PI / 180.0;
-    let min_spine = field_rad * 0.05;
-    let min_spine_sq = min_spine * min_spine;
-
-    let (catalog_stars, catalog_results) =
-        catalog_cone_search(catalog, ra, dec, radius, params.max_stars, epoch)?;
-    let catalog_quads = neighbor_quads(&catalog_stars, 10, min_spine_sq);
-    let index = build_hash_index(&catalog_quads);
-
-    log::debug!(
-        "match_field: radius={:.3}\u{00b0}, scale={:.3}\"/px",
-        radius,
-        scale_arcsec
-    );
-    log::debug!(
-        "match_field: {} catalog stars, {} catalog quads",
-        catalog_stars.len(),
-        catalog_quads.len()
-    );
-
-    let results: Vec<ParityAttempt> = [false, true]
-        .par_iter()
-        .map(|&parity| {
-            let img_stars =
-                stars_to_quad_stars(stars, w, h, scale_arcsec, params.max_stars, parity);
-            let img_quads = neighbor_quads(&img_stars, params.k_neighbors, min_spine_sq);
-            let m = find_matches(&img_quads, &catalog_quads, &index);
-            let p = extract_pairs(&m, stars, &img_stars, &catalog_stars, &catalog_results);
-            let score = verify_pairs(&p, ra, dec);
-            let label = if parity { "flipped" } else { "normal" };
-            log::debug!(
-                "match_field [{label}]: {} img quads, {} raw matches, {} pairs, verified={}",
-                img_quads.len(),
-                m.len(),
-                p.len(),
-                score
-            );
-            ParityAttempt {
-                img_stars,
-                matches: m,
-                pairs: p,
-                score,
-            }
-        })
-        .collect();
-
-    let mut best_score = 0usize;
-    let mut best: Option<ParityAttempt> = None;
-    for r in results {
-        if r.score > best_score {
-            best_score = r.score;
-            best = Some(r);
-        }
-    }
-
-    let ParityAttempt {
-        img_stars: image_stars,
-        matches,
-        pairs,
-        ..
-    } = best.unwrap_or_default();
-    log::debug!(
-        "match_field: best parity => {} pairs (score {})",
-        pairs.len(),
-        best_score
-    );
-
+) -> Result<FieldMatch, SolveError> {
+    check_inputs(stars, scale_arcsec, epoch, params)?;
+    let size = (image.width(), image.height());
+    let centre = (hint.ra().degrees(), hint.dec().degrees());
+    let side = search_catalog(
+        catalog,
+        centre,
+        size,
+        scale_arcsec,
+        epoch,
+        stars.len(),
+        params,
+    )?;
+    let field = Field::new(stars, size, centre, &side.references);
+    let search = ParitySearch {
+        stars,
+        image_size: size,
+        scale_arcsec,
+        params,
+        catalog: &side,
+        field: &field,
+    };
+    let (attempt, accepted) = search.run()?;
     Ok(FieldMatch {
-        image_stars,
-        catalog_stars,
-        matches,
-        pairs,
+        image_stars: attempt.img_stars,
+        catalog_stars: side.quad_stars,
+        matches: attempt.matches,
+        pairs: accepted.pairs,
     })
 }
 
-#[derive(Default)]
-struct ParityAttempt {
-    img_stars: Vec<celestial_catalog::query::quad::QuadStar>,
-    matches: Vec<QuadMatch>,
-    pairs: Vec<StarPair>,
-    score: usize,
-}
-
-#[cfg(test)]
-pub(super) mod test_catalog {
-    use celestial_catalog::query::catalog::{pixel_entry_bytes, CatalogHeader, StarRecord};
-    use celestial_catalog::query::healpix::ang2pix_nest;
-    use std::io::Write;
-    use tempfile::NamedTempFile;
-
-    pub struct SynthStar {
-        pub source_id: i64,
-        pub ra: f64,
-        pub dec: f64,
-        pub mag: f32,
+fn check_inputs(
+    stars: &[DetectedStar],
+    scale_arcsec: f64,
+    epoch: JulianDate,
+    params: &MatchParams,
+) -> Result<(), SolveError> {
+    input::match_params(params)?;
+    input::positive("scale_arcsec", scale_arcsec)?;
+    input::epoch(epoch)?;
+    input::stars(stars)?;
+    if stars.is_empty() {
+        return Err(SolveError::NoStars);
     }
-
-    fn record(s: &SynthStar) -> StarRecord {
-        let mut star = StarRecord::from_le_bytes(&[0; 56]);
-        star.source_id = s.source_id;
-        star.ra = s.ra;
-        star.dec = s.dec;
-        star.mag = s.mag;
-        star
-    }
-
-    pub fn build(order: u32, stars: &[SynthStar]) -> NamedTempFile {
-        let nside = 1u32 << order;
-        let npix = 12u64 * (nside as u64) * (nside as u64);
-
-        let mut buckets: Vec<Vec<&SynthStar>> = (0..npix).map(|_| Vec::new()).collect();
-        for s in stars {
-            let pix = ang2pix_nest(order, s.ra, s.dec).unwrap_or_else(|e| {
-                panic!("synthetic star ({}, {}) has no pixel: {e}", s.ra, s.dec)
-            });
-            buckets[pix as usize].push(s);
-        }
-        // Magnitude-sort within each pixel — cone_search relies on it elsewhere.
-        for b in buckets.iter_mut() {
-            b.sort_by(|a, b| {
-                a.mag
-                    .partial_cmp(&b.mag)
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            });
-        }
-
-        let header = CatalogHeader {
-            order,
-            nside,
-            npix,
-            total_stars: stars.len() as u64,
-            epoch: 2016.0,
-            mag_limit: 21.0,
-        };
-        let mut buf = header.to_bytes().to_vec();
-        let mut star_data: Vec<u8> = Vec::new();
-        for bucket in &buckets {
-            buf.extend_from_slice(&pixel_entry_bytes(
-                star_data.len() as u64,
-                bucket.len() as u32,
-            ));
-            for s in bucket {
-                star_data.extend_from_slice(&record(s).to_le_bytes());
-            }
-        }
-        buf.extend_from_slice(&star_data);
-
-        let mut file = NamedTempFile::new().unwrap();
-        file.write_all(&buf).unwrap();
-        file.flush().unwrap();
-        file
-    }
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
-    use super::test_catalog::{build, SynthStar};
     use super::*;
 
     use celestial_catalog::query::catalog::Catalog;
@@ -325,6 +229,9 @@ mod tests {
     use celestial_time::julian::JulianDate;
 
     use crate::detect::DetectedStar;
+    use crate::sky_scene::{build, SynthStar};
+
+    use super::quad_stars::{catalog_cone_search, search_radius, QuadSelection};
 
     fn det(x: f64, y: f64, flux: f64) -> DetectedStar {
         DetectedStar {
@@ -401,9 +308,9 @@ mod tests {
     }
 
     #[test]
-    fn match_field_no_detections_returns_empty_pairs() {
-        // Catalog with a handful of stars, but zero detections → no image quads,
-        // so no matches, no pairs. Must not panic and must return cleanly.
+    fn match_field_no_detections_is_an_error() {
+        // Catalog with a handful of stars, but zero detections: no image quads can be
+        // built, which is reported before the catalog search.
         let center_ra = 180.0;
         let center_dec = 0.0;
         let stars: Vec<SynthStar> = (0..30)
@@ -424,7 +331,7 @@ mod tests {
         let hint = ICRSPosition::from_degrees(center_ra, center_dec).unwrap();
         let epoch = JulianDate::new(2451545.0, 0.0);
 
-        let out = match_field(
+        let err = match_field(
             &[],
             &img,
             &catalog,
@@ -433,13 +340,33 @@ mod tests {
             epoch,
             &MatchParams::default(),
         )
-        .unwrap();
+        .unwrap_err();
+        assert_eq!(err.describe(), "NoStars: no stars detected");
+    }
 
-        assert!(out.pairs.is_empty());
-        assert!(out.matches.is_empty());
-        assert!(out.image_stars.is_empty());
-        // Catalog quads need ≥4 stars in the cone; we placed 30 nearby.
-        assert!(!out.catalog_stars.is_empty());
+    #[test]
+    fn match_field_rejects_unrelated_star_fields() {
+        for seed in 1..=6 {
+            let scene = crate::sky_scene::unrelated_field(seed, 100);
+            let catalog = Catalog::open(scene.catalog.path()).unwrap();
+            let outcome = match_field(
+                &scene.detections(),
+                &empty_image(1024, 1024),
+                &catalog,
+                &crate::sky_scene::hint(),
+                crate::sky_scene::SCALE_ARCSEC,
+                crate::sky_scene::epoch(),
+                &MatchParams::default(),
+            );
+            let Err(err) = outcome else {
+                panic!("seed {seed}: stars unrelated to the catalog matched");
+            };
+            assert!(
+                err.to_string()
+                    .starts_with("no quad match passed verification: det(CD) > 0: "),
+                "seed {seed}: {err}"
+            );
+        }
     }
 
     #[test]
@@ -457,33 +384,34 @@ mod tests {
             .collect();
         let file = build(4, &stars);
         let catalog = Catalog::open(file.path()).unwrap();
-
-        let img = empty_image(1024, 1024);
-        let hint = ICRSPosition::from_degrees(center_ra, center_dec).unwrap();
         let epoch = JulianDate::new(2451545.0, 0.0);
 
-        let tight = MatchParams {
-            search_radius_deg: Some(0.05),
-            ..MatchParams::default()
+        let cone = |radius_deg: f64| {
+            let radius = search_radius(1024, 1024, 1.0, Some(radius_deg));
+            let selection = QuadSelection {
+                count: MatchParams::default().max_stars,
+                cell_rad: 1.0,
+            };
+            catalog_cone_search(
+                &catalog,
+                (center_ra, center_dec),
+                radius,
+                &selection,
+                0,
+                epoch,
+            )
+            .unwrap()
+            .quad_stars
         };
-        let wide = MatchParams {
-            search_radius_deg: Some(5.0),
-            ..MatchParams::default()
-        };
-
-        let tight_out = match_field(&[], &img, &catalog, &hint, 1.0, epoch, &tight).unwrap();
-        let wide_out = match_field(&[], &img, &catalog, &hint, 1.0, epoch, &wide).unwrap();
 
         // Wider radius must reach at least as many catalog stars.
-        assert!(wide_out.catalog_stars.len() >= tight_out.catalog_stars.len());
+        assert!(cone(5.0).len() >= cone(0.05).len());
     }
 
     #[test]
-    fn match_field_runs_both_parities_returns_field_match() {
-        // Build a star field and a corresponding set of pixel detections such that
-        // both parities are evaluated. We don't assert on which parity wins or how
-        // many pairs are produced — just that the call completes and exposes the
-        // FieldMatch fields.
+    fn match_field_errors_when_no_parity_verifies() {
+        // Detections on a line, unrelated to a ring of catalog stars: both parities are
+        // tried and neither verifies.
         let center_ra = 90.0;
         let center_dec = 45.0;
         let mut stars: Vec<SynthStar> = Vec::new();
@@ -499,7 +427,6 @@ mod tests {
         let file = build(4, &stars);
         let catalog = Catalog::open(file.path()).unwrap();
 
-        // A small batch of detections — enough to build at least one image quad.
         let detections: Vec<DetectedStar> = (0..20)
             .map(|i| {
                 let i = i as f64;
@@ -511,7 +438,7 @@ mod tests {
         let hint = ICRSPosition::from_degrees(center_ra, center_dec).unwrap();
         let epoch = JulianDate::new(2451545.0, 0.0);
 
-        let out = match_field(
+        let err = match_field(
             &detections,
             &img,
             &catalog,
@@ -520,24 +447,210 @@ mod tests {
             epoch,
             &MatchParams::default(),
         )
-        .unwrap();
-
-        // image_stars belongs to the winning parity; pairs may be empty for a
-        // synthetic non-aligned field, but the structure must be populated.
-        let _ = (
-            out.image_stars.len(),
-            out.catalog_stars.len(),
-            out.matches.len(),
-            out.pairs.len(),
+        .unwrap_err();
+        assert!(
+            err.to_string()
+                .starts_with("no quad match passed verification: det(CD) > 0: "),
+            "{err}"
         );
     }
 
     #[test]
-    fn parity_attempt_default_is_empty() {
-        let p = ParityAttempt::default();
-        assert!(p.img_stars.is_empty());
-        assert!(p.matches.is_empty());
-        assert!(p.pairs.is_empty());
-        assert_eq!(p.score, 0);
+    fn match_field_finds_sparse_field_among_unrelated_stars() {
+        for flip in [false, true] {
+            let scene = crate::sky_scene::star_field(3, 40, 30, flip);
+            let catalog = Catalog::open(scene.catalog.path()).unwrap();
+            let out = match_field(
+                &scene.detections(),
+                &empty_image(1024, 1024),
+                &catalog,
+                &crate::sky_scene::hint(),
+                crate::sky_scene::SCALE_ARCSEC,
+                crate::sky_scene::epoch(),
+                &MatchParams::default(),
+            )
+            .unwrap_or_else(|e| panic!("flip={flip}: {e:#}"));
+            scene.assert_true_pairs(&out.pairs);
+        }
+    }
+
+    fn match_sparse_scene(
+        flip: bool,
+        max_stars: usize,
+    ) -> (crate::sky_scene::Scene, Result<FieldMatch, SolveError>) {
+        let scene = crate::sky_scene::star_field(3, 40, 30, flip);
+        let catalog = Catalog::open(scene.catalog.path()).unwrap();
+        let params = MatchParams {
+            max_stars,
+            ..MatchParams::default()
+        };
+        let out = match_field(
+            &scene.detections(),
+            &empty_image(1024, 1024),
+            &catalog,
+            &crate::sky_scene::hint(),
+            crate::sky_scene::SCALE_ARCSEC,
+            crate::sky_scene::epoch(),
+            &params,
+        );
+        (scene, out)
+    }
+
+    #[test]
+    fn match_field_pairs_cover_every_catalog_star_in_the_cone() {
+        for flip in [false, true] {
+            let (scene, out) = match_sparse_scene(flip, MatchParams::default().max_stars);
+            let out = out.unwrap_or_else(|e| panic!("flip={flip}: {e:#}"));
+            scene.assert_true_pairs(&out.pairs);
+            // 13 of the 18 scene stars lie inside the cone about the hint; the other 5
+            // are not catalog references.
+            assert_eq!(scene.truth.len(), 18);
+            assert_eq!(out.pairs.len(), 13, "flip={flip}");
+        }
+    }
+
+    fn match_wide_scene(
+        scene: &crate::sky_scene::Scene,
+        search_radius_deg: Option<f64>,
+    ) -> Result<FieldMatch, SolveError> {
+        let catalog = Catalog::open(scene.catalog.path()).unwrap();
+        let params = MatchParams {
+            search_radius_deg,
+            ..MatchParams::default()
+        };
+        match_field(
+            &scene.detections(),
+            &empty_image(scene.size.0, scene.size.1),
+            &catalog,
+            &crate::sky_scene::hint(),
+            crate::sky_scene::SCALE_ARCSEC,
+            crate::sky_scene::epoch(),
+            &params,
+        )
+    }
+
+    // The hint does not give the rotation, so the catalog stars for quads cover the circle
+    // the strip can turn in: with the search margin, 34 times the strip's area.
+    #[test]
+    fn match_field_finds_a_strip() {
+        let scene = crate::sky_scene::wide_field(5, 5600, 2.1, (6000, 200));
+        assert_eq!(scene.truth.len(), 97);
+        let out = match_wide_scene(&scene, None).unwrap_or_else(|e| panic!("{e:#}"));
+        scene.assert_true_pairs(&out.pairs);
+    }
+
+    // A 1.5 degree search radius is a cone 22 times the area of the 0.57 degree square
+    // image.
+    #[test]
+    fn match_field_finds_the_image_in_a_wide_search_cone() {
+        let scene = crate::sky_scene::wide_field(7, 1365, 1.6, (1024, 1024));
+        assert_eq!(scene.truth.len(), 45);
+        let out = match_wide_scene(&scene, Some(1.5)).unwrap_or_else(|e| panic!("{e:#}"));
+        scene.assert_true_pairs(&out.pairs);
+    }
+
+    #[test]
+    fn match_field_verifies_against_stars_beyond_its_quad_stars() {
+        // 12 quad stars on each side; the field holds 18 catalog stars.
+        let (scene, out) = match_sparse_scene(false, 12);
+        let out = out.unwrap_or_else(|e| panic!("{e:#}"));
+        scene.assert_true_pairs(&out.pairs);
+    }
+
+    // Each input that is not finite, or not positive where it must be, is rejected before
+    // the catalog is read.
+    #[test]
+    fn match_field_rejects_non_finite_inputs() {
+        let scene = crate::sky_scene::star_field(3, 40, 30, false);
+        let catalog = Catalog::open(scene.catalog.path()).unwrap();
+        let stars = scene.detections();
+        let mut bad_star = stars.clone();
+        bad_star[0] = det(f64::NAN, 10.0, 5000.0);
+        let scale = crate::sky_scene::SCALE_ARCSEC;
+        let epoch = crate::sky_scene::epoch();
+        let run = |stars: &[DetectedStar], scale: f64, epoch: JulianDate, radius: Option<f64>| {
+            let params = MatchParams {
+                search_radius_deg: radius,
+                ..MatchParams::default()
+            };
+            let image = empty_image(1024, 1024);
+            let hint = crate::sky_scene::hint();
+            let out = match_field(stars, &image, &catalog, &hint, scale, epoch, &params);
+            out.err().map(|e| e.describe())
+        };
+        let cases = [
+            (
+                run(&stars, f64::NAN, epoch, None),
+                "InvalidParameter: invalid parameter scale_arcsec: must be finite and positive, got NaN",
+            ),
+            (
+                run(&stars, 0.0, epoch, None),
+                "InvalidParameter: invalid parameter scale_arcsec: must be finite and positive, got 0",
+            ),
+            (
+                run(&stars, scale, JulianDate::new(f64::NAN, 0.0), None),
+                "InvalidParameter: invalid parameter epoch: must be finite, got (NaN, 0)",
+            ),
+            (
+                run(&stars, scale, epoch, Some(f64::INFINITY)),
+                "InvalidParameter: invalid parameter search_radius_deg: must be finite and positive, got inf",
+            ),
+            (
+                run(&bad_star, scale, epoch, None),
+                "InvalidParameter: invalid parameter stars: star 0 is not finite: pixel (NaN, 10), snr 20",
+            ),
+        ];
+        let (got, want): (Vec<_>, Vec<_>) = cases
+            .iter()
+            .map(|(err, expected)| (err.as_deref(), Some(*expected)))
+            .unzip();
+        assert_eq!(got, want);
+    }
+
+    #[test]
+    fn match_field_rejects_parameters_that_form_no_quad() {
+        let scene = crate::sky_scene::star_field(3, 40, 30, false);
+        let catalog = Catalog::open(scene.catalog.path()).unwrap();
+        let stars = scene.detections();
+        let run = |stars: &[DetectedStar], params: MatchParams| {
+            let image = empty_image(1024, 1024);
+            let hint = crate::sky_scene::hint();
+            let scale = crate::sky_scene::SCALE_ARCSEC;
+            let epoch = crate::sky_scene::epoch();
+            let out = match_field(stars, &image, &catalog, &hint, scale, epoch, &params);
+            out.err().map(|e| e.describe())
+        };
+        let defaults = MatchParams::default;
+        let got = [
+            run(
+                &stars,
+                MatchParams {
+                    max_stars: 3,
+                    ..defaults()
+                },
+            ),
+            run(
+                &stars,
+                MatchParams {
+                    k_neighbors: 2,
+                    ..defaults()
+                },
+            ),
+            run(
+                &stars,
+                MatchParams {
+                    search_radius_deg: Some(180.5),
+                    ..defaults()
+                },
+            ),
+            run(&[], defaults()),
+        ];
+        let want = [
+            "InvalidParameter: invalid parameter max_stars: must be at least 4, the stars of one quad, got 3",
+            "InvalidParameter: invalid parameter k_neighbors: must be at least 3, the neighbours a quad adds to its first star, got 2",
+            "InvalidParameter: invalid parameter search_radius_deg: must be at most 180, got 180.5",
+            "NoStars: no stars detected",
+        ];
+        assert_eq!(got.each_ref().map(|g| g.as_deref()), want.map(Some));
     }
 }

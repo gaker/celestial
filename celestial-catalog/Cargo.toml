@@ -44,4 +44,6 @@ tempfile.workspace = true
 [features]
 default = []
 integration-tests = []
+# Exposes query::test_support, which writes small catalog files, to sibling crates' tests
+test-support = []
 cli = ["dep:anyhow", "dep:clap", "dep:flate2", "dep:rayon", "dep:indicatif", "dep:serde", "dep:serde_json", "dep:reqwest", "dep:quick-xml"]

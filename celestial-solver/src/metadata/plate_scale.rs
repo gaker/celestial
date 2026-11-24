@@ -1,16 +1,21 @@
+use celestial_core::constants::ARCSEC_PER_RAD;
 use celestial_images::formats::image::Image;
 
 use super::error::MetadataError;
 
+// The angle in arcseconds of 1 micron seen from 1 mm: a pixel of `pixel_um` behind a
+// focal length of `focal_mm` subtends `pixel_um / (1000 * focal_mm)` radians.
+pub(crate) const ARCSEC_PER_UM_PER_MM: f64 = ARCSEC_PER_RAD / 1000.0;
+
 /// Plate scale derived from focal length and pixel size.
 ///
 /// `arcsec_per_pixel` follows the small-angle approximation:
-/// `206.265 * pixel_um / focal_mm`.
+/// `206.2648 * pixel_um / focal_mm`.
 ///
 /// # Examples
 ///
 /// ```rust,ignore
-/// use celestial_solver::metadata::plate_scale_from_image;
+/// use celestial_solver::metadata::plate_scale::plate_scale_from_image;
 ///
 /// # let img = celestial_images::formats::image::Image::open("f.fits")?;
 /// let scale = plate_scale_from_image(&img, None, None)?;
@@ -30,18 +35,18 @@ pub struct PlateScale {
 ///
 /// Reads `FOCALLEN` (mm) and `XPIXSZ` (microns) from the image headers, preferring the
 /// `focal_override` / `pixel_override` arguments when they're `Some`. Computes the
-/// scale as `206.265 * pixel_um / focal_mm`.
+/// scale as `206.2648 * pixel_um / focal_mm`.
 ///
 /// # Errors
 ///
 /// Returns [`MetadataError::MissingHeader`] if `FOCALLEN` or `XPIXSZ` is missing and
-/// no override supplies it, or [`MetadataError::NonPositiveValue`] if either is zero
-/// or negative.
+/// no override supplies it, [`MetadataError::NonPositiveValue`] if either is zero
+/// or negative, or [`MetadataError::NonFiniteValue`] if either is NaN or infinite.
 ///
 /// # Examples
 ///
 /// ```rust,ignore
-/// use celestial_solver::metadata::plate_scale_from_image;
+/// use celestial_solver::metadata::plate_scale::plate_scale_from_image;
 ///
 /// # let img = celestial_images::formats::image::Image::open("f.fits")?;
 /// // Use FOCALLEN and XPIXSZ from headers:
@@ -56,30 +61,31 @@ pub fn plate_scale_from_image(
     focal_override: Option<f64>,
     pixel_override: Option<f64>,
 ) -> Result<PlateScale, MetadataError> {
-    let focal = focal_override.or_else(|| img.get("FOCALLEN").as_f64());
-    let pixel = pixel_override.or_else(|| img.get("XPIXSZ").as_f64());
+    let focal = focal_override.or_else(|| img.get_last("FOCALLEN").as_f64());
+    let pixel = pixel_override.or_else(|| img.get_last("XPIXSZ").as_f64());
 
     let focal_mm = focal.ok_or(MetadataError::MissingHeader("FOCALLEN"))?;
     let pixel_um = pixel.ok_or(MetadataError::MissingHeader("XPIXSZ"))?;
 
-    if focal_mm <= 0.0 {
-        return Err(MetadataError::NonPositiveValue {
-            field: "focal length",
-            value: focal_mm,
-        });
-    }
-    if pixel_um <= 0.0 {
-        return Err(MetadataError::NonPositiveValue {
-            field: "pixel size",
-            value: pixel_um,
-        });
-    }
+    positive("focal length", focal_mm)?;
+    positive("pixel size", pixel_um)?;
 
     Ok(PlateScale {
-        arcsec_per_pixel: 206.265 * pixel_um / focal_mm,
+        arcsec_per_pixel: ARCSEC_PER_UM_PER_MM * pixel_um / focal_mm,
         focal_mm: Some(focal_mm),
         pixel_um: Some(pixel_um),
     })
+}
+
+// `value` when it is finite and above 0.
+pub(super) fn positive(field: &'static str, value: f64) -> Result<f64, MetadataError> {
+    if !value.is_finite() {
+        return Err(MetadataError::NonFiniteValue { field, value });
+    }
+    if value <= 0.0 {
+        return Err(MetadataError::NonPositiveValue { field, value });
+    }
+    Ok(value)
 }
 
 #[cfg(test)]
@@ -100,7 +106,7 @@ mod tests {
         let scale = plate_scale_from_image(&img, None, None).unwrap();
         assert_eq!(scale.focal_mm, Some(1000.0));
         assert_eq!(scale.pixel_um, Some(5.0));
-        assert!((scale.arcsec_per_pixel - 206.265 * 5.0 / 1000.0).abs() < 1e-12);
+        assert_eq!(scale.arcsec_per_pixel, ARCSEC_PER_UM_PER_MM * 5.0 / 1000.0);
     }
 
     #[test]
@@ -111,14 +117,14 @@ mod tests {
         let scale = plate_scale_from_image(&img, Some(500.0), Some(3.76)).unwrap();
         assert_eq!(scale.focal_mm, Some(500.0));
         assert_eq!(scale.pixel_um, Some(3.76));
-        assert!((scale.arcsec_per_pixel - 206.265 * 3.76 / 500.0).abs() < 1e-12);
+        assert_eq!(scale.arcsec_per_pixel, ARCSEC_PER_UM_PER_MM * 3.76 / 500.0);
     }
 
     #[test]
     fn overrides_fill_in_when_headers_absent() {
         let img = stub_image();
         let scale = plate_scale_from_image(&img, Some(800.0), Some(2.4)).unwrap();
-        assert!((scale.arcsec_per_pixel - 206.265 * 2.4 / 800.0).abs() < 1e-12);
+        assert_eq!(scale.arcsec_per_pixel, ARCSEC_PER_UM_PER_MM * 2.4 / 800.0);
     }
 
     fn expect_err(result: Result<PlateScale, MetadataError>) -> MetadataError {
@@ -175,5 +181,34 @@ mod tests {
         img.set_keyword(Keyword::real("XPIXSZ", 5.0));
         let err = expect_err(plate_scale_from_image(&img, None, None));
         assert!(matches!(err, MetadataError::MissingHeader("FOCALLEN")));
+    }
+
+    #[test]
+    fn non_finite_focal_length_and_pixel_size_are_rejected() {
+        let img = stub_image();
+        let cases = [
+            (f64::NAN, 3.76, "focal length must be finite, got NaN"),
+            (f64::INFINITY, 3.76, "focal length must be finite, got inf"),
+            (500.0, f64::NAN, "pixel size must be finite, got NaN"),
+            (
+                500.0,
+                f64::NEG_INFINITY,
+                "pixel size must be finite, got -inf",
+            ),
+        ];
+        for (focal, pixel, expected) in cases {
+            let err = plate_scale_from_image(&img, Some(focal), Some(pixel)).err();
+            assert_eq!(err.map(|e| e.to_string()).as_deref(), Some(expected));
+        }
+    }
+
+    #[test]
+    fn repeated_focallen_reads_the_last_card() {
+        let mut img = stub_image();
+        img.keywords.push(Keyword::real("FOCALLEN", 500.0));
+        img.keywords.push(Keyword::real("FOCALLEN", 1000.0));
+        img.keywords.push(Keyword::real("XPIXSZ", 5.0));
+        let scale = plate_scale_from_image(&img, None, None).unwrap();
+        assert_eq!(scale.focal_mm, Some(1000.0));
     }
 }

@@ -2,7 +2,7 @@
 //! by detecting stars, matching them against a star catalog, and fitting a gnomonic
 //! projection with optional SIP polynomial distortion.
 //!
-//! The primary entry point is [`solve()`], which returns a [`Solver`] builder:
+//! The primary entry point is [`solve::solve()`], which returns a [`solve::Solver`] builder:
 //!
 //! ```rust,ignore
 //! use celestial_images::formats::image::Image;
@@ -11,7 +11,7 @@
 //! let img = Image::open("m31.fits")?;
 //! let catalog = Catalog::open("celestial-37M.bin")?;
 //!
-//! let result = celestial_solver::solve(&img, &catalog).run()?;
+//! let result = celestial_solver::solve::solve(&img, &catalog).run()?;
 //!
 //! println!("RMS: {:.3} px, {} stars matched", result.wcs.rms_px, result.wcs.n_stars);
 //! result.save_with(&img, "m31_solved.fits")?;
@@ -23,10 +23,10 @@
 //! (`DATE-OBS` or `MJD-OBS`), and plate scale (`FOCALLEN` + `XPIXSZ`). The builder
 //! reads these automatically.
 //!
-//! For images without FITS headers (PNG, raw TIFF), pass an [`ImageMetadata`][metadata::ImageMetadata] directly:
+//! For images without FITS headers (PNG, raw TIFF), pass an [`ImageMetadata`][metadata::image_metadata::ImageMetadata] directly:
 //!
 //! ```rust,ignore
-//! use celestial_solver::metadata::ImageMetadata;
+//! use celestial_solver::metadata::image_metadata::ImageMetadata;
 //! use celestial_coords::frames::icrs::ICRSPosition;
 //! use celestial_time::scales::utc::utc_from_calendar;
 //!
@@ -39,7 +39,7 @@
 //!     focal_mm: None,
 //!     pixel_um: None,
 //! };
-//! let result = celestial_solver::solve(&img, &catalog)
+//! let result = celestial_solver::solve::solve(&img, &catalog)
 //!     .with_metadata(meta)
 //!     .run()?;
 //! # Ok::<(), Box<dyn std::error::Error>>(())
@@ -49,9 +49,9 @@
 //!
 //! The solver accepts any pixel type the FITS/XISF reader produces — `u8`, `u16`,
 //! `i16`, `i32`, `f32`, `f64`. Raw8 from a planetary camera, raw16 from a DSO session,
-//! stacked f32 masters all work without pre-conversion. Saturation detection uses the
-//! native ceiling of integer types (`u16::MAX` for 16-bit frames) and falls back to a
-//! tied-maximum heuristic for float types.
+//! stacked f32 masters all work without pre-conversion. Saturation is estimated from the
+//! data for every type: two or more pixels at the image maximum, above the background,
+//! mark a clipped sensor. NaN pixels are treated as blank.
 //!
 //! # Pipeline
 //!
@@ -59,15 +59,22 @@
 //! 2. [`match_field`] hashes four-star quads against a HEALPix-indexed catalog.
 //! 3. [`fit_wcs`] fits a weighted-least-squares TAN WCS from matched pairs.
 //! 4. The WCS is refined against all detected stars, with outlier rejection.
-//! 5. Optional SIP polynomial distortion is fit over the refined pairs.
+//! 5. Optional SIP polynomial distortion is fit over the refined pairs, and the WCS
+//!    with it is verified by its log-odds.
 
 pub mod annotate;
 pub mod detect;
+pub mod error;
 pub mod fit_wcs;
+mod input;
+mod log_odds;
 pub mod match_field;
 pub mod metadata;
 pub mod observation;
-pub mod output;
+mod output;
+mod pixel_frame;
+#[cfg(test)]
+mod sky_scene;
 pub mod solve;
-
-pub use solve::{solve, SolveParams, SolveResult, Solver};
+mod triple_search;
+mod verify_solution;

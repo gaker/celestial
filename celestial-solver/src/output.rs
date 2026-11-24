@@ -12,36 +12,40 @@ use celestial_images::fits::header::keywords::Keyword;
 use celestial_images::formats::image::Image;
 use celestial_images::xisf::header::property::{XisfProperty, XisfPropertyValue};
 
-use crate::fit_wcs::{SipSolution, WcsSolution};
+use crate::fit_wcs::solution::WcsSolution;
 use crate::match_field::StarPair;
+use crate::pixel_frame::{detection_to_pixinsight, pixinsight_linear_transformation};
 use crate::solve::SolveResult;
 
+const SOLUTION_PREFIX: &str = "PCL:AstrometricSolution:";
 const SPLINE_PREFIX: &str = "PCL:AstrometricSolution:SplineWorldTransformation:";
 
 impl SolveResult {
-    /// Builds the FITS WCS keywords (plus SIP coefficients, if SIP was fit).
+    /// Builds the FITS WCS keywords of [`SolveResult::fits_wcs`].
     ///
-    /// Returns the 12 standard TAN WCS cards (`CTYPE1/2`, `CUNIT1/2`, `CRPIX1/2`,
-    /// `CRVAL1/2`, `CD1_1/CD1_2/CD2_1/CD2_2`) and, if SIP was fit, the `A_ORDER`,
-    /// `B_ORDER`, and `A_p_q` / `B_p_q` coefficient cards.
+    /// Returns `CTYPE1/2`, `CUNIT1/2`, `CRPIX1/2` (1-based FITS pixel coordinates),
+    /// `CRVAL1/2`, `CD1_1/CD1_2/CD2_1/CD2_2` and `LATPOLE`, which equals `CRVAL2` for the
+    /// TAN projection. If SIP was fit, the CTYPEs end in `-SIP` and the `A_ORDER`,
+    /// `B_ORDER`, `A_p_q`, `B_p_q` cards follow, with the inverse `AP_ORDER`, `BP_ORDER`,
+    /// `AP_p_q` and `BP_p_q` cards. `RADESYS = 'ICRS'` comes last.
     ///
     /// # Examples
     ///
     /// ```rust,ignore
     /// # let img = celestial_images::formats::image::Image::open("f.fits")?;
     /// # let catalog = celestial_catalog::query::catalog::Catalog::open("cat.bin")?;
-    /// let result = celestial_solver::solve(&img, &catalog).run()?;
+    /// let result = celestial_solver::solve::solve(&img, &catalog).run()?;
     /// for kw in result.to_fits_keywords() {
     ///     println!("{}", kw.name);
     /// }
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn to_fits_keywords(&self) -> Vec<Keyword> {
-        let mut out = wcs_keywords(&self.wcs);
-        if let Some(sip) = &self.sip {
-            out.extend(sip_keywords(sip));
-        }
-        out
+        let keywords = self.fits_wcs.to_keywords().into_iter().map(Keyword::from);
+        // The catalog positions are ICRS.
+        keywords
+            .chain([Keyword::string("RADESYS", "ICRS")])
+            .collect()
     }
 
     /// Builds the PixInsight spline-transformation XISF properties.
@@ -56,7 +60,7 @@ impl SolveResult {
     /// ```rust,ignore
     /// # let img = celestial_images::formats::image::Image::open("f.fits")?;
     /// # let catalog = celestial_catalog::query::catalog::Catalog::open("cat.bin")?;
-    /// let result = celestial_solver::solve(&img, &catalog).run()?;
+    /// let result = celestial_solver::solve::solve(&img, &catalog).run()?;
     /// let props = result.to_xisf_properties();
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
@@ -70,16 +74,21 @@ impl SolveResult {
 
     /// Applies WCS/SIP keywords and XISF properties to `img` in place.
     ///
-    /// The XISF properties are added unconditionally — if `img` is later saved as FITS,
-    /// the FITS writer ignores them. Existing keywords with the same names are
-    /// overwritten.
+    /// Every earlier WCS keyword of axes 1 and 2 (`CTYPEi`, `CRPIXi`, `CRVALi`, `CUNITi`,
+    /// `CDi_j`, `PCi_j` and their `CDiiijjj` and `PCiiijjj` forms, `CDELTi`, `CROTAi`,
+    /// `PVi_m`, SIP `A_*`, `B_*`, `AP_*`, `BP_*`, the lookup-table cards `CPDISi`,
+    /// `CPERRi`, `CQDISi`, `CQERRi`, `DPi`, `DQi`, `D2IMDISi`, `D2IMERRi`, and `WCSAXES`,
+    /// `LONPOLE`, `LATPOLE`, `RADESYS`, `RADECSYS`) and every earlier
+    /// `PCL:AstrometricSolution:*` property is removed first, so the image holds one
+    /// solution. `EQUINOX`, `EPOCH` and the keywords of other axes are kept. The XISF properties are added unconditionally; if
+    /// `img` is later saved as FITS, the FITS writer ignores them.
     ///
     /// # Examples
     ///
     /// ```rust,ignore
     /// # let img = celestial_images::formats::image::Image::open("f.fits")?;
     /// # let catalog = celestial_catalog::query::catalog::Catalog::open("cat.bin")?;
-    /// let result = celestial_solver::solve(&img, &catalog).run()?;
+    /// let result = celestial_solver::solve::solve(&img, &catalog).run()?;
     ///
     /// let mut with_wcs = img.clone();
     /// result.write_into(&mut with_wcs);
@@ -87,9 +96,12 @@ impl SolveResult {
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn write_into(&self, img: &mut Image) {
+        img.keywords.retain(|k| !is_wcs_keyword(&k.name));
         for kw in self.to_fits_keywords() {
             img.set_keyword(kw);
         }
+        img.xisf_properties
+            .retain(|p| !p.id.starts_with(SOLUTION_PREFIX));
         img.add_xisf_properties(self.to_xisf_properties());
     }
 
@@ -109,7 +121,7 @@ impl SolveResult {
     /// ```rust,ignore
     /// # let img = celestial_images::formats::image::Image::open("f.fits")?;
     /// # let catalog = celestial_catalog::query::catalog::Catalog::open("cat.bin")?;
-    /// let result = celestial_solver::solve(&img, &catalog).run()?;
+    /// let result = celestial_solver::solve::solve(&img, &catalog).run()?;
     /// result.save_with(&img, "out/solved.fits")?;
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
@@ -126,44 +138,60 @@ impl SolveResult {
     }
 }
 
-fn wcs_keywords(wcs: &WcsSolution) -> Vec<Keyword> {
-    vec![
-        Keyword::string("CTYPE1", "RA---TAN"),
-        Keyword::string("CTYPE2", "DEC--TAN"),
-        Keyword::string("CUNIT1", "deg"),
-        Keyword::string("CUNIT2", "deg"),
-        Keyword::real("CRPIX1", wcs.crpix1),
-        Keyword::real("CRPIX2", wcs.crpix2),
-        Keyword::real("CRVAL1", wcs.crval1),
-        Keyword::real("CRVAL2", wcs.crval2),
-        Keyword::real("CD1_1", wcs.cd1_1),
-        Keyword::real("CD1_2", wcs.cd1_2),
-        Keyword::real("CD2_1", wcs.cd2_1),
-        Keyword::real("CD2_2", wcs.cd2_2),
-    ]
+// A keyword of the celestial WCS on image axes 1 and 2, in any form a reader would
+// combine with the keywords `to_fits_keywords` writes: the current and pre-1996 matrix
+// forms, the SIP and distortion-paper lookup-table cards, and the reference frame.
+// EQUINOX and EPOCH are not: a capture program may give them for its own coordinates,
+// and the RADESYS = 'ICRS' that `to_fits_keywords` writes makes the solution
+// independent of them.
+fn is_wcs_keyword(name: &str) -> bool {
+    const NAMES: [&str; 11] = [
+        "WCSAXES", "LONPOLE", "LATPOLE", "RADESYS", "RADECSYS", "A_ORDER", "B_ORDER", "AP_ORDER",
+        "BP_ORDER", "A_DMAX", "B_DMAX",
+    ];
+    const PER_AXIS: [&str; 14] = [
+        "CTYPE", "CRPIX", "CRVAL", "CUNIT", "CDELT", "CROTA", "CPDIS", "CPERR", "CQDIS", "CQERR",
+        "DP", "DQ", "D2IMDIS", "D2IMERR",
+    ];
+    const SIP: [&str; 4] = ["A_", "B_", "AP_", "BP_"];
+    let has = |prefixes: &[&str], rest: &dyn Fn(&str) -> bool| {
+        prefixes
+            .iter()
+            .any(|p| name.strip_prefix(p).is_some_and(rest))
+    };
+    NAMES.contains(&name)
+        || has(&PER_AXIS, &is_axis)
+        || has(&["CD", "PC"], &is_axis_pair)
+        || has(&["PV"], &|s| {
+            s.split_once('_')
+                .is_some_and(|(i, m)| is_axis(i) && is_index(m))
+        })
+        || has(&SIP, &|s| {
+            s.split_once('_')
+                .is_some_and(|(p, q)| is_index(p) && is_index(q))
+        })
 }
 
-fn sip_keywords(sip: &SipSolution) -> Vec<Keyword> {
-    let mut out = vec![
-        Keyword::integer("A_ORDER", sip.a_order as i64),
-        Keyword::integer("B_ORDER", sip.b_order as i64),
-    ];
-    let mut a_keys: Vec<_> = sip.a_coeffs.iter().collect();
-    a_keys.sort_by_key(|((p, q), _)| (*p, *q));
-    for ((p, q), c) in a_keys {
-        out.push(Keyword::real(format!("A_{}_{}", p, q), *c));
+fn is_index(s: &str) -> bool {
+    !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit())
+}
+
+fn is_axis(s: &str) -> bool {
+    s == "1" || s == "2"
+}
+
+// `i_j`, or the pre-1996 `iiijjj`, with i and j each axis 1 or 2.
+fn is_axis_pair(s: &str) -> bool {
+    if let Some((i, j)) = s.split_once('_') {
+        return is_axis(i) && is_axis(j);
     }
-    let mut b_keys: Vec<_> = sip.b_coeffs.iter().collect();
-    b_keys.sort_by_key(|((p, q), _)| (*p, *q));
-    for ((p, q), c) in b_keys {
-        out.push(Keyword::real(format!("B_{}_{}", p, q), *c));
-    }
-    out
+    let old_axis = |a: &str| a == "001" || a == "002";
+    s.len() == 6 && s.is_char_boundary(3) && old_axis(&s[..3]) && old_axis(&s[3..])
 }
 
 fn pcl_spline_properties(wcs: &WcsSolution, pairs: &[StarPair]) -> Vec<XisfProperty> {
     let (world, image) = build_control_points(wcs, pairs);
-    let linear_approx = linear_world_to_image(wcs);
+    let linear_approx = pixinsight_linear_transformation(wcs).to_vec();
 
     vec![
         XisfProperty::string(format!("{SPLINE_PREFIX}Version"), "2.0"),
@@ -191,6 +219,8 @@ fn pcl_spline_properties(wcs: &WcsSolution, pairs: &[StarPair]) -> Vec<XisfPrope
     ]
 }
 
+// The pairs as PixInsight control points: tangent-plane positions about CRVAL in
+// degrees, and pixels in PixInsight's convention.
 fn build_control_points(wcs: &WcsSolution, pairs: &[StarPair]) -> (Vec<f64>, Vec<f64>) {
     let mut world = Vec::with_capacity(pairs.len() * 2);
     let mut image = Vec::with_capacity(pairs.len() * 2);
@@ -200,54 +230,35 @@ fn build_control_points(wcs: &WcsSolution, pairs: &[StarPair]) -> (Vec<f64>, Vec
         {
             world.push(xi_rad * RAD_TO_DEG);
             world.push(eta_rad * RAD_TO_DEG);
-            image.push(p.px_x);
-            image.push(p.px_y);
+            let (x, y) = detection_to_pixinsight((p.px_x, p.px_y));
+            image.push(x);
+            image.push(y);
         }
     }
     (world, image)
 }
 
-fn linear_world_to_image(wcs: &WcsSolution) -> Vec<f64> {
-    let det = wcs.cd1_1 * wcs.cd2_2 - wcs.cd1_2 * wcs.cd2_1;
-    let a = wcs.cd2_2 / det;
-    let b = -wcs.cd1_2 / det;
-    let c = -wcs.cd2_1 / det;
-    let d = wcs.cd1_1 / det;
-    vec![a, b, wcs.crpix1, c, d, wcs.crpix2]
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::detect::DetectedStar;
-    use crate::match_field::FieldMatch;
+    use crate::fit_wcs::sip::SipSolution;
     use celestial_images::fits::header::keywords::KeywordValue;
-    use std::collections::HashMap;
+    use std::collections::BTreeMap;
 
     fn sample_wcs() -> WcsSolution {
         WcsSolution {
-            crpix1: 1024.0,
-            crpix2: 768.0,
-            crval1: 180.0,
-            crval2: 30.0,
-            cd1_1: 0.001,
-            cd1_2: 0.0,
-            cd2_1: 0.0,
-            cd2_2: 0.001,
-            width: 2048,
-            height: 1536,
             focal_mm: Some(1000.0),
             pixel_um: Some(3.76),
             n_stars: 50,
             rms_px: 0.3,
             weighted_rms_px: 0.25,
-            residuals: Vec::new(),
+            ..WcsSolution::diagonal((180.0, 30.0), (0.001, 0.001), (2048, 1536))
         }
     }
 
     fn sample_sip(order: u32) -> SipSolution {
-        let mut a_coeffs = HashMap::new();
-        let mut b_coeffs = HashMap::new();
+        let mut a_coeffs = BTreeMap::new();
+        let mut b_coeffs = BTreeMap::new();
         a_coeffs.insert((2, 0), 1e-6);
         a_coeffs.insert((0, 2), 2e-6);
         a_coeffs.insert((1, 1), 3e-6);
@@ -292,21 +303,7 @@ mod tests {
         sip: Option<SipSolution>,
         pairs: Vec<StarPair>,
     ) -> SolveResult {
-        let field_match = FieldMatch {
-            image_stars: Vec::new(),
-            catalog_stars: Vec::new(),
-            matches: Vec::new(),
-            pairs: pairs.clone(),
-        };
-        SolveResult {
-            stars: Vec::<DetectedStar>::new(),
-            field_match,
-            initial_wcs: wcs.clone(),
-            wcs,
-            sip,
-            refined: true,
-            pairs,
-        }
+        SolveResult::of_fit(wcs, sip, pairs)
     }
 
     fn find(keywords: &[Keyword], name: &str) -> Option<KeywordValue> {
@@ -320,13 +317,13 @@ mod tests {
     fn fits_keywords_without_sip_emit_only_wcs_cards() {
         let result = build_result(sample_wcs(), None, Vec::new());
         let kws = result.to_fits_keywords();
-        assert_eq!(kws.len(), 12);
+        assert_eq!(kws.len(), 14);
         let names: Vec<&str> = kws.iter().map(|k| k.name.as_str()).collect();
         assert_eq!(
             names,
             vec![
                 "CTYPE1", "CTYPE2", "CUNIT1", "CUNIT2", "CRPIX1", "CRPIX2", "CRVAL1", "CRVAL2",
-                "CD1_1", "CD1_2", "CD2_1", "CD2_2",
+                "CD1_1", "CD1_2", "CD2_1", "CD2_2", "LATPOLE", "RADESYS",
             ]
         );
         assert_eq!(
@@ -339,8 +336,8 @@ mod tests {
         );
         assert_eq!(find(&kws, "CRVAL1"), Some(KeywordValue::Real(180.0)));
         assert_eq!(find(&kws, "CRVAL2"), Some(KeywordValue::Real(30.0)));
-        assert_eq!(find(&kws, "CRPIX1"), Some(KeywordValue::Real(1024.0)));
-        assert_eq!(find(&kws, "CRPIX2"), Some(KeywordValue::Real(768.0)));
+        assert_eq!(find(&kws, "CRPIX1"), Some(KeywordValue::Real(1025.0)));
+        assert_eq!(find(&kws, "CRPIX2"), Some(KeywordValue::Real(769.0)));
         assert_eq!(find(&kws, "CD1_1"), Some(KeywordValue::Real(0.001)));
         assert_eq!(find(&kws, "CD2_2"), Some(KeywordValue::Real(0.001)));
     }
@@ -349,7 +346,9 @@ mod tests {
     fn fits_keywords_with_sip_appends_sorted_a_and_b_coefficients() {
         let result = build_result(sample_wcs(), Some(sample_sip(3)), Vec::new());
         let kws = result.to_fits_keywords();
-        assert_eq!(kws.len(), 12 + 2 + 3 + 2);
+        // 13 TAN cards, A_ORDER, B_ORDER, 5 A and B terms, AP_ORDER, BP_ORDER, the 15
+        // terms of each order-4 inverse polynomial, and RADESYS.
+        assert_eq!(kws.len(), 13 + 2 + 5 + 2 + 30 + 1);
 
         assert_eq!(find(&kws, "A_ORDER"), Some(KeywordValue::Integer(3)));
         assert_eq!(find(&kws, "B_ORDER"), Some(KeywordValue::Integer(3)));
@@ -450,8 +449,8 @@ mod tests {
         }
         if let XisfPropertyValue::F64Vector(v) = &get("ControlPoints:Image").value {
             assert_eq!(v.len(), 10);
-            assert_eq!(v[0], 100.0);
-            assert_eq!(v[1], 200.0);
+            assert_eq!(v[0], 100.5);
+            assert_eq!(v[1], 200.5);
         } else {
             panic!("ControlPoints:Image should be F64Vector");
         }
@@ -461,13 +460,13 @@ mod tests {
             assert_eq!(*rows, 2);
             assert_eq!(*cols, 3);
             assert_eq!(data.len(), 6);
-            // CD is diag(0.001, 0.001): inverse is diag(1000, 1000)
-            assert!((data[0] - 1000.0).abs() < 1e-9);
-            assert!((data[1] - 0.0).abs() < 1e-9);
-            assert_eq!(data[2], 1024.0);
-            assert!((data[3] - 0.0).abs() < 1e-9);
-            assert!((data[4] - 1000.0).abs() < 1e-9);
-            assert_eq!(data[5], 768.0);
+            // CD is diag(0.001, 0.001), and the PixInsight reference pixel is CRPIX + 0.5.
+            assert_eq!(data[0], 0.001);
+            assert_eq!(data[1], 0.0);
+            assert_eq!(data[2], -(0.001 * 1024.5 + 0.0 * 768.5));
+            assert_eq!(data[3], 0.0);
+            assert_eq!(data[4], 0.001);
+            assert_eq!(data[5], -(0.0 * 1024.5 + 0.001 * 768.5));
         } else {
             panic!("LinearApproximation should be F64Matrix");
         }
@@ -497,7 +496,7 @@ mod tests {
     }
 
     #[test]
-    fn linear_approximation_reflects_cd_inverse_for_rotated_matrix() {
+    fn linear_approximation_reflects_cd_for_rotated_matrix() {
         let mut wcs = sample_wcs();
         wcs.cd1_1 = 0.0;
         wcs.cd1_2 = 0.001;
@@ -516,15 +515,11 @@ mod tests {
             .find(|p| p.id.ends_with("LinearApproximation"))
             .unwrap();
         if let XisfPropertyValue::F64Matrix { data, .. } = &linear.value {
-            // det = 0*0 - 0.001*(-0.001) = 1e-6
-            // a = d22/det = 0/1e-6 = 0
-            // b = -d12/det = -0.001/1e-6 = -1000
-            // c = -d21/det = 0.001/1e-6 = 1000
-            // d = d11/det = 0/1e-6 = 0
-            assert!((data[0] - 0.0).abs() < 1e-9);
-            assert!((data[1] - (-1000.0)).abs() < 1e-9);
-            assert!((data[3] - 1000.0).abs() < 1e-9);
-            assert!((data[4] - 0.0).abs() < 1e-9);
+            // The 2x2 part maps PixInsight pixels to the tangent plane: it is CD.
+            assert_eq!(data[0], 0.0);
+            assert_eq!(data[1], 0.001);
+            assert_eq!(data[3], -0.001);
+            assert_eq!(data[4], 0.0);
         } else {
             panic!("expected F64Matrix");
         }
@@ -562,6 +557,209 @@ mod tests {
             "unset coeff should not appear"
         );
         assert!(img.get_keyword("A_1_1").is_some());
+    }
+
+    fn five_pairs() -> Vec<StarPair> {
+        let pairs = (0..5).map(|i| {
+            let off = i as f64 * 0.01;
+            pair(100.0 + i as f64, 200.0 + i as f64, 180.0 + off, 30.0 + off)
+        });
+        pairs.collect()
+    }
+
+    // Detection pixel centres are integers from 0; FITS pixel centres are integers from 1.
+    #[test]
+    fn fits_keywords_write_crpix_in_the_one_based_fits_frame() {
+        let result = build_result(sample_wcs(), None, Vec::new());
+        let kws = result.to_fits_keywords();
+        assert_eq!(find(&kws, "CRPIX1"), Some(KeywordValue::Real(1025.0)));
+        assert_eq!(find(&kws, "CRPIX2"), Some(KeywordValue::Real(769.0)));
+    }
+
+    #[test]
+    fn fits_keywords_with_sip_mark_ctype_sip() {
+        let result = build_result(sample_wcs(), Some(sample_sip(3)), Vec::new());
+        let kws = result.to_fits_keywords();
+        let sip = |s: &str| Some(KeywordValue::String(s.to_string()));
+        assert_eq!(find(&kws, "CTYPE1"), sip("RA---TAN-SIP"));
+        assert_eq!(find(&kws, "CTYPE2"), sip("DEC--TAN-SIP"));
+    }
+
+    // One order above the forward polynomial, as astrometry.net's
+    // sip_ensure_inverse_polynomials chooses.
+    #[test]
+    fn fits_keywords_with_sip_include_the_inverse_polynomial() {
+        let result = build_result(sample_wcs(), Some(sample_sip(3)), Vec::new());
+        let kws = result.to_fits_keywords();
+        assert_eq!(find(&kws, "AP_ORDER"), Some(KeywordValue::Integer(4)));
+        assert_eq!(find(&kws, "BP_ORDER"), Some(KeywordValue::Integer(4)));
+    }
+
+    fn image_with_stale_wcs() -> Image {
+        let mut img = blank_image();
+        let stale = [("CTYPE3", "FREQ"), ("CUNIT3", "Hz"), ("RADESYS", "FK5")];
+        for (name, value) in stale {
+            img.keywords.push(Keyword::string(name, value));
+        }
+        let stale = [
+            "CRPIX3", "CRVAL3", "PC1_1", "PC1_2", "PC2_1", "PC2_2", "CDELT1", "CDELT2", "CROTA1",
+            "CROTA2", "PV2_1", "PV1_3", "LONPOLE", "LATPOLE", "EQUINOX", "A_2_0", "B_0_2",
+            "AP_1_0", "BP_0_1", "A_DMAX", "B_DMAX",
+        ];
+        for name in stale {
+            img.keywords.push(Keyword::real(name, 1.5));
+        }
+        for name in ["WCSAXES", "A_ORDER", "B_ORDER", "AP_ORDER", "BP_ORDER"] {
+            img.keywords.push(Keyword::integer(name, 2));
+        }
+        img.keywords.push(Keyword::string("OBJECT", "M42"));
+        img.keywords.push(Keyword::real("EXPTIME", 120.0));
+        img
+    }
+
+    #[test]
+    fn write_into_removes_stale_wcs_cards() {
+        let mut img = image_with_stale_wcs();
+        let result = build_result(sample_wcs(), None, Vec::new());
+        result.write_into(&mut img);
+        let mut names: Vec<&str> = img.keywords.iter().map(|k| k.name.as_str()).collect();
+        names.sort_unstable();
+        assert_eq!(
+            names,
+            [
+                "CD1_1", "CD1_2", "CD2_1", "CD2_2", "CRPIX1", "CRPIX2", "CRPIX3", "CRVAL1",
+                "CRVAL2", "CRVAL3", "CTYPE1", "CTYPE2", "CTYPE3", "CUNIT1", "CUNIT2", "CUNIT3",
+                "EQUINOX", "EXPTIME", "LATPOLE", "OBJECT", "RADESYS",
+            ]
+        );
+    }
+
+    fn names_after_write_into(keywords: Vec<Keyword>) -> Vec<String> {
+        let mut img = blank_image();
+        img.keywords.extend(keywords);
+        build_result(sample_wcs(), None, Vec::new()).write_into(&mut img);
+        let mut names: Vec<String> = img.keywords.into_iter().map(|k| k.name).collect();
+        names.sort_unstable();
+        names
+    }
+
+    fn written_names() -> Vec<String> {
+        names_after_write_into(Vec::new())
+    }
+
+    // The pre-1996 PC and CD forms, `PCiiijjj` and `CDiiijjj`, which readers still apply.
+    #[test]
+    fn write_into_removes_old_style_pc_and_cd_cards() {
+        let stale = [
+            "PC001001", "PC001002", "PC002001", "PC002002", "CD001001", "CD002002",
+        ];
+        let keywords = stale.map(|name| Keyword::real(name, 0.5)).to_vec();
+        assert_eq!(names_after_write_into(keywords), written_names());
+    }
+
+    // The distortion-paper lookup tables (`CPDISj`, `CPERRj`, the record-valued `DPj`,
+    // and their `CQ`/`DQ` forms) and the detector-to-image tables (`D2IMDISj`, `D2IMERRj`).
+    #[test]
+    fn write_into_removes_distortion_lookup_cards() {
+        let mut keywords = Vec::new();
+        for name in ["CPDIS1", "CPDIS2", "CQDIS1", "D2IMDIS1", "D2IMDIS2"] {
+            keywords.push(Keyword::string(name, "LOOKUP"));
+        }
+        for name in ["DP1", "DP2", "DQ1"] {
+            keywords.push(Keyword::string(name, "NAXES: 2"));
+        }
+        for name in ["CPERR1", "CPERR2", "CQERR2", "D2IMERR1", "D2IMERR2"] {
+            keywords.push(Keyword::real(name, 0.1));
+        }
+        assert_eq!(names_after_write_into(keywords), written_names());
+    }
+
+    // The solution describes axes 1 and 2. A third axis keeps its cards, and EQUINOX, which
+    // a capture program may give for its own coordinates, stays: RADESYS = 'ICRS' makes the
+    // solution independent of it.
+    #[test]
+    fn write_into_keeps_a_third_axis_and_equinox() {
+        let kept = [
+            "CTYPE3", "CRPIX3", "CRVAL3", "CDELT3", "PC3_3", "PC1_3", "EQUINOX",
+        ];
+        let keywords = kept.map(|name| Keyword::real(name, 3.0)).to_vec();
+        let mut expected = written_names();
+        expected.extend(kept.map(String::from));
+        expected.sort_unstable();
+        assert_eq!(names_after_write_into(keywords), expected);
+        let result = build_result(sample_wcs(), None, Vec::new());
+        assert_eq!(
+            find(&result.to_fits_keywords(), "RADESYS"),
+            Some(KeywordValue::String("ICRS".to_string()))
+        );
+    }
+
+    #[test]
+    fn write_into_replaces_earlier_astrometric_properties() {
+        let mut img = blank_image();
+        img.add_xisf_properties([
+            XisfProperty::string("PCL:AstrometricSolution:ProjectionSystem", "Orthographic"),
+            XisfProperty::f64_vector(format!("{SPLINE_PREFIX}ControlPoints:Image"), vec![1.0]),
+            XisfProperty::string("Observation:Object:Name", "M42"),
+        ]);
+        let result = build_result(sample_wcs(), None, five_pairs());
+        result.write_into(&mut img);
+        result.write_into(&mut img);
+        let mut ids: Vec<&str> = img.xisf_properties.iter().map(|p| p.id.as_str()).collect();
+        ids.sort_unstable();
+        let mut expected: Vec<String> = result
+            .to_xisf_properties()
+            .into_iter()
+            .map(|p| p.id)
+            .chain(["Observation:Object:Name".to_string()])
+            .collect();
+        expected.sort_unstable();
+        assert_eq!(ids, expected);
+    }
+
+    // PixInsight's control points are pixel coordinates whose pixel centres are at
+    // integers plus one half.
+    #[test]
+    fn xisf_control_points_use_the_pixinsight_pixel_frame() {
+        let result = build_result(sample_wcs(), None, five_pairs());
+        let props = result.to_xisf_properties();
+        let image = props
+            .iter()
+            .find(|p| p.id.ends_with("ControlPoints:Image"))
+            .unwrap();
+        let XisfPropertyValue::F64Vector(v) = &image.value else {
+            panic!("ControlPoints:Image should be F64Vector");
+        };
+        assert_eq!(v[..4], [100.5, 200.5, 101.5, 201.5]);
+    }
+
+    // PixInsight's LinearApproximation maps a PixInsight pixel to the tangent plane,
+    // world = M * (pixel - reference), as [M | -M * reference].
+    #[test]
+    fn xisf_linear_approximation_maps_image_to_world() {
+        let mut wcs = sample_wcs();
+        wcs.cd1_2 = 2e-5;
+        wcs.cd2_1 = -3e-5;
+        let result = build_result(wcs, None, five_pairs());
+        let props = result.to_xisf_properties();
+        let linear = props
+            .iter()
+            .find(|p| p.id.ends_with("LinearApproximation"))
+            .unwrap();
+        let XisfPropertyValue::F64Matrix { rows, cols, data } = &linear.value else {
+            panic!("LinearApproximation should be F64Matrix");
+        };
+        let (rx, ry) = (1024.5, 768.5);
+        let expected = [
+            0.001,
+            2e-5,
+            -(0.001 * rx + 2e-5 * ry),
+            -3e-5,
+            0.001,
+            -(-3e-5 * rx + 0.001 * ry),
+        ];
+        assert_eq!((*rows, *cols), (2, 3));
+        assert_eq!(data[..], expected);
     }
 
     #[test]

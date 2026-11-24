@@ -2,8 +2,8 @@ use thiserror::Error;
 
 /// Error returned when metadata can't be extracted from an image.
 ///
-/// Returned from [`crate::metadata::metadata_from_image`], [`crate::metadata::hint_from_image`],
-/// [`crate::metadata::jd_from_image`], and [`crate::metadata::plate_scale_from_image`].
+/// Returned from [`crate::metadata::image_metadata::metadata_from_image`], [`crate::metadata::hint::hint_from_image`],
+/// [`crate::metadata::time::jd_from_image`], and [`crate::metadata::plate_scale::plate_scale_from_image`].
 #[derive(Error, Debug)]
 pub enum MetadataError {
     /// A required header is missing and no override was supplied.
@@ -34,9 +34,9 @@ pub enum MetadataError {
     DateParse {
         /// Offending header value.
         value: String,
-        /// Underlying chrono parse error.
+        /// Underlying parse error from [`celestial_time::TimeError`].
         #[source]
-        source: chrono::ParseError,
+        source: celestial_time::TimeError,
     },
 
     /// `TIME-OBS` failed to parse as a time-of-day string.
@@ -44,9 +44,9 @@ pub enum MetadataError {
     TimeParse {
         /// Offending header value.
         value: String,
-        /// Underlying chrono parse error.
+        /// Underlying parse error from [`celestial_time::TimeError`].
         #[source]
-        source: chrono::ParseError,
+        source: celestial_time::TimeError,
     },
 
     /// A sexagesimal angle (hours or degrees-minutes-seconds) failed to parse.
@@ -66,7 +66,7 @@ pub enum MetadataError {
     #[error("invalid observation time: {0}")]
     InvalidTime(#[from] celestial_time::TimeError),
 
-    /// A numeric header that must be positive was zero or negative.
+    /// A value that must be positive was zero or negative.
     #[error("{field} must be positive, got {value}")]
     NonPositiveValue {
         /// Name of the offending field ("focal length", "pixel size").
@@ -74,11 +74,16 @@ pub enum MetadataError {
         /// Rejected value.
         value: f64,
     },
+
+    // A value read from a header or an override was NaN or infinite.
+    #[error("{field} must be finite, got {value}")]
+    NonFiniteValue { field: &'static str, value: f64 },
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use celestial_time::scales::utc::UTC;
 
     #[test]
     fn display_messages_include_context() {
@@ -109,20 +114,20 @@ mod tests {
 
     #[test]
     fn date_parse_display_mentions_value() {
-        let chrono_err = chrono::NaiveDate::parse_from_str("not-a-date", "%Y-%m-%d").unwrap_err();
+        let time_err = "not-a-date".parse::<UTC>().unwrap_err();
         let err = MetadataError::DateParse {
             value: "not-a-date".to_string(),
-            source: chrono_err,
+            source: time_err,
         };
         assert!(err.to_string().contains("not-a-date"));
     }
 
     #[test]
     fn time_parse_display_mentions_value() {
-        let chrono_err = chrono::NaiveTime::parse_from_str("nope", "%H:%M:%S").unwrap_err();
+        let time_err = "2024-06-15Tnope".parse::<UTC>().unwrap_err();
         let err = MetadataError::TimeParse {
             value: "nope".to_string(),
-            source: chrono_err,
+            source: time_err,
         };
         assert!(err.to_string().contains("nope"));
     }

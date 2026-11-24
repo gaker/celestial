@@ -1,8 +1,9 @@
-use chrono::{Datelike, NaiveDate, NaiveDateTime, NaiveTime, Timelike};
+use std::str::FromStr;
 
 use celestial_images::formats::image::Image;
 use celestial_time::julian::JulianDate;
-use celestial_time::scales::utc::utc_from_calendar;
+use celestial_time::scales::utc::UTC;
+use celestial_time::TimeError;
 
 use super::error::MetadataError;
 
@@ -10,13 +11,17 @@ use super::error::MetadataError;
 ///
 /// Tries headers in this order:
 ///
-/// 1. `MJD-OBS` — numeric Modified Julian Date (highest priority, highest precision)
-/// 2. `DATE-OBS` — ISO 8601 timestamp (e.g. `"2024-06-15T03:22:45.123"`) or a date-only
-///    string paired with `TIME-OBS` for the time component
+/// 1. `MJD-OBS`, a numeric Modified Julian Date (highest priority, highest precision)
+/// 2. `DATE-OBS`, an ISO 8601 timestamp such as `"2024-06-15T03:22:45.123"`, with an
+///    optional trailing `Z`, or a date-only string paired with `TIME-OBS` for the time
+///    of day
+///
+/// A key that repeats is read from its last card.
 ///
 /// # Errors
 ///
 /// Returns [`MetadataError::MissingHeader`] if neither header exists,
+/// [`MetadataError::NonFiniteValue`] if `MJD-OBS` is NaN or infinite,
 /// [`MetadataError::MissingTimeOfDay`] if `DATE-OBS` is date-only without `TIME-OBS`,
 /// [`MetadataError::DateParse`] / [`MetadataError::TimeParse`] for malformed values,
 /// or [`MetadataError::InvalidTime`] for a time that UTC doesn't have, such as
@@ -25,67 +30,78 @@ use super::error::MetadataError;
 /// # Examples
 ///
 /// ```rust,ignore
-/// use celestial_solver::metadata::jd_from_image;
+/// use celestial_solver::metadata::time::jd_from_image;
 ///
 /// # let img = celestial_images::formats::image::Image::open("f.fits")?;
 /// let jd = jd_from_image(&img)?;
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub fn jd_from_image(img: &Image) -> Result<JulianDate, MetadataError> {
-    let mjd_obs = img.get("MJD-OBS");
-    if mjd_obs.exists() {
-        let mjd = mjd_obs.as_f64().ok_or(MetadataError::InvalidHeaderType {
-            keyword: "MJD-OBS",
-            kind: "numeric",
-        })?;
-        return Ok(JulianDate::new(2_400_000.5, mjd));
+    if img.get_last("MJD-OBS").exists() {
+        return jd_from_mjd_obs(img);
     }
-
-    let date_obs = img
-        .get("DATE-OBS")
-        .as_str()
-        .map(|s| s.to_owned())
-        .ok_or(MetadataError::MissingHeader("DATE-OBS or MJD-OBS"))?;
-
-    let dt = parse_date_obs(img, &date_obs)?;
-    let sec = dt.second() as f64 + dt.nanosecond() as f64 / 1_000_000_000.0;
-    let utc = utc_from_calendar(
-        dt.year(),
-        dt.month() as u8,
-        dt.day() as u8,
-        dt.hour() as u8,
-        dt.minute() as u8,
-        sec,
-    )?;
+    let utc = utc_from_date_obs(img)?.ok_or(MetadataError::MissingHeader("DATE-OBS or MJD-OBS"))?;
     Ok(utc.to_julian_date())
 }
 
-fn parse_date_obs(img: &Image, date_obs: &str) -> Result<NaiveDateTime, MetadataError> {
-    if date_obs.contains('T') {
-        return NaiveDateTime::parse_from_str(date_obs, "%Y-%m-%dT%H:%M:%S%.f").map_err(|e| {
-            MetadataError::DateParse {
-                value: date_obs.to_string(),
-                source: e,
-            }
+fn jd_from_mjd_obs(img: &Image) -> Result<JulianDate, MetadataError> {
+    let mjd = img
+        .get_last("MJD-OBS")
+        .as_f64()
+        .ok_or(MetadataError::InvalidHeaderType {
+            keyword: "MJD-OBS",
+            kind: "numeric",
+        })?;
+    if !mjd.is_finite() {
+        return Err(MetadataError::NonFiniteValue {
+            field: "MJD-OBS",
+            value: mjd,
         });
     }
+    Ok(JulianDate::new(2_400_000.5, mjd))
+}
 
-    let date =
-        NaiveDate::parse_from_str(date_obs, "%Y-%m-%d").map_err(|e| MetadataError::DateParse {
-            value: date_obs.to_string(),
-            source: e,
-        })?;
+// The instant DATE-OBS names, taking the time of day from TIME-OBS when DATE-OBS is a
+// date alone. None when there is no DATE-OBS string. celestial_time parses every field.
+// The date is parsed on its own first, so that an error names the card that is wrong.
+fn utc_from_date_obs(img: &Image) -> Result<Option<UTC>, MetadataError> {
+    let Some(date_obs) = img.get_last("DATE-OBS").as_str() else {
+        return Ok(None);
+    };
+    let date_obs = date_obs.trim();
+    let date_parse = |source| MetadataError::DateParse {
+        value: date_obs.to_string(),
+        source,
+    };
+    // T or a space separates the date from the time, as celestial_time reads them.
+    let date = date_obs
+        .split_once(['T', ' '])
+        .map_or(date_obs, |(date, _)| date);
+    UTC::from_str(&format!("{date}T00:00:00")).map_err(date_parse)?;
+    if date == date_obs {
+        return utc_from_time_obs(img, date).map(Some);
+    }
+    match UTC::from_str(date_obs) {
+        Ok(utc) => Ok(Some(utc)),
+        Err(e @ TimeError::ParseError(_)) => Err(date_parse(e)),
+        Err(e) => Err(MetadataError::InvalidTime(e)),
+    }
+}
+
+fn utc_from_time_obs(img: &Image, date: &str) -> Result<UTC, MetadataError> {
     let time = img
-        .get("TIME-OBS")
+        .get_last("TIME-OBS")
         .as_str()
-        .map(|s| s.to_owned())
-        .ok_or(MetadataError::MissingTimeOfDay)?;
-    let t =
-        NaiveTime::parse_from_str(&time, "%H:%M:%S%.f").map_err(|e| MetadataError::TimeParse {
-            value: time,
+        .ok_or(MetadataError::MissingTimeOfDay)?
+        .trim();
+    match UTC::from_str(&format!("{date}T{time}")) {
+        Ok(utc) => Ok(utc),
+        Err(e @ TimeError::ParseError(_)) => Err(MetadataError::TimeParse {
+            value: time.to_string(),
             source: e,
-        })?;
-    Ok(date.and_time(t))
+        }),
+        Err(e) => Err(MetadataError::InvalidTime(e)),
+    }
 }
 
 #[cfg(test)]
@@ -93,6 +109,7 @@ mod tests {
     use super::*;
     use celestial_images::fits::header::keywords::Keyword;
     use celestial_images::formats::pixel_data::PixelData;
+    use celestial_time::scales::utc::utc_from_calendar;
 
     fn stub_image() -> Image {
         Image::new(PixelData::F32(vec![0.0; 4]), [2, 2])
@@ -227,5 +244,56 @@ mod tests {
             matches!(err, MetadataError::InvalidTime(_)),
             "unexpected error: {err}"
         );
+    }
+
+    #[test]
+    fn non_finite_mjd_obs_is_rejected() {
+        let cases = [
+            (f64::NAN, "MJD-OBS must be finite, got NaN"),
+            (f64::INFINITY, "MJD-OBS must be finite, got inf"),
+        ];
+        for (mjd, expected) in cases {
+            let mut img = stub_image();
+            img.set_keyword(Keyword::real("MJD-OBS", mjd));
+            let err = jd_from_image(&img).err();
+            assert_eq!(err.map(|e| e.to_string()).as_deref(), Some(expected));
+        }
+    }
+
+    #[test]
+    fn date_obs_with_a_z_suffix_is_read_as_utc() {
+        let mut img = stub_image();
+        img.set_keyword(Keyword::string("DATE-OBS", "2024-01-15T03:04:05.123Z"));
+        let jd = jd_from_image(&img).unwrap();
+        let expected = utc_from_calendar(2024, 1, 15, 3, 4, 5.123)
+            .unwrap()
+            .to_julian_date();
+        assert_eq!(jd, expected);
+    }
+
+    #[test]
+    fn date_only_with_time_obs_on_a_leap_second_day_keeps_the_leap_second() {
+        let mut img = stub_image();
+        img.set_keyword(Keyword::string("DATE-OBS", "2016-12-31"));
+        img.set_keyword(Keyword::string("TIME-OBS", "23:59:60.5"));
+        let jd = jd_from_image(&img).unwrap();
+        let expected = utc_from_calendar(2016, 12, 31, 23, 59, 60.5)
+            .unwrap()
+            .to_julian_date();
+        assert_eq!(jd, expected);
+    }
+
+    #[test]
+    fn repeated_date_obs_reads_the_last_card() {
+        let mut img = stub_image();
+        img.keywords
+            .push(Keyword::string("DATE-OBS", "1999-01-01T00:00:00"));
+        img.keywords
+            .push(Keyword::string("DATE-OBS", "2024-06-15T03:22:45.123"));
+        let jd = jd_from_image(&img).unwrap();
+        let expected = utc_from_calendar(2024, 6, 15, 3, 22, 45.123)
+            .unwrap()
+            .to_julian_date();
+        assert_eq!(jd, expected);
     }
 }
