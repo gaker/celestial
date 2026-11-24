@@ -43,12 +43,12 @@ pub(super) fn parse_image_element(element: &BytesStart) -> Result<ImageInfo> {
         let attr = attr.map_err(|e| XisfError::XmlParse(e.to_string()))?;
         let value = attribute_text(&attr)?;
         match attr.key.as_ref() {
-            b"geometry" => info.geometry = parse_geometry(&value)?,
-            b"sampleFormat" => info.sample_format = SampleFormat::parse(&value)?,
-            b"bounds" => bounds = Some(parse_bounds(&value)),
-            b"colorSpace" => info.color_space = ColorSpace::parse(&value),
-            b"pixelStorage" => info.pixel_storage = PixelStorage::parse(&value),
-            b"location" => {
+            "geometry" => info.geometry = parse_geometry(&value)?,
+            "sampleFormat" => info.sample_format = SampleFormat::parse(&value)?,
+            "bounds" => bounds = Some(parse_bounds(&value)),
+            "colorSpace" => info.color_space = ColorSpace::parse(&value),
+            "pixelStorage" => info.pixel_storage = PixelStorage::parse(&value),
+            "location" => {
                 has_location = true;
                 apply_location(&mut info, &mut block, &value);
             }

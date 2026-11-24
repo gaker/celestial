@@ -84,7 +84,7 @@ impl HeaderScan {
     // Only a Data child of the Image element holds its block. A Data
     // element deeper down belongs to a property or another child.
     pub(super) fn is_image_data(&self, element: &BytesStart) -> bool {
-        self.embedded && self.depth == self.image_depth && element.name().as_ref() == b"Data"
+        self.embedded && self.depth == self.image_depth && element.name().as_ref() == "Data"
     }
 
     // Called after the start tag of an Image element is parsed. The text of
@@ -183,8 +183,8 @@ impl DataElement {
             let attr = attr.map_err(|e| XisfError::XmlParse(e.to_string()))?;
             let value = attribute_text(&attr)?;
             match attr.key.as_ref() {
-                b"encoding" => element.encoding = Some(value),
-                key @ (b"compression" | b"subblocks") => element.block.apply(key, &value),
+                "encoding" => element.encoding = Some(value),
+                key @ ("compression" | "subblocks") => element.block.apply(key, &value),
                 _ => {}
             }
         }
@@ -208,7 +208,7 @@ impl DataElement {
 fn text_block(element: &BytesStart) -> Result<Option<LocationAttr>> {
     for attr in element.attributes() {
         let attr = attr.map_err(|e| XisfError::XmlParse(e.to_string()))?;
-        if attr.key.as_ref() == b"location" {
+        if attr.key.as_ref() == "location" {
             let value = attribute_text(&attr)?;
             return Ok(LocationAttr::parse(&value)
                 .ok()

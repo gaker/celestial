@@ -45,12 +45,12 @@ pub(crate) struct BlockAttrs {
 }
 
 impl BlockAttrs {
-    pub(crate) fn apply(&mut self, key: &[u8], value: &str) {
+    pub(crate) fn apply(&mut self, key: &str, value: &str) {
         let parsed = match key {
-            b"compression" => CompressionAttr::parse(value).map(|c| self.compression = Some(c)),
-            b"subblocks" => parse_subblocks(value).map(|s| self.subblocks = s),
-            b"byteOrder" => parse_byte_order(value).map(|b| self.byte_order = Some(b)),
-            b"checksum" => Checksum::parse(value).map(|c| self.checksum = Some(c)),
+            "compression" => CompressionAttr::parse(value).map(|c| self.compression = Some(c)),
+            "subblocks" => parse_subblocks(value).map(|s| self.subblocks = s),
+            "byteOrder" => parse_byte_order(value).map(|b| self.byte_order = Some(b)),
+            "checksum" => Checksum::parse(value).map(|c| self.checksum = Some(c)),
             _ => Ok(()),
         };
         if let Err(error) = parsed {
@@ -139,7 +139,7 @@ mod tests {
     fn apply_all(attrs: &[(&str, &str)]) -> ImageInfo {
         let mut block = BlockAttrs::default();
         for (key, value) in attrs {
-            block.apply(key.as_bytes(), value);
+            block.apply(key, value);
         }
         block.into_image_info(plain_info())
     }
@@ -234,7 +234,7 @@ mod tests {
     fn apply_to_keeps_attributes_it_does_not_set() {
         let mut info = apply_all(&[("byteOrder", "big"), ("checksum", "sha1:00")]);
         let mut data = BlockAttrs::default();
-        data.apply(b"compression", "zlib:8");
+        data.apply("compression", "zlib:8");
         data.apply_to(&mut info);
         assert_eq!(info.compression, XisfCompression::Zlib);
         assert_eq!(info.byte_order, ByteOrder::BigEndian);

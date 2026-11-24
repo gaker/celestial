@@ -58,7 +58,7 @@ impl KeywordScan {
 
     // A Reference child of the open Image element.
     pub(super) fn add_reference(&mut self, element: &BytesStart) -> Result<()> {
-        if let Some(uid) = attribute(element, b"ref")? {
+        if let Some(uid) = attribute(element, "ref")? {
             if self.image_uids.insert(uid.clone()) {
                 let position = self.image.len();
                 self.references.push(Reference {
@@ -73,7 +73,7 @@ impl KeywordScan {
 
     // A Reference element anywhere else, as in a Thumbnail element.
     pub(super) fn mark_referenced(&mut self, element: &BytesStart) -> Result<()> {
-        if let Some(uid) = attribute(element, b"ref")? {
+        if let Some(uid) = attribute(element, "ref")? {
             self.referenced.insert(uid);
         }
         Ok(())
@@ -81,7 +81,7 @@ impl KeywordScan {
 
     pub(super) fn add_root_keyword(&mut self, element: &BytesStart) -> Result<()> {
         if let Some(keyword) = fits_keyword_element(element)? {
-            self.root.push((attribute(element, b"uid")?, keyword));
+            self.root.push((attribute(element, "uid")?, keyword));
         }
         Ok(())
     }
@@ -193,7 +193,7 @@ fn lookup_name(name: &str) -> &str {
     }
 }
 
-fn attribute(element: &BytesStart, name: &[u8]) -> Result<Option<String>> {
+fn attribute(element: &BytesStart, name: &str) -> Result<Option<String>> {
     for attr in element.attributes() {
         let attr = attr.map_err(|e| XisfError::XmlParse(e.to_string()))?;
         if attr.key.as_ref() == name {
@@ -213,9 +213,9 @@ pub(super) fn fits_keyword_element(element: &BytesStart) -> Result<Option<Keywor
         let attr = attr.map_err(|e| XisfError::XmlParse(e.to_string()))?;
         let text = printable(&attribute_text(&attr)?);
         match attr.key.as_ref() {
-            b"name" => name = Some(text),
-            b"value" => value = text,
-            b"comment" => comment = text,
+            "name" => name = Some(text),
+            "value" => value = text,
+            "comment" => comment = text,
             _ => {}
         }
     }

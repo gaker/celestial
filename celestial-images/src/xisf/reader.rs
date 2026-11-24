@@ -153,7 +153,7 @@ impl<R: Read + Seek> XisfFile<R> {
         scan.enter();
         let (version, image) = scan.targets();
         Self::handle_xml_element(element, version, image)?;
-        if element.name().as_ref() == b"Image" {
+        if element.name().as_ref() == "Image" {
             scan.open_image(element, reader)?;
         }
         Ok(())
@@ -166,7 +166,7 @@ impl<R: Read + Seek> XisfFile<R> {
         Self::keyword_element(element, scan)?;
         let (version, image) = scan.targets();
         Self::handle_xml_element(element, version, image)?;
-        if element.name().as_ref() == b"Image" {
+        if element.name().as_ref() == "Image" {
             scan.close_empty_image(element)?;
             scan.finish_image();
         }
@@ -175,7 +175,7 @@ impl<R: Read + Seek> XisfFile<R> {
 
     fn end_element(element: &BytesEnd, scan: &mut HeaderScan) {
         scan.leave();
-        if element.name().as_ref() == b"Image" {
+        if element.name().as_ref() == "Image" {
             scan.close_image();
             scan.finish_image();
         }
@@ -187,8 +187,8 @@ impl<R: Read + Seek> XisfFile<R> {
         current_image: &mut Option<ImageInfo>,
     ) -> Result<()> {
         match element.name().as_ref() {
-            b"xisf" => Self::parse_xisf_attributes(element, version),
-            b"Image" => {
+            "xisf" => Self::parse_xisf_attributes(element, version),
+            "Image" => {
                 *current_image = Some(parse_image_element(element)?);
                 Ok(())
             }
@@ -203,12 +203,12 @@ impl<R: Read + Seek> XisfFile<R> {
         let (in_image, at_root) = (scan.in_image(), scan.at_root());
         let keywords = &mut scan.keywords;
         match element.name().as_ref() {
-            b"FITSKeyword" if in_image => {
+            "FITSKeyword" if in_image => {
                 Self::parse_fits_keyword_element(element, &mut keywords.image)
             }
-            b"FITSKeyword" if at_root => keywords.add_root_keyword(element),
-            b"Reference" if in_image => keywords.add_reference(element),
-            b"Reference" => keywords.mark_referenced(element),
+            "FITSKeyword" if at_root => keywords.add_root_keyword(element),
+            "Reference" if in_image => keywords.add_reference(element),
+            "Reference" => keywords.mark_referenced(element),
             _ => Ok(()),
         }
     }
@@ -216,8 +216,8 @@ impl<R: Read + Seek> XisfFile<R> {
     fn parse_xisf_attributes(element: &BytesStart, version: &mut String) -> Result<()> {
         for attr in element.attributes() {
             let attr = attr.map_err(|e| XisfError::XmlParse(e.to_string()))?;
-            if attr.key.as_ref() == b"version" {
-                *version = String::from_utf8_lossy(&attr.value).to_string();
+            if attr.key.as_ref() == "version" {
+                *version = attr.value.to_string();
             }
         }
         Ok(())

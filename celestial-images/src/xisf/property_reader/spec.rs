@@ -91,16 +91,16 @@ pub(super) fn property_attrs(element: &BytesStart) -> Option<PropertyAttrs> {
         let attr = attr.ok()?;
         let text = Some(attribute_text(&attr).ok()?);
         match attr.key.as_ref() {
-            b"id" => attrs.id = text,
-            b"type" => attrs.type_name = text,
-            b"value" => attrs.value = text,
-            b"length" => attrs.length = text,
-            b"rows" => attrs.rows = text,
-            b"columns" => attrs.columns = text,
-            b"location" => attrs.location = text,
-            b"compression" => attrs.compressed = true,
-            b"byteOrder" => attrs.byte_order = text,
-            b"checksum" => attrs.checksum = text,
+            "id" => attrs.id = text,
+            "type" => attrs.type_name = text,
+            "value" => attrs.value = text,
+            "length" => attrs.length = text,
+            "rows" => attrs.rows = text,
+            "columns" => attrs.columns = text,
+            "location" => attrs.location = text,
+            "compression" => attrs.compressed = true,
+            "byteOrder" => attrs.byte_order = text,
+            "checksum" => attrs.checksum = text,
             _ => {}
         }
     }

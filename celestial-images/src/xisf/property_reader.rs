@@ -32,7 +32,7 @@ pub(super) fn image_property_specs(xml: &str) -> Result<Vec<Vec<PropertySpec>>> 
         match reader.read_event().map_err(xml_error)? {
             Event::Start(e) => scan.start(&e, &mut reader)?,
             Event::Empty(e) => scan.empty(&e),
-            Event::End(e) => scan.end(e.name().as_ref() == b"Image"),
+            Event::End(e) => scan.end(e.name().as_ref() == "Image"),
             Event::Eof => return Ok(scan.images),
             _ => {}
         }
@@ -41,7 +41,7 @@ pub(super) fn image_property_specs(xml: &str) -> Result<Vec<Vec<PropertySpec>>> 
 
 impl Scan {
     fn start(&mut self, element: &BytesStart, reader: &mut Reader<&[u8]>) -> Result<()> {
-        if element.name().as_ref() == b"Image" {
+        if element.name().as_ref() == "Image" {
             self.image = Some(ImageScope {
                 depth: self.depth,
                 specs: Vec::new(),
@@ -82,7 +82,7 @@ impl Scan {
 
     // An empty element has no text and no Data child.
     fn empty(&mut self, element: &BytesStart) {
-        if element.name().as_ref() == b"Image" {
+        if element.name().as_ref() == "Image" {
             self.images.push(Vec::new());
         } else if self.is_image_property(element) {
             let Some(mut attrs) = property_attrs(element) else {
@@ -112,7 +112,7 @@ impl Scan {
     }
 
     fn is_image_property(&self, element: &BytesStart) -> bool {
-        element.name().as_ref() == b"Property"
+        element.name().as_ref() == "Property"
             && self
                 .image
                 .as_ref()
@@ -138,12 +138,12 @@ fn embedded_data(reader: &mut Reader<&[u8]>, attrs: &mut PropertyAttrs) -> Resul
     let mut depth = 0usize;
     loop {
         match reader.read_event().map_err(xml_error)? {
-            Event::Start(e) if depth == 0 && e.name().as_ref() == b"Data" => {
+            Event::Start(e) if depth == 0 && e.name().as_ref() == "Data" => {
                 let text = element_text(reader)?;
                 data_elements += 1;
                 data = decode_data(&e, text, attrs);
             }
-            Event::Empty(e) if depth == 0 && e.name().as_ref() == b"Data" => {
+            Event::Empty(e) if depth == 0 && e.name().as_ref() == "Data" => {
                 data_elements += 1;
                 data = decode_data(&e, Some(String::new()), attrs);
             }
@@ -178,8 +178,8 @@ pub(super) fn element_text(reader: &mut Reader<&[u8]>) -> Result<Option<String>>
     let mut depth = 0usize;
     loop {
         match reader.read_event().map_err(xml_error)? {
-            Event::Text(t) => append(&mut text, t.xml_content(XmlVersion::Implicit1_0).ok()),
-            Event::CData(c) => append(&mut text, c.xml_content(XmlVersion::Implicit1_0).ok()),
+            Event::Text(t) => append(&mut text, Some(t.xml_content(XmlVersion::Implicit1_0))),
+            Event::CData(c) => append(&mut text, Some(c.xml_content(XmlVersion::Implicit1_0))),
             Event::GeneralRef(r) => append(&mut text, resolve_reference(&r)),
             Event::Start(_) => {
                 depth += 1;
@@ -205,8 +205,7 @@ fn resolve_reference(reference: &BytesRef) -> Option<String> {
     if let Some(ch) = reference.resolve_char_ref().ok()? {
         return Some(ch.to_string());
     }
-    let name = reference.decode().ok()?;
-    resolve_predefined_entity(&name).map(str::to_string)
+    resolve_predefined_entity(reference).map(str::to_string)
 }
 
 fn xml_error(error: impl std::fmt::Display) -> XisfError {

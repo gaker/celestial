@@ -83,9 +83,9 @@ fn parse_listing(xml: &str) -> anyhow::Result<ListingPage> {
             .read_event()
             .context("The bucket listing is not valid XML")?
         {
-            Event::Start(e) => parser.open_element(element_name(e.name().as_ref())?),
+            Event::Start(e) => parser.open_element(e.name().as_ref().to_string()),
             Event::End(_) => parser.close_element()?,
-            Event::Text(e) => parser.text.push_str(&e.decode()?),
+            Event::Text(e) => parser.text.push_str(&e),
             Event::GeneralRef(e) => parser.text.push(resolve_reference(&e)?),
             Event::CData(_) => parser.reject_cdata()?,
             Event::Eof => return parser.finish(),
@@ -94,17 +94,13 @@ fn parse_listing(xml: &str) -> anyhow::Result<ListingPage> {
     }
 }
 
-fn element_name(raw: &[u8]) -> anyhow::Result<String> {
-    Ok(std::str::from_utf8(raw)?.to_string())
-}
-
 // S3 escapes the quotes around an ETag as `&quot;`.
 fn resolve_reference(reference: &BytesRef) -> anyhow::Result<char> {
     if let Some(c) = reference.resolve_char_ref()? {
         return Ok(c);
     }
-    let name = reference.decode()?;
-    quick_xml::escape::resolve_predefined_entity(&name)
+    let name: &str = reference;
+    quick_xml::escape::resolve_predefined_entity(name)
         .and_then(|s| s.chars().next())
         .with_context(|| format!("Unknown entity &{};", name))
 }
